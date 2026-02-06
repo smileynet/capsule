@@ -1,0 +1,35 @@
+# Decisions Log: Capsule v2
+
+# Format: DATE | PHASE | DECISION | RATIONALE
+
+2026-02-06 | brainstorm | Abandon tmux as execution backend | Tmux is fundamentally unreliable for programmatic use — timing fragility, shell state opacity, mock complexity, platform dependence. Headless claude CLI with direct subprocess calls solves all these issues.
+
+2026-02-06 | brainstorm | Tracer bullet first (scripts before Go) | Prove the workflow works end-to-end with shell scripts before writing any application code. Scripts become the specification for the Go CLI. Reduces risk of building the wrong thing.
+
+2026-02-06 | brainstorm | Use headless claude -p as execution backend | Direct subprocess call with stdout capture. No timing issues, no shell state management, no mock complexity. Structured JSON signal in output for deterministic parsing.
+
+2026-02-06 | brainstorm | Kong for CLI framework | Struct-tag based, type-safe, minimal boilerplate. Aligns with legacy capsule patterns.
+
+2026-02-06 | brainstorm | Bubble Tea for TUI | Elm architecture (Model-Update-View) enables pure-function testing with teatest. Lipgloss for styling. Progressive enhancement: TUI when TTY, plain text when piped. Scored highest on testability + progressive enhancement matrix.
+
+2026-02-06 | brainstorm | External prompt templates (prompts/*.md) | Iterate on prompts without recompiling. Template interpolation for bead context. Reviewable as standalone documents.
+
+2026-02-06 | brainstorm | Structured JSON signal contract | Every phase emits {status, feedback, files_changed, summary}. Deterministic parsing. Machine-readable phase results. Enables automated retry logic.
+
+2026-02-06 | brainstorm | Worktree isolation with worklog archival | Each mission runs in a git worktree. Worklog tracks all phase activity. Worklog is NOT merged — archived to .capsule/logs/<bead-id>/ for auditability.
+
+2026-02-06 | brainstorm | Selective merge (implementation only) | Only implementation and test files merge to main. Process artifacts preserved in .capsule/logs/. Main branch reflects only work product.
+
+2026-02-06 | brainstorm | Three testing layers (TDD/BDD/E2E) | Tasks=TDD/unit, Features=BDD/Given-When-Then, Epics=E2E/smoke. Each layer catches different failure modes.
+
+2026-02-06 | scope | Five epics with progressive enhancement | Epic 1 (scripts) → Epic 2 (Go CLI) → Epic 3 (TUI) → Epic 4 (robust pipeline) → Epic 5 (multi-CLI). Each builds on proven foundations.
+
+2026-02-06 | scope | Epics 4-5 left as placeholders | Scope only what's needed now. Epics 4 (robust pipeline) and 5 (multi-CLI) will be scoped when predecessors are complete.
+
+2026-02-06 | scope | Template project with bead fixtures for testing | Reusable template project with pre-built beads enables deterministic, repeatable pipeline testing. Setup script ensures identical starting state.
+
+2026-02-06 | scope | Phase pairs as unit of orchestration | Worker + reviewer = one phase pair. Reviewer can return NEEDS_WORK with feedback, triggering worker retry. This is the retry granularity.
+
+2026-02-06 | scope | Configurable retry limits per phase pair | Default 2-3 retries. Prevents infinite loops while allowing iterative improvement. ERROR status bypasses retries and aborts immediately.
+
+2026-02-06 | scope | Dual-mode display (TUI + plain text) | Automatic TTY detection. TUI with Bubble Tea when interactive. Plain text when piped or --no-tui. Ensures CI compatibility.
