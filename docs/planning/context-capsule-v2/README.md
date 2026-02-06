@@ -70,7 +70,7 @@ All scoped work has been converted to beads with full hierarchy and dependencies
 
 **Test specifications:**
 - 14 BDD `.feature` files in `tests/features/` (one per scoped feature)
-- 37 TDD spec `.md` files in `tests/specs/` (one per task with `tdd: true`)
+- 38 TDD spec `.md` files in `tests/specs/` (one per task with `tdd: true`)
 
 ## Key Artifacts
 

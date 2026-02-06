@@ -38,4 +38,4 @@
 
 2026-02-06 | finalize | BDD specs as Gherkin .feature files | 14 BDD feature files in tests/features/, one per scoped feature. Acceptance criteria from menu plan YAML mapped directly to Given-When-Then scenarios.
 
-2026-02-06 | finalize | TDD specs as markdown test tables | 37 TDD spec files in tests/specs/, one per task with tdd:true (t-2.1.3 excluded). Each spec contains context, test cases table, edge cases checklist, and deliverable reference.
+2026-02-06 | finalize | TDD specs as markdown test tables | 38 TDD spec files in tests/specs/, one per task with tdd:true (t-2.1.3 excluded). Each spec contains context, test cases table, edge cases checklist, and deliverable reference.
