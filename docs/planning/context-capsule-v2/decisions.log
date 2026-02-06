@@ -33,3 +33,9 @@
 2026-02-06 | scope | Configurable retry limits per phase pair | Default 2-3 retries. Prevents infinite loops while allowing iterative improvement. ERROR status bypasses retries and aborts immediately.
 
 2026-02-06 | scope | Dual-mode display (TUI + plain text) | Automatic TTY detection. TUI with Bubble Tea when interactive. Plain text when piped or --no-tui. Ensures CI compatibility.
+
+2026-02-06 | finalize | Convert menu plan to beads | 5 epics, 19 features (14 scoped + 5 placeholder), 39 tasks created as beads with full hierarchy (parent) and 43 dependency edges. Beads prefix: cap. Epic IDs: cap-8ax (E1), cap-9qv (E2), cap-awd (E3), cap-6vp (E4), cap-10s (E5).
+
+2026-02-06 | finalize | BDD specs as Gherkin .feature files | 14 BDD feature files in tests/features/, one per scoped feature. Acceptance criteria from menu plan YAML mapped directly to Given-When-Then scenarios.
+
+2026-02-06 | finalize | TDD specs as markdown test tables | 37 TDD spec files in tests/specs/, one per task with tdd:true (t-2.1.3 excluded). Each spec contains context, test cases table, edge cases checklist, and deliverable reference.

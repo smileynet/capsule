@@ -1,6 +1,6 @@
 # Context: Capsule v2
 
-**Status:** scoped
+**Status:** finalized
 **Created:** 2026-02-06
 **Updated:** 2026-02-06
 
@@ -47,12 +47,39 @@ quality gates, pipeline pause/resume.
 Support multiple AI CLI tools beyond Claude Code. Provider interface
 extensions for OpenCode, Kiro, and other headless CLI tools.
 
+## Finalization Summary
+
+All scoped work has been converted to beads with full hierarchy and dependencies.
+
+| Type | Count | Bead ID Range |
+|------|-------|---------------|
+| Epics | 5 | cap-8ax, cap-9qv, cap-awd, cap-6vp, cap-10s |
+| Features | 19 (14 scoped + 5 placeholder) | cap-{epic}.1 — cap-{epic}.N |
+| Tasks | 39 | cap-{epic}.{feature}.{task} |
+| Dependencies | 39 edges (task) + 4 edges (epic) | — |
+
+**Epic → Bead mapping:**
+
+| Epic | Bead ID | Features | Tasks |
+|------|---------|----------|-------|
+| 1 — Tracer Bullet | cap-8ax | 6 | 20 |
+| 2 — Go CLI Tool | cap-9qv | 5 | 13 |
+| 3 — TUI (Bubble Tea) | cap-awd | 3 | 6 |
+| 4 — Robust Pipeline | cap-6vp | 3 (placeholder) | — |
+| 5 — Multi-CLI Support | cap-10s | 2 (placeholder) | — |
+
+**Test specifications:**
+- 14 BDD `.feature` files in `tests/features/` (one per scoped feature)
+- 37 TDD spec `.md` files in `tests/specs/` (one per task with `tdd: true`)
+
 ## Key Artifacts
 
 - [Brainstorm](../brainstorm-capsule-v2.md) — problem analysis, decisions, risks
 - [Architecture](architecture.md) — layered architecture diagram
 - [Decisions Log](decisions.log) — chronological decision record
 - [Menu Plan](../menu-plan.yaml) — full work breakdown with dependencies
+- [BDD Specs](../../tests/features/) — Gherkin feature files
+- [TDD Specs](../../tests/specs/) — task-level test specifications
 
 ## Testing Strategy
 
