@@ -46,6 +46,9 @@ echo ""
 
 # ---------- Test 1: Happy path - worktree created, worklog present ----------
 echo "[1/6] Happy path: worktree created with worklog"
+# Given: a valid template project and bead ID
+# When: running prep.sh with a valid bead
+# Then: worktree directory and worklog.md are created
 PREP_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1) || {
     fail "prep.sh exited non-zero for valid bead"
     echo "  Output: $PREP_OUTPUT"
@@ -66,6 +69,9 @@ fi
 
 # ---------- Test 2: Branch naming convention ----------
 echo "[2/6] Worktree branch naming"
+# Given: a worktree created by prep.sh
+# When: checking the git branch name
+# Then: branch is named capsule-<bead-id>
 BRANCH=$(cd "$WORKTREE_DIR" && git branch --show-current 2>/dev/null || echo "")
 EXPECTED_BRANCH="capsule-$BEAD_ID"
 if [ "$BRANCH" = "$EXPECTED_BRANCH" ]; then
@@ -76,6 +82,9 @@ fi
 
 # ---------- Test 3: Worklog content has bead metadata ----------
 echo "[3/6] Worklog content interpolated with bead metadata"
+# Given: a worktree with rendered worklog.md
+# When: checking worklog content for bead metadata
+# Then: contains epic, feature, task titles and no leftover placeholders
 WORKLOG=$(cat "$WORKTREE_DIR/worklog.md" 2>/dev/null || echo "")
 
 CONTENT_OK=true
@@ -111,6 +120,9 @@ fi
 
 # ---------- Test 4: Invalid bead-id ----------
 echo "[4/6] Invalid bead-id rejected"
+# Given: a bead ID that does not exist
+# When: running prep.sh with the invalid bead
+# Then: exits non-zero with descriptive error
 if INVALID_OUTPUT=$("$PREP_SCRIPT" "nonexistent-bead-999" --project-dir="$PROJECT_DIR" 2>&1); then
     fail "prep.sh should exit non-zero for invalid bead"
 else
@@ -125,6 +137,9 @@ fi
 
 # ---------- Test 5: Duplicate worktree ----------
 echo "[5/6] Duplicate worktree handled"
+# Given: a worktree already exists for this bead
+# When: running prep.sh again with the same bead
+# Then: idempotent skip or descriptive error
 if DUP_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1); then
     # Idempotent skip is acceptable
     if echo "$DUP_OUTPUT" | grep -qiE "already exists|skip"; then
@@ -145,6 +160,9 @@ fi
 
 # ---------- Test 6: Worktree on separate branch from main ----------
 echo "[6/6] Worktree on separate branch from main"
+# Given: a worktree created by prep.sh
+# When: comparing worktree branch to main project branch
+# Then: branches are different
 MAIN_BRANCH=$(cd "$PROJECT_DIR" && git branch --show-current 2>/dev/null || echo "")
 if [ "$BRANCH" != "$MAIN_BRANCH" ] && [ -n "$BRANCH" ]; then
     pass "Worktree branch ($BRANCH) is separate from main ($MAIN_BRANCH)"
@@ -158,6 +176,9 @@ echo "=== Edge Cases ==="
 
 # E1: No arguments shows usage error
 echo "[E1] No arguments shows usage error"
+# Given: no bead-id argument provided
+# When: running prep.sh without bead-id
+# Then: exits non-zero with usage message
 if NO_ARGS_OUTPUT=$("$PREP_SCRIPT" --project-dir="$PROJECT_DIR" 2>&1); then
     fail "prep.sh should exit non-zero with no bead-id argument"
 else
@@ -171,6 +192,9 @@ fi
 
 # E2: prep.sh creates .capsule/logs directory
 echo "[E2] prep.sh creates .capsule/logs directory"
+# Given: a project where prep.sh has been run
+# When: checking for .capsule/logs directory
+# Then: directory exists
 if [ -d "$PROJECT_DIR/.capsule/logs" ]; then
     pass ".capsule/logs directory exists"
 else
@@ -179,6 +203,9 @@ fi
 
 # E3: Second bead creates separate worktree
 echo "[E3] Second bead creates separate worktree"
+# Given: a project with one existing worktree
+# When: running prep.sh with a different bead
+# Then: creates a separate worktree with bead-specific content
 BEAD_ID_2="demo-1.1.2"
 BEAD2_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID_2" --project-dir="$PROJECT_DIR" 2>&1) || {
     fail "prep.sh exited non-zero for second bead: $BEAD2_OUTPUT"
