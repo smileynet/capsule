@@ -6,54 +6,34 @@
 **Date:** 2026-02-07
 **Parent Epic:** cap-8ax (Tracer Bullet: Scripts & Direct Claude CLI)
 
-## User Story
+## What Was Requested
 
-As a pipeline orchestrator, I want sign-off and merge prompts so that only relevant implementation files are merged to main and worklogs are archived to .capsule/logs/.
+A sign-off/merge prompt pair so that only relevant implementation files are merged to main and worklogs are archived to `.capsule/logs/`.
 
-## Acceptance Criteria Verification
+## Acceptance Criteria
 
-| # | Criterion | Verified | Evidence |
+| # | Criterion | Evidence | Verified |
 |---|-----------|----------|----------|
-| 1 | Sign-off validates quality and returns PASS or NEEDS_WORK | Yes | test-phase-pair-merge.sh [1/6], test-prompt-templates.sh sign-off section |
-| 2 | Only implementation/test files on main (no worklog.md) | Yes | test-phase-pair-merge.sh [3/6], test-merge-script.sh [2/11] |
-| 3 | Worklog archived to .capsule/logs/\<bead-id\>/ | Yes | test-merge-script.sh [3/11, 7/11], test-phase-pair-merge.sh [4/6] |
-| 4 | Mission worktree removed after merge | Yes | test-merge-script.sh [4/11, 5/11], test-phase-pair-merge.sh [5/6] |
-| 5 | Bead status closed after merge | Yes | test-merge-script.sh [6/11], test-phase-pair-merge.sh [6/6] |
+| 1 | Sign-off validates quality and returns PASS or NEEDS_WORK | test-phase-pair-merge.sh [1/6], test-prompt-templates.sh sign-off section | Yes |
+| 2 | Only implementation/test files appear on main after merge | test-phase-pair-merge.sh [3/6], test-merge-script.sh [2/11] | Yes |
+| 3 | Worklog archived to `.capsule/logs/<bead-id>/` | test-merge-script.sh [3/11, 7/11], test-phase-pair-merge.sh [4/6] | Yes |
+| 4 | Mission worktree removed after merge | test-merge-script.sh [4/11, 5/11], test-phase-pair-merge.sh [5/6] | Yes |
+| 5 | Bead status closed after merge | test-merge-script.sh [6/11], test-phase-pair-merge.sh [6/6] | Yes |
 
-## Quality Checks
+## How to Verify
 
-### Test Results
+```bash
+bash tests/scripts/test-merge-script.sh
+bash tests/scripts/test-phase-pair-merge.sh
+```
 
-- **test-merge-script.sh**: 11/11 passed (unit + error handling)
-- **test-phase-pair-merge.sh**: 14/14 passed (E2E chain)
+## Out of Scope
 
-### BDD Review (Maitre)
+- Automatic conflict resolution during merge
+- GUI or interactive merge workflow
+- Merge of non-capsule branches
 
-- All acceptance criteria have dedicated tests across multiple files
-- Given-When-Then structure consistently used
-- Error scenarios covered: missing worktree, sign-off not PASS, missing worklog, agent NEEDS_WORK
-- E2E test exercises full user workflow with real git/bead operations
+## Known Limitations
 
-**Verdict:** APPROVED
-
-## Deliverables
-
-| Deliverable | Path |
-|-------------|------|
-| Sign-off prompt | prompts/sign-off.md |
-| Merge prompt | prompts/merge.md |
-| Merge driver script | scripts/merge.sh |
-| BDD feature file | tests/features/f-1.5-signoff-merge.feature |
-| Merge unit tests | tests/scripts/test-merge-script.sh |
-| E2E pair test | tests/scripts/test-phase-pair-merge.sh |
-
-## Tasks Completed
-
-- [x] cap-8ax.5.1: Create sign-off prompt template
-- [x] cap-8ax.5.2: Create merge prompt template and thin merge driver script
-- [x] cap-8ax.5.3: Validate sign-off/merge pair end-to-end
-
-## Notes
-
-- Worklog.md appears on main via --no-ff merge (branch history), but the merge agent's commit itself excludes it. Archival to .capsule/logs/ is the canonical audit trail.
+- Worklog.md appears on main via `--no-ff` merge (branch history), but the merge agent's commit itself excludes it. Archival to `.capsule/logs/` is the canonical audit trail.
 - The merge prompt instructs Claude to selectively stage only implementation files, providing agent-reviewed merge rather than mechanical filtering.
