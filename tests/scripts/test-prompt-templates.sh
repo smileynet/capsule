@@ -368,6 +368,129 @@ else
     fail "Missing reference to project conventions"
 fi
 
+# ========== t-1.5.1: sign-off prompt ==========
+echo "--- t-1.5.1: sign-off prompt ---"
+echo ""
+SO_PROMPT="$PROMPTS_DIR/sign-off.md"
+
+# [1/7] File exists and is non-empty
+echo "[1/7] sign-off prompt exists and is non-empty"
+# Given: the prompts directory
+# When: checking for sign-off.md
+# Then: file exists and has content
+if [ -f "$SO_PROMPT" ] && [ -s "$SO_PROMPT" ]; then
+    pass "prompts/sign-off.md exists and is non-empty"
+else
+    fail "prompts/sign-off.md missing or empty"
+fi
+
+# [2/7] Instructs reading the worklog for full mission context
+echo "[2/7] sign-off instructs reading worklog for full context"
+# Given: the sign-off prompt
+# When: checking content for worklog reading instruction
+# Then: contains instruction to read worklog.md and references all prior phases
+if grep -qi "worklog" "$SO_PROMPT" && grep -qi "test-writer\|test-review\|execute" "$SO_PROMPT"; then
+    pass "Contains instruction to read worklog with prior phase context"
+else
+    fail "Missing instruction to read worklog with prior phase context"
+fi
+
+# [3/7] Instructs running tests and verifying all pass
+echo "[3/7] sign-off instructs running tests"
+# Given: the sign-off prompt
+# When: checking content for test running instruction
+# Then: contains instruction to run tests and verify all pass
+if grep -qi "run.*test\|test.*command\|all.*pass" "$SO_PROMPT" && grep -qi "CLAUDE.md" "$SO_PROMPT"; then
+    pass "Contains instruction to run tests and verify all pass"
+else
+    fail "Missing instruction to run tests"
+fi
+
+# [4/7] Instructs verifying commit-ready state
+echo "[4/7] sign-off instructs commit-ready verification"
+# Given: the sign-off prompt
+# When: checking content for commit-ready checks
+# Then: contains checks for temp files, debug code, clean state
+COMMIT_OK=true
+if ! grep -qi "temporary\|\.tmp\|\.bak" "$SO_PROMPT"; then
+    fail "Missing check for temporary files"
+    COMMIT_OK=false
+fi
+if ! grep -qi "debug\|fmt.Println\|console.log" "$SO_PROMPT"; then
+    fail "Missing check for debug code"
+    COMMIT_OK=false
+fi
+if [ "$COMMIT_OK" = true ]; then
+    pass "Contains commit-ready checks (temp files, debug code)"
+fi
+
+# [5/7] Instructs verifying acceptance criteria met
+echo "[5/7] sign-off instructs acceptance criteria verification"
+# Given: the sign-off prompt
+# When: checking content for acceptance criteria verification
+# Then: contains instruction to verify each acceptance criterion
+if grep -qi "acceptance criteria" "$SO_PROMPT" && grep -qi "verify\|confirm\|check" "$SO_PROMPT"; then
+    pass "Contains instruction to verify acceptance criteria"
+else
+    fail "Missing instruction to verify acceptance criteria"
+fi
+
+# [6/7] Instructs worklog update with sign-off entry
+echo "[6/7] sign-off instructs worklog update"
+# Given: the sign-off prompt
+# When: checking content for worklog update instruction
+# Then: contains instruction to update worklog with Phase 5 sign-off entry
+if grep -qi "worklog" "$SO_PROMPT" && grep -qi "Phase 5\|sign-off.*phase\|phase.*entry\|update.*worklog\|append" "$SO_PROMPT"; then
+    pass "Contains instruction to update worklog with sign-off phase entry"
+else
+    fail "Missing instruction to update worklog with sign-off entry"
+fi
+
+# [7/7] Instructs JSON signal output with PASS/NEEDS_WORK
+echo "[7/7] sign-off instructs JSON signal output"
+# Given: the sign-off prompt
+# When: checking content for signal contract
+# Then: contains JSON signal format with PASS and NEEDS_WORK
+if grep -q '"status"' "$SO_PROMPT" && grep -q "PASS" "$SO_PROMPT" && grep -q "NEEDS_WORK" "$SO_PROMPT"; then
+    pass "Contains JSON signal contract with PASS and NEEDS_WORK"
+else
+    fail "Missing JSON signal contract"
+fi
+
+# Edge cases for sign-off
+echo ""
+echo "=== sign-off edge cases ==="
+
+echo "[E1] References CLAUDE.md for test commands"
+# Given: the sign-off prompt
+# When: checking for CLAUDE.md reference for build/test commands
+# Then: references CLAUDE.md
+if grep -qi "CLAUDE.md" "$SO_PROMPT"; then
+    pass "References CLAUDE.md for project conventions and test commands"
+else
+    fail "Missing reference to CLAUDE.md"
+fi
+
+echo "[E2] Handles incomplete prior phases"
+# Given: the sign-off prompt
+# When: checking for handling of incomplete phases
+# Then: addresses case where prior phases are incomplete
+if grep -qi "incomplete\|not.*complete\|NEEDS_WORK\|previous.*phase" "$SO_PROMPT"; then
+    pass "Addresses handling of incomplete prior phases"
+else
+    fail "Missing handling for incomplete prior phases"
+fi
+
+echo "[E3] Checks for TODO/FIXME comments"
+# Given: the sign-off prompt
+# When: checking for TODO/FIXME detection
+# Then: mentions TODO or FIXME as commit-readiness issues
+if grep -qi "TODO\|FIXME" "$SO_PROMPT"; then
+    pass "Checks for TODO/FIXME comments"
+else
+    fail "Missing check for TODO/FIXME comments"
+fi
+
 echo ""
 echo "==========================================="
 echo "RESULTS: $PASS passed, $FAIL failed"
