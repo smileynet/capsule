@@ -105,6 +105,7 @@ echo ""
 
 # ---------- Test 1: test-writer PASS signal and output logging ----------
 echo "[1/5] test-writer creates test files and returns PASS"
+# Given: a worktree created by setup-template + prep, with mock claude configured
 RESPONSE_DIR="$PROJECT_DIR/.capsule/mock-responses"
 mkdir -p "$RESPONSE_DIR"
 cat > "$RESPONSE_DIR/test-writer-pass.txt" << 'RESP_EOF'
@@ -119,9 +120,11 @@ RESP_EOF
 
 export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-writer-pass.txt"
 
+# When: run-phase.sh test-writer is invoked on the worktree
 EXIT_CODE=0
 PHASE_OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE_DIR" 2>/dev/null) || EXIT_CODE=$?
 
+# Then: exit code is 0 (PASS), signal is valid, output is logged
 if [ "$EXIT_CODE" -eq 0 ]; then
     pass "test-writer phase completed with exit code 0 (PASS)"
 else
@@ -156,7 +159,7 @@ unset MOCK_RESPONSE_FILE
 # ---------- Test 2: test-review evaluates test-writer output ----------
 echo ""
 echo "[2/5] test-review evaluates and returns structured verdict"
-
+# Given: test-writer has run (logs persist from Test 1)
 cat > "$RESPONSE_DIR/test-review-pass.txt" << 'RESP_EOF'
 Reading worklog.md for task context...
 Reading test files created by test-writer...
@@ -169,9 +172,11 @@ RESP_EOF
 
 export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-review-pass.txt"
 
+# When: run-phase.sh test-review is invoked on the worktree
 EXIT_CODE=0
 REVIEW_OUTPUT=$("$RUN_PHASE" test-review "$WORKTREE_DIR" 2>/dev/null) || EXIT_CODE=$?
 
+# Then: exit code is 0 (PASS), feedback is present, output is logged
 if [ "$EXIT_CODE" -eq 0 ]; then
     pass "test-review phase completed with exit code 0 (PASS)"
 else
@@ -209,11 +214,11 @@ unset MOCK_RESPONSE_FILE
 # ---------- Test 3: NEEDS_WORK triggers retry with feedback ----------
 echo ""
 echo "[3/5] NEEDS_WORK signal triggers retry with feedback"
-
+# Given: clean output state
 # Clean previous output logs for a fresh start
 rm -rf "$WORKTREE_DIR/.capsule/output"
 
-# test-review returns NEEDS_WORK
+# Given: test-review configured to return NEEDS_WORK
 cat > "$RESPONSE_DIR/test-review-needs-work.txt" << 'RESP_EOF'
 Reviewing tests...
 Missing edge case test for empty string input.
@@ -223,9 +228,11 @@ RESP_EOF
 
 export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-review-needs-work.txt"
 
+# When: test-review is invoked
 EXIT_CODE=0
 NEEDS_WORK_OUTPUT=$("$RUN_PHASE" test-review "$WORKTREE_DIR" 2>/dev/null) || EXIT_CODE=$?
 
+# Then: exit code is 1 (NEEDS_WORK)
 if [ "$EXIT_CODE" -eq 1 ]; then
     pass "NEEDS_WORK signal returns exit code 1"
 else
@@ -233,10 +240,10 @@ else
     echo "  Output: $NEEDS_WORK_OUTPUT"
 fi
 
-# Extract feedback for retry
+# Given: feedback extracted from NEEDS_WORK signal for retry
 RETRY_FEEDBACK=$(echo "$NEEDS_WORK_OUTPUT" | jq -r '.feedback' 2>/dev/null || echo "")
 
-# Now retry test-writer with feedback
+# When: test-writer is retried with --feedback
 CAPTURE_FILE="$PROJECT_DIR/.capsule/captured-prompt.txt"
 export MOCK_CAPTURE_FILE="$CAPTURE_FILE"
 
@@ -259,7 +266,7 @@ else
     echo "  Output: $RETRY_OUTPUT"
 fi
 
-# Verify feedback was injected into the prompt
+# Then: retry succeeds and prompt contains base template + injected feedback
 if [ -f "$CAPTURE_FILE" ]; then
     CAPTURED=$(cat "$CAPTURE_FILE")
     FEEDBACK_OK=true
@@ -294,7 +301,10 @@ unset MOCK_RESPONSE_FILE
 # ---------- Test 4: Both phases produce output logs ----------
 echo ""
 echo "[4/5] Both phase types produce output logs"
+# Given: test-writer and test-review have both run (logs from Test 3)
+# When: output directory is inspected
 LOG_DIR="$WORKTREE_DIR/.capsule/output"
+# Then: log files exist for both phase types
 if [ -d "$LOG_DIR" ]; then
     LOG_COUNT=$(find "$LOG_DIR" -name "*.log" ! -name "*.stderr" 2>/dev/null | wc -l)
     if [ "$LOG_COUNT" -ge 2 ]; then
@@ -317,11 +327,11 @@ fi
 # ---------- Test 5: Full PASS path - no retry ----------
 echo ""
 echo "[5/5] Full PASS path: test-review passes on first attempt"
-
+# Given: clean output state
 # Clean state for a fresh run
 rm -rf "$WORKTREE_DIR/.capsule/output"
 
-# test-writer PASS
+# When: test-writer then test-review both return PASS
 export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-writer-pass.txt"
 TW_EXIT=0
 "$RUN_PHASE" test-writer "$WORKTREE_DIR" >/dev/null 2>/dev/null || TW_EXIT=$?
@@ -331,6 +341,7 @@ export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-review-pass.txt"
 TR_EXIT=0
 "$RUN_PHASE" test-review "$WORKTREE_DIR" >/dev/null 2>/dev/null || TR_EXIT=$?
 
+# Then: both exit with 0, no retry needed
 if [ "$TW_EXIT" -eq 0 ] && [ "$TR_EXIT" -eq 0 ]; then
     pass "Full PASS path: test-writer (exit 0) → test-review (exit 0), no retry needed"
 else
@@ -350,7 +361,7 @@ echo "=== Edge Cases ==="
 
 # E1: test-writer ERROR signal propagates correctly
 echo "[E1] test-writer ERROR propagates exit code 2"
-
+# Given: mock claude returns an ERROR signal for test-writer
 cat > "$RESPONSE_DIR/test-writer-error.txt" << 'RESP_EOF'
 Could not read worklog.md - file is missing or corrupted.
 
@@ -358,9 +369,10 @@ Could not read worklog.md - file is missing or corrupted.
 RESP_EOF
 
 export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-writer-error.txt"
+# When: run-phase.sh test-writer is invoked
 EXIT_CODE=0
 "$RUN_PHASE" test-writer "$WORKTREE_DIR" >/dev/null 2>/dev/null || EXIT_CODE=$?
-
+# Then: exit code is 2
 if [ "$EXIT_CODE" -eq 2 ]; then
     pass "test-writer ERROR → exit code 2"
 else
@@ -371,7 +383,7 @@ unset MOCK_RESPONSE_FILE
 
 # E2: test-review ERROR signal propagates correctly
 echo "[E2] test-review ERROR propagates exit code 2"
-
+# Given: mock claude returns an ERROR signal for test-review
 cat > "$RESPONSE_DIR/test-review-error.txt" << 'RESP_EOF'
 No test files found in worktree. Cannot review.
 
@@ -379,9 +391,10 @@ No test files found in worktree. Cannot review.
 RESP_EOF
 
 export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-review-error.txt"
+# When: run-phase.sh test-review is invoked
 EXIT_CODE=0
 "$RUN_PHASE" test-review "$WORKTREE_DIR" >/dev/null 2>/dev/null || EXIT_CODE=$?
-
+# Then: exit code is 2
 if [ "$EXIT_CODE" -eq 2 ]; then
     pass "test-review ERROR → exit code 2"
 else
@@ -392,9 +405,11 @@ unset MOCK_RESPONSE_FILE
 
 # E3: Signal JSON has all required fields
 echo "[E3] Signal JSON has all required fields"
-
+# Given: mock claude returns a PASS signal
 export MOCK_RESPONSE_FILE="$RESPONSE_DIR/test-writer-pass.txt"
+# When: signal output is parsed
 SIGNAL_OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE_DIR" 2>/dev/null) || true
+# Then: all required fields are present and files_changed is an array
 
 FIELDS_OK=true
 for field in status feedback files_changed summary; do

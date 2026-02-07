@@ -87,12 +87,15 @@ echo ""
 
 # ---------- Test 1: PASS signal → exit code 0 ----------
 echo "[1/9] PASS signal returns exit code 0"
+# Given: mock claude returns a PASS signal
 export MOCK_CLAUDE_RESPONSE='Reading worklog.md...
 Writing tests...
 {"status":"PASS","feedback":"All tests written","files_changed":["src/test.go"],"summary":"Tests created"}'
 
+# When: run-phase.sh is invoked
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>&1) || EXIT_CODE=$?
+# Then: exit code is 0
 if [ "$EXIT_CODE" -eq 0 ]; then
     pass "PASS signal → exit code 0"
 else
@@ -102,11 +105,14 @@ fi
 
 # ---------- Test 2: NEEDS_WORK signal → exit code 1 ----------
 echo "[2/9] NEEDS_WORK signal returns exit code 1"
+# Given: mock claude returns a NEEDS_WORK signal
 export MOCK_CLAUDE_RESPONSE='Reviewing tests...
 {"status":"NEEDS_WORK","feedback":"Missing edge case test","files_changed":["worklog.md"],"summary":"Tests need improvement"}'
 
+# When: run-phase.sh is invoked
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>&1) || EXIT_CODE=$?
+# Then: exit code is 1
 if [ "$EXIT_CODE" -eq 1 ]; then
     pass "NEEDS_WORK signal → exit code 1"
 else
@@ -116,11 +122,14 @@ fi
 
 # ---------- Test 3: ERROR signal → exit code 2 ----------
 echo "[3/9] ERROR signal returns exit code 2"
+# Given: mock claude returns an ERROR signal
 export MOCK_CLAUDE_RESPONSE='Something went wrong
 {"status":"ERROR","feedback":"Could not read worklog","files_changed":[],"summary":"Phase failed"}'
 
+# When: run-phase.sh is invoked
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>&1) || EXIT_CODE=$?
+# Then: exit code is 2
 if [ "$EXIT_CODE" -eq 2 ]; then
     pass "ERROR signal → exit code 2"
 else
@@ -130,10 +139,13 @@ fi
 
 # ---------- Test 4: No JSON signal → exit code 2 ----------
 echo "[4/9] No JSON signal returns exit code 2"
+# Given: mock claude returns plain text with no JSON
 export MOCK_CLAUDE_RESPONSE='Just some text output with no JSON'
 
+# When: run-phase.sh is invoked
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>&1) || EXIT_CODE=$?
+# Then: exit code is 2 (graceful degradation)
 if [ "$EXIT_CODE" -eq 2 ]; then
     pass "No JSON signal → exit code 2 (graceful degradation)"
 else
@@ -143,12 +155,15 @@ fi
 
 # ---------- Test 5: --feedback flag appends to prompt ----------
 echo "[5/9] --feedback flag appends feedback to prompt"
+# Given: mock claude with prompt capture enabled
 CAPTURE_FILE="$WORK_DIR/captured-prompt.txt"
 export MOCK_CAPTURE_FILE="$CAPTURE_FILE"
 export MOCK_CLAUDE_RESPONSE='{"status":"PASS","feedback":"done","files_changed":[],"summary":"ok"}'
 
+# When: run-phase.sh is invoked with --feedback
 "$RUN_PHASE" test-writer "$WORKTREE" --feedback="Missing edge case for empty input" >/dev/null 2>&1 || true
 
+# Then: captured prompt contains both base template and feedback text
 if [ -f "$CAPTURE_FILE" ]; then
     CAPTURED=$(cat "$CAPTURE_FILE")
     FEEDBACK_OK=true
@@ -175,8 +190,10 @@ unset MOCK_CAPTURE_FILE
 
 # ---------- Test 6: Invalid phase-name → error ----------
 echo "[6/9] Invalid phase-name rejected"
+# Given: a phase name with no matching prompt template
 export MOCK_CLAUDE_RESPONSE='{"status":"PASS","feedback":"ok","files_changed":[],"summary":"ok"}'
 
+# When: run-phase.sh is invoked with invalid phase
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" nonexistent-phase "$WORKTREE" 2>&1) || EXIT_CODE=$?
 if [ "$EXIT_CODE" -ne 0 ]; then
@@ -192,15 +209,17 @@ fi
 
 # ---------- Test 7: Output captured to .capsule/output log ----------
 echo "[7/9] Output captured to .capsule/output log"
+# Given: mock claude returns output with a PASS signal
 export MOCK_CLAUDE_RESPONSE='Phase output here
 {"status":"PASS","feedback":"done","files_changed":[],"summary":"complete"}'
 
 # Clean any logs from previous tests so we can identify this run's log
 rm -rf "$WORKTREE/.capsule/output"
 
+# When: run-phase.sh is invoked
 "$RUN_PHASE" test-writer "$WORKTREE" >/dev/null 2>&1 || true
 
-# Log files are stored relative to the worktree: <worktree>/.capsule/output/
+# Then: output is captured to .capsule/output log file
 LOG_DIR="$WORKTREE/.capsule/output"
 if [ -d "$LOG_DIR" ]; then
     LOG_FILE=$(find "$LOG_DIR" -name "test-writer-*.log" ! -name "*.stderr" 2>/dev/null | head -1)
@@ -219,11 +238,13 @@ fi
 
 # ---------- Test 8: Signal JSON accessible in output ----------
 echo "[8/9] Signal JSON printed to stdout"
+# Given: mock claude returns logs followed by a PASS signal
 export MOCK_CLAUDE_RESPONSE='Some logs
 {"status":"PASS","feedback":"all good","files_changed":["a.go"],"summary":"done"}'
 
+# When: run-phase.sh is invoked
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>/dev/null) || true
-# The script should output the parsed signal so the caller can read it
+# Then: parsed signal JSON is printed to stdout
 if echo "$OUTPUT" | jq -e '.status' >/dev/null 2>&1; then
     STATUS=$(echo "$OUTPUT" | jq -r '.status')
     if [ "$STATUS" = "PASS" ]; then
@@ -238,9 +259,11 @@ fi
 
 # ---------- Test 9: Claude crash (non-zero exit) → exit code 2 ----------
 echo "[9/9] Claude crash returns exit code 2"
+# Given: mock claude crashes with exit code 1
 export MOCK_CLAUDE_RESPONSE='Partial output before crash'
 export MOCK_CLAUDE_EXIT=1
 
+# When: run-phase.sh is invoked
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>&1) || EXIT_CODE=$?
 if [ "$EXIT_CODE" -eq 2 ]; then
@@ -257,6 +280,8 @@ echo "=== Edge Cases ==="
 
 # E1: No arguments shows usage error
 echo "[E1] No arguments shows usage error"
+# Given: no arguments provided
+# When: run-phase.sh is invoked with no args
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" 2>&1) || EXIT_CODE=$?
 if [ "$EXIT_CODE" -ne 0 ]; then
@@ -272,6 +297,8 @@ fi
 
 # E2: Missing worktree-path argument
 echo "[E2] Missing worktree-path shows error"
+# Given: phase name provided but no worktree path
+# When: run-phase.sh is invoked with only phase name
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer 2>&1) || EXIT_CODE=$?
 if [ "$EXIT_CODE" -ne 0 ]; then
@@ -287,6 +314,8 @@ fi
 
 # E3: Non-existent worktree path
 echo "[E3] Non-existent worktree path rejected"
+# Given: a worktree path that does not exist
+# When: run-phase.sh is invoked with non-existent path
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORK_DIR/nonexistent-worktree" 2>&1) || EXIT_CODE=$?
 if [ "$EXIT_CODE" -ne 0 ]; then
