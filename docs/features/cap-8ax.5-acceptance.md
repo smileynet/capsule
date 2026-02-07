@@ -14,8 +14,8 @@ A sign-off/merge prompt pair so that only relevant implementation files are merg
 
 | # | Criterion | Evidence | Verified |
 |---|-----------|----------|----------|
-| 1 | Sign-off validates quality and returns PASS or NEEDS_WORK | test-phase-pair-merge.sh [1/6], test-prompt-templates.sh sign-off section | Yes |
-| 2 | Only implementation/test files appear on main after merge | test-phase-pair-merge.sh [3/6], test-merge-script.sh [2/11] | Yes |
+| 1 | Sign-off validates quality and returns PASS or NEEDS_WORK | test-phase-pair-merge.sh [1/6], test-prompt-templates.sh sign-off [1/7..7/7] | Yes |
+| 2 | Only implementation/test files appear on main after merge | test-phase-pair-merge.sh [3/6] | Yes |
 | 3 | Worklog archived to `.capsule/logs/<bead-id>/` | test-merge-script.sh [3/11, 7/11], test-phase-pair-merge.sh [4/6] | Yes |
 | 4 | Mission worktree removed after merge | test-merge-script.sh [4/11, 5/11], test-phase-pair-merge.sh [5/6] | Yes |
 | 5 | Bead status closed after merge | test-merge-script.sh [6/11], test-phase-pair-merge.sh [6/6] | Yes |
