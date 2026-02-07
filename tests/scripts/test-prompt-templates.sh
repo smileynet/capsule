@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test script for cap-prk: Prompt template content validation
-# Validates: t-1.3.2 (test-writer prompt) and t-1.3.3 (test-review prompt) specs
+# Validates: t-1.3.2 (test-writer prompt), t-1.3.3 (test-review prompt), and t-1.4.1 (execute prompt) specs
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -251,6 +251,121 @@ if grep -qi "review\|verify\|assess\|evaluate" "$TR_PROMPT"; then
     pass "Reviewer role is review/verify/assess (not fix)"
 else
     fail "Missing clear reviewer role definition"
+fi
+
+# ========== t-1.4.1: execute prompt ==========
+echo "--- t-1.4.1: execute prompt ---"
+echo ""
+EX_PROMPT="$PROMPTS_DIR/execute.md"
+
+# [1/6] File exists and is non-empty
+echo "[1/6] execute prompt exists and is non-empty"
+# Given: the prompts directory
+# When: checking for execute.md
+# Then: file exists and has content
+if [ -f "$EX_PROMPT" ] && [ -s "$EX_PROMPT" ]; then
+    pass "prompts/execute.md exists and is non-empty"
+else
+    fail "prompts/execute.md missing or empty"
+fi
+
+# [2/6] Instructs reading worklog and test entries
+echo "[2/6] execute instructs reading worklog and test entries"
+# Given: the execute prompt
+# When: checking content for worklog and test reading instruction
+# Then: contains instruction to read worklog.md and test files from prior phases
+if grep -qi "worklog" "$EX_PROMPT" && grep -qi "test" "$EX_PROMPT"; then
+    pass "Contains instruction to read worklog and test entries"
+else
+    fail "Missing instruction to read worklog and test entries"
+fi
+
+# [3/6] Instructs confirming RED state (tests fail)
+echo "[3/6] execute instructs confirming RED state"
+# Given: the execute prompt
+# When: checking content for RED state confirmation
+# Then: contains instruction to run tests and verify they fail before implementing
+if grep -qi "fail\|RED\|failing" "$EX_PROMPT" && grep -qi "run.*test\|test.*run\|confirm\|verify" "$EX_PROMPT"; then
+    pass "Contains instruction to confirm RED state before implementing"
+else
+    fail "Missing instruction to confirm RED state"
+fi
+
+# [4/6] Instructs implementing minimal GREEN code
+echo "[4/6] execute instructs implementing minimal GREEN code"
+# Given: the execute prompt
+# When: checking content for GREEN implementation instruction
+# Then: contains instruction to implement minimum code to pass tests
+if grep -qi "implement\|GREEN\|pass" "$EX_PROMPT" && grep -qi "minimal\|minimum" "$EX_PROMPT"; then
+    pass "Contains instruction for minimal GREEN implementation"
+else
+    fail "Missing instruction for minimal GREEN implementation"
+fi
+
+# [5/6] Instructs worklog update with execute phase entry
+echo "[5/6] execute instructs worklog update"
+# Given: the execute prompt
+# When: checking content for worklog update instruction
+# Then: contains instruction to update worklog with execute phase entry
+if grep -qi "worklog" "$EX_PROMPT" && grep -qi "phase.*3\|execute.*phase\|Phase 3\|phase.*entry\|update.*worklog\|append" "$EX_PROMPT"; then
+    pass "Contains instruction to update worklog with execute phase entry"
+else
+    fail "Missing instruction to update worklog with execute phase entry"
+fi
+
+# [6/6] Instructs JSON signal output
+echo "[6/6] execute instructs JSON signal output"
+# Given: the execute prompt
+# When: checking content for signal contract
+# Then: contains JSON signal format with status field
+if grep -q '"status"' "$EX_PROMPT" && grep -qi "signal" "$EX_PROMPT"; then
+    pass "Contains JSON signal contract with status field"
+else
+    fail "Missing JSON signal contract"
+fi
+
+# Edge cases for execute
+echo ""
+echo "=== execute edge cases ==="
+
+echo "[E1] Handles case where tests already pass (should ERROR)"
+# Given: the execute prompt
+# When: checking for already-passing test handling
+# Then: contains instruction to signal ERROR if tests already pass
+if grep -qi "already pass\|tests pass\|not fail\|ERROR" "$EX_PROMPT"; then
+    pass "Addresses case where tests already pass"
+else
+    fail "Missing handling for tests already passing"
+fi
+
+echo "[E2] Instructs not to modify test files"
+# Given: the execute prompt
+# When: checking for test file modification restriction
+# Then: explicitly states not to modify test files
+if grep -qi "not.*modify.*test\|do not.*change.*test\|not.*edit.*test\|leave.*test\|not.*alter.*test" "$EX_PROMPT"; then
+    pass "Contains instruction not to modify test files"
+else
+    fail "Missing instruction restricting test file modification"
+fi
+
+echo "[E3] Instructs refactoring only after GREEN"
+# Given: the execute prompt
+# When: checking for refactor ordering instruction
+# Then: contains instruction to refactor only after tests pass
+if grep -qi "refactor" "$EX_PROMPT" && grep -qi "after.*pass\|after.*GREEN\|GREEN.*refactor\|tests pass.*refactor\|once.*pass" "$EX_PROMPT"; then
+    pass "Contains instruction to refactor only after GREEN"
+else
+    fail "Missing instruction to refactor after GREEN"
+fi
+
+echo "[E4] References CLAUDE.md for project conventions"
+# Given: the execute prompt
+# When: checking for project convention reference
+# Then: references CLAUDE.md for coding conventions
+if grep -qi "CLAUDE.md\|project conventions\|conventions" "$EX_PROMPT"; then
+    pass "References project conventions (CLAUDE.md)"
+else
+    fail "Missing reference to project conventions"
 fi
 
 echo ""
