@@ -35,5 +35,5 @@ bash tests/scripts/test-phase-pair-merge.sh
 
 ## Known Limitations
 
-- Worklog.md appears on main via `--no-ff` merge (branch history), but the merge agent's commit itself excludes it. Archival to `.capsule/logs/` is the canonical audit trail.
+- Worklog.md appears on main via `--no-ff` merge (branch history), but the merge commit itself excludes it. Archival to `.capsule/logs/` is the canonical audit trail.
 - The merge prompt instructs Claude to selectively stage only implementation files, providing agent-reviewed merge rather than mechanical filtering.

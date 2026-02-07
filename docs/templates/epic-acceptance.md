@@ -7,7 +7,7 @@
 
 ## What This Delivers
 
-<One paragraph: the capability from the user's perspective.>
+<One paragraph describing the capability from the user's perspective.>
 
 ## Features Accepted
 
@@ -17,7 +17,7 @@
 
 ## End-to-End Verification
 
-<E2E user journeys tested, with evidence for each.>
+<E2E user journeys tested with evidence for each.>
 
 ```bash
 <exact command(s) to reproduce verification>

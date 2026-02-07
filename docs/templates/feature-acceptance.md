@@ -8,7 +8,7 @@
 
 ## What Was Requested
 
-<One sentence: what the user can now do that they couldn't before.>
+<One sentence describing what the user can now do that they couldn't before.>
 
 ## Acceptance Criteria
 
