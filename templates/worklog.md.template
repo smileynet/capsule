@@ -1,0 +1,51 @@
+# Worklog: {{TASK_ID}}
+
+Generated: {{TIMESTAMP}}
+
+## Mission Briefing
+
+### Epic: {{EPIC_ID}}
+
+**{{EPIC_TITLE}}**
+
+{{EPIC_GOAL}}
+
+### Feature: {{FEATURE_ID}}
+
+**{{FEATURE_TITLE}}**
+
+{{FEATURE_GOAL}}
+
+### Task: {{TASK_ID}}
+
+**{{TASK_TITLE}}**
+
+{{TASK_DESCRIPTION}}
+
+### Acceptance Criteria
+
+{{ACCEPTANCE_CRITERIA}}
+
+---
+
+## Phase Log
+
+### Phase 1: test-writer
+
+_Status: pending_
+
+### Phase 2: test-review
+
+_Status: pending_
+
+### Phase 3: execute
+
+_Status: pending_
+
+### Phase 4: execute-review
+
+_Status: pending_
+
+### Phase 5: sign-off
+
+_Status: pending_
