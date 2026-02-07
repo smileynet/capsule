@@ -47,7 +47,7 @@ echo ""
 # ---------- Test 1: Happy path - worktree created, worklog present ----------
 echo "[1/6] Happy path: worktree created with worklog"
 # Given: a valid template project and bead ID
-# When: running prep.sh with a valid bead
+# When: prep.sh is run with a valid bead
 # Then: worktree directory and worklog.md are created
 PREP_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1) || {
     fail "prep.sh exited non-zero for valid bead"
@@ -121,7 +121,7 @@ fi
 # ---------- Test 4: Invalid bead-id ----------
 echo "[4/6] Invalid bead-id rejected"
 # Given: a bead ID that does not exist
-# When: running prep.sh with the invalid bead
+# When: prep.sh is run with the invalid bead
 # Then: exits non-zero with descriptive error
 if INVALID_OUTPUT=$("$PREP_SCRIPT" "nonexistent-bead-999" --project-dir="$PROJECT_DIR" 2>&1); then
     fail "prep.sh should exit non-zero for invalid bead"
@@ -138,7 +138,7 @@ fi
 # ---------- Test 5: Duplicate worktree ----------
 echo "[5/6] Duplicate worktree handled"
 # Given: a worktree already exists for this bead
-# When: running prep.sh again with the same bead
+# When: prep.sh is run again with the same bead
 # Then: idempotent skip or descriptive error
 if DUP_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1); then
     # Idempotent skip is acceptable
@@ -177,7 +177,7 @@ echo "=== Edge Cases ==="
 # E1: No arguments shows usage error
 echo "[E1] No arguments shows usage error"
 # Given: no bead-id argument provided
-# When: running prep.sh without bead-id
+# When: prep.sh is run without bead-id
 # Then: exits non-zero with usage message
 if NO_ARGS_OUTPUT=$("$PREP_SCRIPT" --project-dir="$PROJECT_DIR" 2>&1); then
     fail "prep.sh should exit non-zero with no bead-id argument"
@@ -204,7 +204,7 @@ fi
 # E3: Second bead creates separate worktree
 echo "[E3] Second bead creates separate worktree"
 # Given: a project with one existing worktree
-# When: running prep.sh with a different bead
+# When: prep.sh is run with a different bead
 # Then: creates a separate worktree with bead-specific content
 BEAD_ID_2="demo-1.1.2"
 BEAD2_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID_2" --project-dir="$PROJECT_DIR" 2>&1) || {
