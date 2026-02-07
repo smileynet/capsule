@@ -44,6 +44,9 @@ echo ""
 
 # ---------- Test 1: Render with complete sample data ----------
 echo "[1/5] Render with complete sample data"
+# Given: complete sample data for all placeholders
+# When: template is rendered with envsubst
+# Then: all placeholder values appear in output
 EPIC_ID="demo-1"
 EPIC_TITLE="Demo Capsule Feature Set"
 EPIC_GOAL="Implement input validation for the Contact type"
@@ -72,6 +75,9 @@ fi
 
 # ---------- Test 2: Mission Briefing section present ----------
 echo "[2/5] Mission Briefing section"
+# Given: a rendered worklog template
+# When: checking for Mission Briefing section
+# Then: section exists with epic, feature, and task context
 BRIEFING_OK=true
 if ! echo "$RENDERED" | grep -qi "Mission Briefing"; then
     fail "Missing 'Mission Briefing' section header"
@@ -90,6 +96,9 @@ fi
 
 # ---------- Test 3: Phase entry sections ----------
 echo "[3/5] Phase entry sections"
+# Given: a rendered worklog template
+# When: checking for pipeline phase sections
+# Then: all 5 phase sections are present
 PHASES_OK=true
 for phase in "test-writer" "test-review" "execute" "execute-review" "sign-off"; do
     if ! echo "$RENDERED" | grep -qi "$phase"; then
@@ -103,6 +112,9 @@ fi
 
 # ---------- Test 4: Render with minimal data ----------
 echo "[4/5] Render with minimal data"
+# Given: minimal placeholder data (some fields empty)
+# When: template is rendered
+# Then: rendering succeeds without errors
 EPIC_ID="min-1"
 EPIC_TITLE="Minimal Epic"
 EPIC_GOAL=""
@@ -124,6 +136,9 @@ fi
 
 # ---------- Test 5: No leftover {{ or }} tokens ----------
 echo "[5/5] No leftover placeholder tokens"
+# Given: template rendered with complete data
+# When: checking for unreplaced placeholder tokens
+# Then: no {{ tokens remain in output
 # Reset to full data for this check
 EPIC_ID="demo-1"
 EPIC_TITLE="Demo Capsule Feature Set"
@@ -154,6 +169,9 @@ echo "=== Edge Cases ==="
 
 # E1: Special characters in placeholder values
 echo "[E1] Special characters in values"
+# Given: placeholder values containing quotes, ampersands, and angle brackets
+# When: template is rendered
+# Then: special characters are preserved in output
 TASK_TITLE='Validate "email" & <phone> format'
 TASK_DESCRIPTION="Check for @ symbol & 'quotes' in input"
 RENDERED_SPECIAL=$(render_template)
@@ -168,6 +186,9 @@ TASK_DESCRIPTION="Implement ValidateEmail(email string) error"
 
 # E2: Consistent placeholder naming convention
 echo "[E2] Consistent placeholder naming"
+# Given: the raw template file
+# When: extracting all {{PLACEHOLDER}} tokens
+# Then: all use UPPER_SNAKE_CASE naming
 RAW_TEMPLATE=$(cat "$TEMPLATE")
 # All placeholders should match {{UPPER_SNAKE_CASE}}
 BAD_PLACEHOLDERS=$(echo "$RAW_TEMPLATE" | grep -oP '\{\{[^}]+\}\}' | grep -v '^{{[A-Z_]*}}$' || true)
@@ -179,6 +200,9 @@ fi
 
 # E3: Multi-line acceptance criteria
 echo "[E3] Multi-line acceptance criteria"
+# Given: acceptance criteria spanning 5 lines
+# When: template is rendered
+# Then: all criteria lines appear in output
 ACCEPTANCE_CRITERIA="- Returns nil for valid emails (user@example.com)
 - Returns error for missing @ (userexample.com)
 - Returns error for missing domain (user@)
@@ -194,7 +218,9 @@ fi
 
 # E4: Valid markdown when rendered
 echo "[E4] Valid markdown structure"
-# Check for basic markdown structure: headers exist
+# Given: a fully rendered worklog template
+# When: checking markdown structure
+# Then: at least 2 markdown headers exist
 HEADER_COUNT=$(echo "$FULL_RENDERED" | grep -c '^#' || true)
 if [ "$HEADER_COUNT" -ge 2 ]; then
     pass "Rendered output contains $HEADER_COUNT markdown headers"

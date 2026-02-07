@@ -35,7 +35,7 @@ fi
 # [2/6] Instructs reading the worklog
 echo "[2/6] test-writer instructs reading worklog"
 # Given: the test-writer prompt
-# When: content is checked for worklog instruction
+# When: checking content for worklog instruction
 # Then: contains instruction to read worklog.md
 if grep -qi "worklog" "$TW_PROMPT"; then
     pass "Contains instruction to read worklog"
@@ -46,7 +46,7 @@ fi
 # [3/6] Instructs writing failing tests
 echo "[3/6] test-writer instructs writing failing tests"
 # Given: the test-writer prompt
-# When: content is checked for RED/failing test instruction
+# When: checking content for RED/failing test instruction
 # Then: contains instruction about failing tests
 if grep -qi "fail" "$TW_PROMPT" && grep -qi "test" "$TW_PROMPT"; then
     pass "Contains instruction about failing tests"
@@ -57,7 +57,7 @@ fi
 # [4/6] Instructs worklog update
 echo "[4/6] test-writer instructs worklog update"
 # Given: the test-writer prompt
-# When: content is checked for worklog update instruction
+# When: checking content for worklog update instruction
 # Then: contains instruction to update/append to worklog
 if grep -qi "update.*worklog\|append.*worklog\|worklog.*phase" "$TW_PROMPT"; then
     pass "Contains instruction to update worklog"
@@ -68,7 +68,7 @@ fi
 # [5/6] Instructs JSON signal output
 echo "[5/6] test-writer instructs JSON signal output"
 # Given: the test-writer prompt
-# When: content is checked for signal contract
+# When: checking content for signal contract
 # Then: contains JSON signal format with status field
 if grep -q '"status"' "$TW_PROMPT" && grep -qi "signal" "$TW_PROMPT"; then
     pass "Contains JSON signal contract with status field"
@@ -79,7 +79,7 @@ fi
 # [6/6] References acceptance criteria
 echo "[6/6] test-writer references acceptance criteria"
 # Given: the test-writer prompt
-# When: content is checked for acceptance criteria reference
+# When: checking content for acceptance criteria reference
 # Then: contains instruction to derive tests from acceptance criteria
 if grep -qi "acceptance criteria" "$TW_PROMPT"; then
     pass "Contains reference to acceptance criteria"
@@ -152,7 +152,7 @@ fi
 # [2/6] Contains quality checklist
 echo "[2/6] test-review contains quality checklist"
 # Given: the test-review prompt
-# When: content is checked for quality criteria
+# When: checking content for quality criteria
 # Then: references test isolation, naming, assertions, coverage
 QUALITY_OK=true
 if ! grep -qi "isolation\|isolated" "$TR_PROMPT"; then
@@ -178,7 +178,7 @@ fi
 # [3/6] Instructs PASS/NEEDS_WORK decision
 echo "[3/6] test-review instructs PASS/NEEDS_WORK decision"
 # Given: the test-review prompt
-# When: content is checked for decision criteria
+# When: checking content for decision criteria
 # Then: contains both PASS and NEEDS_WORK with decision guidance
 if grep -q "PASS" "$TR_PROMPT" && grep -q "NEEDS_WORK" "$TR_PROMPT"; then
     pass "Contains PASS and NEEDS_WORK decision criteria"
@@ -189,7 +189,7 @@ fi
 # [4/6] Instructs feedback on NEEDS_WORK
 echo "[4/6] test-review instructs actionable feedback on NEEDS_WORK"
 # Given: the test-review prompt
-# When: content is checked for feedback instruction
+# When: checking content for feedback instruction
 # Then: contains instruction to provide actionable feedback
 if grep -qi "feedback\|actionable\|specific.*issue\|suggest" "$TR_PROMPT"; then
     pass "Contains instruction for actionable feedback"
@@ -200,7 +200,7 @@ fi
 # [5/6] Instructs signal output
 echo "[5/6] test-review instructs JSON signal output"
 # Given: the test-review prompt
-# When: content is checked for signal contract
+# When: checking content for signal contract
 # Then: contains JSON signal format
 if grep -q '"status"' "$TR_PROMPT" && grep -qi "signal" "$TR_PROMPT"; then
     pass "Contains JSON signal contract"
@@ -211,7 +211,7 @@ fi
 # [6/6] Instructs worklog update
 echo "[6/6] test-review instructs worklog update"
 # Given: the test-review prompt
-# When: content is checked for worklog update instruction
+# When: checking content for worklog update instruction
 # Then: contains instruction to record review findings in worklog
 if grep -qi "worklog" "$TR_PROMPT" && grep -qi "phase.*entry\|update.*worklog\|append\|record" "$TR_PROMPT"; then
     pass "Contains instruction to update worklog with review findings"
@@ -243,10 +243,10 @@ else
     fail "Missing distinction between coverage and quality"
 fi
 
-echo "[E3] Does not instruct reviewer to fix tests"
+echo "[E3] Reviewer role is review-only (not fix)"
 # Given: the test-review prompt
 # When: checking that reviewer role is read-only
-# Then: explicitly states review-only (no fixing)
+# Then: uses review/verify/assess language (not fix/modify)
 if grep -qi "review\|verify\|assess\|evaluate" "$TR_PROMPT"; then
     pass "Reviewer role is review/verify/assess (not fix)"
 else

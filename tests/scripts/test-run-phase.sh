@@ -196,6 +196,7 @@ export MOCK_CLAUDE_RESPONSE='{"status":"PASS","feedback":"ok","files_changed":[]
 # When: run-phase.sh is invoked with invalid phase
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" nonexistent-phase "$WORKTREE" 2>&1) || EXIT_CODE=$?
+# Then: non-zero exit with descriptive error message
 if [ "$EXIT_CODE" -ne 0 ]; then
     if echo "$OUTPUT" | grep -qiE "not found|unknown|invalid|no prompt"; then
         pass "Invalid phase-name rejected with descriptive error"
@@ -266,6 +267,7 @@ export MOCK_CLAUDE_EXIT=1
 # When: run-phase.sh is invoked
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>&1) || EXIT_CODE=$?
+# Then: exit code is 2
 if [ "$EXIT_CODE" -eq 2 ]; then
     pass "Claude crash → exit code 2"
 else
@@ -284,6 +286,7 @@ echo "[E1] No arguments shows usage error"
 # When: run-phase.sh is invoked with no args
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" 2>&1) || EXIT_CODE=$?
+# Then: non-zero exit with usage message
 if [ "$EXIT_CODE" -ne 0 ]; then
     if echo "$OUTPUT" | grep -qiE "usage|phase-name|required"; then
         pass "No arguments: rejected with usage message"
@@ -301,6 +304,7 @@ echo "[E2] Missing worktree-path shows error"
 # When: run-phase.sh is invoked with only phase name
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer 2>&1) || EXIT_CODE=$?
+# Then: non-zero exit with descriptive error
 if [ "$EXIT_CODE" -ne 0 ]; then
     if echo "$OUTPUT" | grep -qiE "usage|worktree|required|path"; then
         pass "Missing worktree-path: rejected with error message"
@@ -318,6 +322,7 @@ echo "[E3] Non-existent worktree path rejected"
 # When: run-phase.sh is invoked with non-existent path
 EXIT_CODE=0
 OUTPUT=$("$RUN_PHASE" test-writer "$WORK_DIR/nonexistent-worktree" 2>&1) || EXIT_CODE=$?
+# Then: non-zero exit with descriptive error
 if [ "$EXIT_CODE" -ne 0 ]; then
     if echo "$OUTPUT" | grep -qiE "not found|does not exist|no such|invalid"; then
         pass "Non-existent worktree path rejected with descriptive error"
