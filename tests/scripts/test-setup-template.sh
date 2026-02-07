@@ -36,7 +36,7 @@ echo "=== t-1.1.3: setup-template.sh ==="
 echo ""
 
 # ---------- Test 1: Run with no arguments, creates project in temp dir ----------
-echo "[1/5] Run with no arguments"
+echo "[1/7] Run with no arguments"
 PROJECT_DIR=$("$SETUP_SCRIPT" 2>/dev/null)
 if [ -n "$PROJECT_DIR" ] && [ -d "$PROJECT_DIR" ]; then
     pass "Script prints path to stdout and directory exists"
@@ -51,7 +51,7 @@ cleanup() { for d in "${CLEANUP_DIRS[@]}"; do rm -rf "$d" 2>/dev/null; done; }
 trap cleanup EXIT
 
 # ---------- Test 2: Git repository initialized with at least one commit ----------
-echo "[2/5] Git repository with initial commit"
+echo "[2/7] Git repository with initial commit"
 COMMIT_COUNT=$(cd "$PROJECT_DIR" && git log --oneline 2>/dev/null | wc -l)
 if [ "$COMMIT_COUNT" -ge 1 ]; then
     pass "git log shows $COMMIT_COUNT commit(s)"
@@ -60,7 +60,7 @@ else
 fi
 
 # ---------- Test 3: bd ready lists the 2 task beads ----------
-echo "[3/5] bd ready lists task beads"
+echo "[3/7] bd ready lists task beads"
 READY_OUTPUT=$(cd "$PROJECT_DIR" && bd ready 2>&1)
 TASK_COUNT=$(echo "$READY_OUTPUT" | grep -c "demo-1\.1\." || true)
 if [ "$TASK_COUNT" -eq 2 ]; then
@@ -70,8 +70,37 @@ else
     echo "  Output: $READY_OUTPUT"
 fi
 
-# ---------- Test 4: Template files copied ----------
-echo "[4/5] Template files present"
+# ---------- Test 4: bd show has title, description, acceptance criteria, parent ----------
+echo "[4/7] bd show has full metadata"
+SHOW_OUTPUT=$(cd "$PROJECT_DIR" && bd show demo-1.1.1 2>&1)
+SHOW_OK=true
+for field in "Validate email format" "DESCRIPTION" "demo-1.1"; do
+    if ! echo "$SHOW_OUTPUT" | grep -q "$field"; then
+        fail "bd show demo-1.1.1 missing expected content: $field"
+        SHOW_OK=false
+    fi
+done
+if [ "$SHOW_OK" = true ]; then
+    pass "bd show has title, description, and parent reference"
+fi
+
+# ---------- Test 5: Deterministic state across runs ----------
+echo "[5/7] Deterministic state"
+PROJECT_DIR_DET=$("$SETUP_SCRIPT" 2>/dev/null)
+CLEANUP_DIRS+=("$PROJECT_DIR_DET")
+FILES1=$(cd "$PROJECT_DIR" && find . -not -path './.git/*' -not -path './.beads/beads.db*' -not -name 'last-touched' | sort)
+FILES2=$(cd "$PROJECT_DIR_DET" && find . -not -path './.git/*' -not -path './.beads/beads.db*' -not -name 'last-touched' | sort)
+BD_LIST1=$(cd "$PROJECT_DIR" && bd list 2>&1)
+BD_LIST2=$(cd "$PROJECT_DIR_DET" && bd list 2>&1)
+if [ "$FILES1" = "$FILES2" ] && [ "$BD_LIST1" = "$BD_LIST2" ]; then
+    pass "file tree and bd list are identical across runs"
+else
+    fail "state differs between runs"
+    echo "  Files diff: $(diff <(echo "$FILES1") <(echo "$FILES2") || true)"
+fi
+
+# ---------- Test 6: Template files copied ----------
+echo "[6/7] Template files present"
 FILES_OK=true
 for f in src/main.go src/go.mod CLAUDE.md README.md; do
     if [ ! -f "$PROJECT_DIR/$f" ]; then
@@ -83,8 +112,8 @@ if [ "$FILES_OK" = true ]; then
     pass "src/main.go, src/go.mod, CLAUDE.md, README.md all present"
 fi
 
-# ---------- Test 5: Fails when bd is not installed ----------
-echo "[5/5] Fails when bd not on PATH"
+# ---------- Test 7: Fails when bd is not installed ----------
+echo "[7/7] Fails when bd not on PATH"
 # Build PATH with bd's directory removed
 BD_DIR="$(dirname "$(command -v bd)")"
 NO_BD_PATH=$(echo "$PATH" | tr ':' '\n' | grep -Fxv "$BD_DIR" | tr '\n' ':' | sed 's/:$//')
