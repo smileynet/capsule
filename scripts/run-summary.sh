@@ -11,6 +11,7 @@
 #   --signoff-attempts=N:     Number of sign-off attempts
 #   --max-retries=N:          Max retries configured for pipeline
 #   --duration=SECONDS:       Total pipeline duration in seconds
+#   --last-feedback=TEXT:     Last review feedback from failed phase
 #
 # Gathers structured context (worklog, retry counts, bead hierarchy progress)
 # and invokes Claude to produce a narrative summary.
@@ -39,6 +40,7 @@ EXEC_REVIEW_ATTEMPTS=0
 SIGNOFF_ATTEMPTS=0
 MAX_RETRIES=3
 DURATION=0
+LAST_FEEDBACK=""
 
 for arg in "$@"; do
     case "$arg" in
@@ -65,6 +67,9 @@ for arg in "$@"; do
             ;;
         --duration=*)
             DURATION="${arg#--duration=}"
+            ;;
+        --last-feedback=*)
+            LAST_FEEDBACK="${arg#--last-feedback=}"
             ;;
         -*)
             echo "ERROR: Unknown option: $arg" >&2
@@ -207,6 +212,13 @@ CONTEXT="$CONTEXT
 - test-writer/test-review attempts: $TEST_REVIEW_ATTEMPTS
 - execute/execute-review attempts: $EXEC_REVIEW_ATTEMPTS
 - sign-off attempts: $SIGNOFF_ATTEMPTS"
+
+if [ -n "$LAST_FEEDBACK" ]; then
+    CONTEXT="$CONTEXT
+
+### Last Review Feedback
+$LAST_FEEDBACK"
+fi
 
 if [ -n "$WORKLOG_CONTENTS" ]; then
     CONTEXT="$CONTEXT

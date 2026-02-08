@@ -407,6 +407,7 @@ run-summary.sh <bead-id> [options]
 | `--signoff-attempts`        | no       | `0`       | Number of sign-off attempts              |
 | `--max-retries`             | no       | `3`       | Max retries configured for pipeline      |
 | `--duration`                | no       | `0`       | Total pipeline duration in seconds       |
+| `--last-feedback`           | no       | —         | Last review feedback from the failed phase |
 
 **Prerequisites:** `claude` (required), `jq` and `bd` (optional, for hierarchy)
 
@@ -603,13 +604,14 @@ cd <worktree-path> && claude -p "<prompt-contents>" --dangerously-skip-permissio
 **Inputs (injected by run-summary.sh):**
 - Pipeline outcome (SUCCESS/FAILED/ERROR)
 - Retry history (attempt counts per phase pair)
+- Last review feedback (on failure, the feedback from the last failed review)
 - Worklog contents
 - Feature and epic hierarchy with progress counts
 
 **Agent rules:**
 - Does NOT read files — all context is provided in the prompt
 - Does NOT emit a JSON signal — output is markdown narrative only
-- Produces four sections: What Was Accomplished, Challenges Encountered, End State, Feature & Epic Progress
+- Produces four sections (five on failure): What Was Accomplished, Challenges Encountered, End State, Feature & Epic Progress, and Next Steps (failure only)
 - Target length: 15-30 lines
 
 **Output destinations:**

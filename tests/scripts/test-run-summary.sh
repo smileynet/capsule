@@ -45,7 +45,7 @@ echo "=== run-summary.sh tests ==="
 echo ""
 
 # ---------- Test 1: Script exists and is executable ----------
-echo "[1/8] Script exists and is executable"
+echo "[1/9] Script exists and is executable"
 if [ -x "$SUMMARY_SCRIPT" ]; then
     pass "run-summary.sh exists and is executable"
 else
@@ -53,7 +53,7 @@ else
 fi
 
 # ---------- Test 2: Missing bead-id rejected ----------
-echo "[2/8] Missing bead-id rejected"
+echo "[2/9] Missing bead-id rejected"
 MISSING_EXIT=0
 MISSING_OUTPUT=$("$SUMMARY_SCRIPT" 2>&1) || MISSING_EXIT=$?
 if [ "$MISSING_EXIT" -ne 0 ]; then
@@ -68,7 +68,7 @@ else
 fi
 
 # ---------- Test 3: Summary generates output on success path ----------
-echo "[3/8] Summary generates output on success path (mock claude)"
+echo "[3/9] Summary generates output on success path (mock claude)"
 
 # Create a worklog in the archive location (post-merge)
 ARCHIVE_DIR="$PROJECT_DIR/.capsule/logs/$BEAD_ID"
@@ -129,7 +129,7 @@ else
 fi
 
 # ---------- Test 4: Summary saved to archive directory ----------
-echo "[4/8] Summary saved to archive directory"
+echo "[4/9] Summary saved to archive directory"
 if [ -f "$ARCHIVE_DIR/summary.md" ]; then
     SAVED_SIZE=$(wc -c < "$ARCHIVE_DIR/summary.md")
     if [ "$SAVED_SIZE" -gt 0 ]; then
@@ -142,7 +142,7 @@ else
 fi
 
 # ---------- Test 5: Summary generates output on failure path ----------
-echo "[5/8] Summary generates output on failure path (worklog in worktree)"
+echo "[5/9] Summary generates output on failure path (worklog in worktree)"
 
 # Create a worktree directory with worklog (simulating failure case)
 FAIL_BEAD="demo-1.1.2"
@@ -185,7 +185,7 @@ else
 fi
 
 # ---------- Test 6: Summary handles missing worklog gracefully ----------
-echo "[6/8] Summary handles missing worklog gracefully"
+echo "[6/9] Summary handles missing worklog gracefully"
 
 # Use a bead that exists but has no worklog anywhere
 NOWORKLOG_BEAD="demo-1.1"  # Feature-level, never has a worktree
@@ -207,7 +207,7 @@ else
 fi
 
 # ---------- Test 7: Pipeline still succeeds if summary fails ----------
-echo "[7/8] Pipeline still succeeds if summary script fails"
+echo "[7/9] Pipeline still succeeds if summary script fails"
 
 # Create a mock claude that fails
 MOCK_FAIL_DIR=$(mktemp -d)
@@ -232,8 +232,90 @@ else
     fail "Summary should exit non-zero when claude fails"
 fi
 
-# ---------- Test 8: Prompt template exists ----------
-echo "[8/8] Summary prompt template exists"
+# ---------- Test 8: Last feedback included in context ----------
+echo "[8/9] Last feedback included in context"
+
+# Create a mock claude that captures the prompt and checks for feedback content
+cat > "$MOCK_DIR/claude" << 'MOCK_EOF'
+#!/usr/bin/env bash
+PROMPT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -p) PROMPT="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+# Check if the prompt contains the feedback text
+if printf '%s\n' "$PROMPT" | grep -q "Last Review Feedback"; then
+    if printf '%s\n' "$PROMPT" | grep -q "Fix the email regex"; then
+        echo "## Pipeline Summary: demo-1.1.1"
+        echo ""
+        echo "### What Was Accomplished"
+        echo "Pipeline failed during execute/execute-review."
+        echo ""
+        echo "### Challenges Encountered"
+        echo "Review feedback: Fix the email regex."
+        echo ""
+        echo "### End State"
+        echo "Worktree preserved."
+        echo ""
+        echo "### Feature & Epic Progress"
+        echo "No feature/epic context available."
+        echo ""
+        echo "### Next Steps"
+        echo "- Fix the email regex in src/validation.go"
+        exit 0
+    fi
+fi
+echo "ERROR: Last Review Feedback section not found in prompt" >&2
+exit 1
+MOCK_EOF
+chmod +x "$MOCK_DIR/claude"
+
+FEEDBACK_EXIT=0
+FEEDBACK_OUTPUT=$(PATH="$MOCK_DIR:$PATH" "$SUMMARY_SCRIPT" "$BEAD_ID" \
+    --project-dir="$PROJECT_DIR" \
+    --outcome=FAILED \
+    --failed-stage="execute/execute-review" \
+    --test-review-attempts=1 \
+    --exec-review-attempts=3 \
+    --signoff-attempts=0 \
+    --max-retries=3 \
+    --duration=90 \
+    --last-feedback="Fix the email regex in src/validation.go — test expects RFC 5322 format" 2>&1) || FEEDBACK_EXIT=$?
+
+if [ "$FEEDBACK_EXIT" -eq 0 ] && echo "$FEEDBACK_OUTPUT" | grep -q "Next Steps"; then
+    pass "Last feedback passed through to claude prompt and reflected in output"
+else
+    fail "Last feedback not passed through correctly (exit $FEEDBACK_EXIT)"
+    echo "  Output: $FEEDBACK_OUTPUT"
+fi
+
+# Restore the original mock claude for subsequent tests
+cat > "$MOCK_DIR/claude" << 'MOCK_EOF'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do shift; done
+cat << 'SUMMARY'
+## Pipeline Summary: demo-1.1.1
+
+### What Was Accomplished
+The pipeline implemented email validation.
+
+### Challenges Encountered
+None — pipeline completed on first attempt.
+
+### End State
+Bead closed, code merged to main. 3 tests passing.
+
+### Feature & Epic Progress
+1 of 2 tasks closed for feature demo-1.1.
+SUMMARY
+MOCK_EOF
+chmod +x "$MOCK_DIR/claude"
+
+# ---------- Test 9: Prompt template exists ----------
+echo "[9/9] Summary prompt template exists"
 PROMPT_FILE="$REPO_ROOT/prompts/summary.md"
 if [ -f "$PROMPT_FILE" ]; then
     if grep -q '{{CONTEXT}}' "$PROMPT_FILE"; then

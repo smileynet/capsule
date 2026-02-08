@@ -86,6 +86,7 @@ PIPELINE_START=$(date +%s)
 TEST_REVIEW_ATTEMPTS=0
 EXEC_REVIEW_ATTEMPTS=0
 SIGNOFF_ATTEMPTS=0
+LAST_FEEDBACK=""
 
 # --- Helper: run a phase pair with retry ---
 # Usage: run_phase_pair <writer-phase> <review-phase> <worktree> <max-retries> [attempts-var]
@@ -117,6 +118,7 @@ run_phase_pair() {
             echo "  ERROR: $writer_phase failed (exit $writer_exit)" >&2
             echo "$writer_output" >&2
             [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
+            LAST_FEEDBACK="$writer_phase failed with exit code $writer_exit"
             return 2
         fi
 
@@ -136,6 +138,7 @@ run_phase_pair() {
             echo "  ERROR: $review_phase failed" >&2
             echo "$review_output" >&2
             [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
+            LAST_FEEDBACK=$(echo "$review_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$review_output")
             return 2
         fi
 
@@ -145,6 +148,7 @@ run_phase_pair() {
     done
 
     [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
+    LAST_FEEDBACK="$feedback"
     echo "  Retries exhausted for $writer_phase → $review_phase ($max_retries attempts)" >&2
     return 1
 }
@@ -175,6 +179,7 @@ run_signoff() {
             echo "  ERROR: sign-off failed" >&2
             echo "$signoff_output" >&2
             SIGNOFF_ATTEMPTS=$attempt
+            LAST_FEEDBACK=$(echo "$signoff_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$signoff_output")
             return 2
         fi
 
@@ -190,11 +195,13 @@ run_signoff() {
             echo "  ERROR: execute failed during sign-off retry (exit $exec_exit)" >&2
             echo "$exec_output" >&2
             SIGNOFF_ATTEMPTS=$attempt
+            LAST_FEEDBACK="execute failed during sign-off retry with exit code $exec_exit"
             return 2
         fi
     done
 
     SIGNOFF_ATTEMPTS=$attempt
+    LAST_FEEDBACK="$feedback"
     echo "  Retries exhausted for sign-off ($max_retries attempts)" >&2
     return 1
 }
@@ -220,6 +227,9 @@ run_summary() {
         )
         if [ -n "$failed_stage" ]; then
             summary_args+=("--failed-stage=$failed_stage")
+        fi
+        if [ -n "$LAST_FEEDBACK" ]; then
+            summary_args+=("--last-feedback=$LAST_FEEDBACK")
         fi
         "$SCRIPT_DIR/run-summary.sh" "${summary_args[@]}" || true
     fi
