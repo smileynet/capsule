@@ -116,7 +116,7 @@ run_phase_pair() {
         if [ "$writer_exit" -ne 0 ]; then
             echo "  ERROR: $writer_phase failed (exit $writer_exit)" >&2
             echo "$writer_output" >&2
-            [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
+            [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
             return 2
         fi
 
@@ -128,14 +128,14 @@ run_phase_pair() {
 
         if [ "$review_exit" -eq 0 ]; then
             echo "  $review_phase: PASS"
-            [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
+            [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
             return 0
         fi
 
         if [ "$review_exit" -eq 2 ]; then
             echo "  ERROR: $review_phase failed" >&2
             echo "$review_output" >&2
-            [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
+            [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
             return 2
         fi
 
@@ -144,7 +144,7 @@ run_phase_pair() {
         echo "  $review_phase: NEEDS_WORK (attempt $attempt/$max_retries)"
     done
 
-    [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
+    [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
     echo "  Retries exhausted for $writer_phase → $review_phase ($max_retries attempts)" >&2
     return 1
 }
@@ -203,7 +203,8 @@ run_signoff() {
 run_summary() {
     local outcome="$1"
     local failed_stage="${2:-}"
-    local duration=$(( $(date +%s) - PIPELINE_START ))
+    local pipeline_end=$(date +%s)
+    local duration=$(( pipeline_end - PIPELINE_START ))
 
     if [ -f "$SCRIPT_DIR/run-summary.sh" ]; then
         echo ""
@@ -239,6 +240,7 @@ PREP_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1) || PR
 if [ "$PREP_EXIT" -ne 0 ]; then
     echo "ERROR: Prep failed" >&2
     echo "$PREP_OUTPUT" >&2
+    run_summary "ERROR" "prep"
     exit 2
 fi
 

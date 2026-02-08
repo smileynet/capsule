@@ -118,9 +118,9 @@ if [ -n "$WORKLOG" ]; then
     WORKLOG_CONTENTS=$(cat "$WORKLOG")
 fi
 
-# --- Query bead hierarchy (graceful degradation if bd missing) ---
+# --- Query bead hierarchy (graceful degradation if bd or jq missing) ---
 HAS_BD=false
-if command -v bd >/dev/null 2>&1; then
+if command -v bd >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     HAS_BD=true
 fi
 
@@ -250,8 +250,13 @@ CLAUDE_OUTPUT=""
 CLAUDE_EXIT=0
 CLAUDE_OUTPUT=$(cd "$PROJECT_DIR" && claude -p "$PROMPT" --dangerously-skip-permissions 2>/dev/null) || CLAUDE_EXIT=$?
 
-if [ "$CLAUDE_EXIT" -ne 0 ] || [ -z "$CLAUDE_OUTPUT" ]; then
+if [ "$CLAUDE_EXIT" -ne 0 ]; then
     echo "WARNING: Summary generation failed (claude exit $CLAUDE_EXIT)" >&2
+    exit 1
+fi
+
+if [ -z "$CLAUDE_OUTPUT" ]; then
+    echo "WARNING: Summary generation produced no output" >&2
     exit 1
 fi
 
@@ -264,5 +269,5 @@ printf '%s\n' "$CLAUDE_OUTPUT" > "$ARCHIVE_DIR/summary.md"
 
 # --- Post as bead comment ---
 if $HAS_BD; then
-    (cd "$PROJECT_DIR" && bd comments add "$BEAD_ID" --message="$CLAUDE_OUTPUT" 2>/dev/null) || true
+    (cd "$PROJECT_DIR" && bd comments add "$BEAD_ID" "$CLAUDE_OUTPUT" 2>/dev/null) || true
 fi
