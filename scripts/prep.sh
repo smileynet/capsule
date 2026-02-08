@@ -89,49 +89,8 @@ TASK_DESCRIPTION=$(echo "$BEAD_JSON" | jq -r '.[0].description // empty')
 TASK_AC=$(echo "$BEAD_JSON" | jq -r '.[0].acceptance_criteria // empty')
 
 # Walk up the parent chain to find feature and epic
-PARENT_ID=$(echo "$BEAD_JSON" | jq -r '.[0].parent // empty')
-if [ -z "$PARENT_ID" ]; then
-    PARENT_ID=$(echo "$BEAD_JSON" | jq -r '[.[0].dependencies[]? | select(.dependency_type == "parent-child")][0].id // empty')
-fi
-
-FEATURE_ID=""
-FEATURE_TITLE=""
-FEATURE_GOAL=""
-EPIC_ID=""
-EPIC_TITLE=""
-EPIC_GOAL=""
-
-if [ -n "$PARENT_ID" ]; then
-    PARENT_JSON=$(cd "$PROJECT_DIR" && bd show "$PARENT_ID" --json 2>/dev/null) || true
-    if [ -n "$PARENT_JSON" ]; then
-        PARENT_TYPE=$(echo "$PARENT_JSON" | jq -r '.[0].issue_type // empty')
-        if [ "$PARENT_TYPE" = "feature" ]; then
-            FEATURE_ID="$PARENT_ID"
-            FEATURE_TITLE=$(echo "$PARENT_JSON" | jq -r '.[0].title // empty')
-            FEATURE_GOAL=$(echo "$PARENT_JSON" | jq -r '.[0].description // empty')
-            # Look for epic above feature
-            GRANDPARENT_ID=$(echo "$PARENT_JSON" | jq -r '.[0].parent // empty')
-            if [ -z "$GRANDPARENT_ID" ]; then
-                GRANDPARENT_ID=$(echo "$PARENT_JSON" | jq -r '[.[0].dependencies[]? | select(.dependency_type == "parent-child")][0].id // empty')
-            fi
-            if [ -n "$GRANDPARENT_ID" ]; then
-                GRANDPARENT_JSON=$(cd "$PROJECT_DIR" && bd show "$GRANDPARENT_ID" --json 2>/dev/null) || true
-                if [ -n "$GRANDPARENT_JSON" ]; then
-                    GRANDPARENT_TYPE=$(echo "$GRANDPARENT_JSON" | jq -r '.[0].issue_type // empty')
-                    if [ "$GRANDPARENT_TYPE" = "epic" ]; then
-                        EPIC_ID="$GRANDPARENT_ID"
-                        EPIC_TITLE=$(echo "$GRANDPARENT_JSON" | jq -r '.[0].title // empty')
-                        EPIC_GOAL=$(echo "$GRANDPARENT_JSON" | jq -r '.[0].description // empty')
-                    fi
-                fi
-            fi
-        elif [ "$PARENT_TYPE" = "epic" ]; then
-            EPIC_ID="$PARENT_ID"
-            EPIC_TITLE=$(echo "$PARENT_JSON" | jq -r '.[0].title // empty')
-            EPIC_GOAL=$(echo "$PARENT_JSON" | jq -r '.[0].description // empty')
-        fi
-    fi
-fi
+source "$SCRIPT_DIR/lib/resolve-parent-chain.sh"
+resolve_parent_chain "$PROJECT_DIR" "$BEAD_JSON"
 
 # --- Create worktree ---
 BRANCH_NAME="capsule-$BEAD_ID"

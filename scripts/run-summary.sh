@@ -130,11 +130,7 @@ if command -v bd >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
 fi
 
 BEAD_TITLE=""
-FEATURE_ID=""
-FEATURE_TITLE=""
 FEATURE_PROGRESS=""
-EPIC_ID=""
-EPIC_TITLE=""
 EPIC_PROGRESS=""
 
 if $HAS_BD; then
@@ -144,57 +140,24 @@ if $HAS_BD; then
         BEAD_TITLE=$(echo "$BEAD_JSON" | jq -r '.[0].title // empty' 2>/dev/null) || true
 
         # Walk parent chain to find feature and epic
-        PARENT_ID=$(echo "$BEAD_JSON" | jq -r '.[0].parent // empty' 2>/dev/null) || true
-        if [ -z "$PARENT_ID" ]; then
-            PARENT_ID=$(echo "$BEAD_JSON" | jq -r '[.[0].dependencies[]? | select(.dependency_type == "parent-child")][0].id // empty' 2>/dev/null) || true
-        fi
+        source "$SCRIPT_DIR/lib/resolve-parent-chain.sh"
+        resolve_parent_chain "$PROJECT_DIR" "$BEAD_JSON"
 
-        if [ -n "$PARENT_ID" ]; then
-            PARENT_JSON=$(cd "$PROJECT_DIR" && bd show "$PARENT_ID" --json 2>/dev/null) || true
-            if [ -n "$PARENT_JSON" ]; then
-                PARENT_TYPE=$(echo "$PARENT_JSON" | jq -r '.[0].issue_type // empty' 2>/dev/null) || true
-                if [ "$PARENT_TYPE" = "feature" ]; then
-                    FEATURE_ID="$PARENT_ID"
-                    FEATURE_TITLE=$(echo "$PARENT_JSON" | jq -r '.[0].title // empty' 2>/dev/null) || true
-                    # Query sibling tasks for feature progress (--all includes closed)
-                    SIBLING_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$FEATURE_ID" --all --json 2>/dev/null) || true
-                    if [ -n "$SIBLING_JSON" ]; then
-                        TOTAL=$(echo "$SIBLING_JSON" | jq 'length' 2>/dev/null) || TOTAL=0
-                        CLOSED=$(echo "$SIBLING_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || CLOSED=0
-                        FEATURE_PROGRESS="$CLOSED of $TOTAL tasks closed"
-                    fi
-                    # Look for epic above feature
-                    GRANDPARENT_ID=$(echo "$PARENT_JSON" | jq -r '.[0].parent // empty' 2>/dev/null) || true
-                    if [ -z "$GRANDPARENT_ID" ]; then
-                        GRANDPARENT_ID=$(echo "$PARENT_JSON" | jq -r '[.[0].dependencies[]? | select(.dependency_type == "parent-child")][0].id // empty' 2>/dev/null) || true
-                    fi
-                    if [ -n "$GRANDPARENT_ID" ]; then
-                        GRANDPARENT_JSON=$(cd "$PROJECT_DIR" && bd show "$GRANDPARENT_ID" --json 2>/dev/null) || true
-                        if [ -n "$GRANDPARENT_JSON" ]; then
-                            GRANDPARENT_TYPE=$(echo "$GRANDPARENT_JSON" | jq -r '.[0].issue_type // empty' 2>/dev/null) || true
-                            if [ "$GRANDPARENT_TYPE" = "epic" ]; then
-                                EPIC_ID="$GRANDPARENT_ID"
-                                EPIC_TITLE=$(echo "$GRANDPARENT_JSON" | jq -r '.[0].title // empty' 2>/dev/null) || true
-                                # Query sibling features for epic progress (--all includes closed)
-                                EPIC_CHILDREN_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$EPIC_ID" --all --json 2>/dev/null) || true
-                                if [ -n "$EPIC_CHILDREN_JSON" ]; then
-                                    E_TOTAL=$(echo "$EPIC_CHILDREN_JSON" | jq 'length' 2>/dev/null) || E_TOTAL=0
-                                    E_CLOSED=$(echo "$EPIC_CHILDREN_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || E_CLOSED=0
-                                    EPIC_PROGRESS="$E_CLOSED of $E_TOTAL features closed"
-                                fi
-                            fi
-                        fi
-                    fi
-                elif [ "$PARENT_TYPE" = "epic" ]; then
-                    EPIC_ID="$PARENT_ID"
-                    EPIC_TITLE=$(echo "$PARENT_JSON" | jq -r '.[0].title // empty' 2>/dev/null) || true
-                    EPIC_CHILDREN_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$EPIC_ID" --all --json 2>/dev/null) || true
-                    if [ -n "$EPIC_CHILDREN_JSON" ]; then
-                        E_TOTAL=$(echo "$EPIC_CHILDREN_JSON" | jq 'length' 2>/dev/null) || E_TOTAL=0
-                        E_CLOSED=$(echo "$EPIC_CHILDREN_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || E_CLOSED=0
-                        EPIC_PROGRESS="$E_CLOSED of $E_TOTAL features closed"
-                    fi
-                fi
+        # Query progress counts (summary-specific)
+        if [ -n "$FEATURE_ID" ]; then
+            SIBLING_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$FEATURE_ID" --all --json 2>/dev/null) || true
+            if [ -n "$SIBLING_JSON" ]; then
+                TOTAL=$(echo "$SIBLING_JSON" | jq 'length' 2>/dev/null) || TOTAL=0
+                CLOSED=$(echo "$SIBLING_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || CLOSED=0
+                FEATURE_PROGRESS="$CLOSED of $TOTAL tasks closed"
+            fi
+        fi
+        if [ -n "$EPIC_ID" ]; then
+            EPIC_CHILDREN_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$EPIC_ID" --all --json 2>/dev/null) || true
+            if [ -n "$EPIC_CHILDREN_JSON" ]; then
+                E_TOTAL=$(echo "$EPIC_CHILDREN_JSON" | jq 'length' 2>/dev/null) || E_TOTAL=0
+                E_CLOSED=$(echo "$EPIC_CHILDREN_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || E_CLOSED=0
+                EPIC_PROGRESS="$E_CLOSED of $E_TOTAL features closed"
             fi
         fi
     fi
