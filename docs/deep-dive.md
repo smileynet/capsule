@@ -392,33 +392,14 @@ This bead is a task under feature `demo-001.1` ("User can manage todos"), under 
 - `test_add_todo_empty_input_rejected`
 - `test_todos_persist_to_localStorage`
 
-### Prerequisites
-
-The demo uses files from `~/code/line-cook/docs/demos/demo-simple/` (CLAUDE.md and issues.jsonl). That repo must be cloned locally.
-
 ### Setup
 
 ```bash
-# 1. Create fresh demo project
-mkdir /tmp/capsule-demo && cd /tmp/capsule-demo
-git init && git commit --allow-empty -m "Initial commit"
+# Create fresh demo project from template (includes beads, dependencies, CLAUDE.md)
+PROJECT_DIR=$(~/code/capsule/scripts/setup-template.sh --template=demo-simple /tmp/capsule-demo)
+cd "$PROJECT_DIR"
 
-# 2. Copy project CLAUDE.md
-cp ~/code/line-cook/docs/demos/demo-simple/CLAUDE.md .
-
-# 3. Initialize beads
-bd init --prefix=demo
-
-# 4. Import demo issues (6 beads across 2 epics)
-cat ~/code/line-cook/docs/demos/demo-simple/issues.jsonl | bd import
-
-# 5. Set up dependency (demo-001.1.2 depends on demo-001.1.1)
-bd dep add demo-001.1.2 demo-001.1.1
-
-# 6. Commit initial state
-git add . && git commit -m "Initial demo setup"
-
-# 7. Verify
+# Verify
 bd ready   # → demo-001.1.1 (only ready task)
 ```
 

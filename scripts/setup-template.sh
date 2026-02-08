@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# setup-template.sh — Create a fresh test environment from the demo-capsule template.
+# setup-template.sh — Create a fresh test environment from a template.
 #
-# Usage: setup-template.sh [TARGET_DIR]
+# Usage: setup-template.sh [--template=NAME] [TARGET_DIR]
+#   --template=NAME: template to use (default: demo-capsule)
 #   TARGET_DIR: optional directory to create the project in (default: mktemp -d)
 #
 # Prints the project directory path to stdout on success.
@@ -10,7 +11,23 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEMPLATE_DIR="$REPO_ROOT/templates/demo-capsule"
+
+# --- Parse arguments ---
+TEMPLATE_NAME="demo-capsule"
+TARGET_DIR=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --template=*)
+            TEMPLATE_NAME="${arg#--template=}"
+            ;;
+        *)
+            TARGET_DIR="$arg"
+            ;;
+    esac
+done
+
+TEMPLATE_DIR="$REPO_ROOT/templates/$TEMPLATE_NAME"
 
 # --- Prerequisite checks ---
 for cmd in git bd; do
@@ -26,8 +43,7 @@ if [ ! -d "$TEMPLATE_DIR" ]; then
 fi
 
 # --- Create target directory ---
-if [ $# -ge 1 ]; then
-    TARGET_DIR="$1"
+if [ -n "$TARGET_DIR" ]; then
     if [ -d "$TARGET_DIR/.git" ]; then
         echo "ERROR: $TARGET_DIR already contains a git repository" >&2
         exit 1
@@ -47,9 +63,9 @@ fi
 )
 
 # --- Copy template files ---
-cp -r "$TEMPLATE_DIR/src" "$TARGET_DIR/src"
 cp "$TEMPLATE_DIR/CLAUDE.md" "$TARGET_DIR/CLAUDE.md"
-cp "$TEMPLATE_DIR/README.md" "$TARGET_DIR/README.md"
+[ -d "$TEMPLATE_DIR/src" ] && cp -r "$TEMPLATE_DIR/src" "$TARGET_DIR/src"
+[ -f "$TEMPLATE_DIR/README.md" ] && cp "$TEMPLATE_DIR/README.md" "$TARGET_DIR/README.md"
 
 # --- Initialize beads and import fixtures ---
 (
