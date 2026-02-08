@@ -122,7 +122,7 @@ else
     cat "$IMPORT_OUTPUT"
 fi
 
-# Verify imported beads (no subshell — cd in pipeline to avoid losing counters)
+# Verify imported beads
 READY_OUTPUT=$(cd "$TMPDIR" && bd list 2>&1)
 BEAD_COUNT=$(echo "$READY_OUTPUT" | grep -c "demo-" || true)
 if [ "$BEAD_COUNT" -eq 4 ]; then

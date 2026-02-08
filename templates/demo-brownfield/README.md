@@ -1,6 +1,6 @@
 # Demo Brownfield
 
-A minimal Go project used as a test subject for the capsule pipeline.
+A brownfield template used as a test subject for the capsule pipeline.
 
 ## Overview
 

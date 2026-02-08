@@ -1,4 +1,4 @@
-# Demo Simple
+# Demo Greenfield
 
 A greenfield template used as a test subject for the capsule pipeline.
 

@@ -396,8 +396,8 @@ This bead is a task under feature `demo-001.1` ("User can manage todos"), under 
 
 ```bash
 # Create fresh demo project from template (includes beads, dependencies, AGENTS.md)
-PROJECT_DIR=$(~/code/capsule/scripts/setup-template.sh --template=demo-greenfield /tmp/capsule-demo)
-cd "$PROJECT_DIR"
+~/code/capsule/scripts/setup-template.sh --template=demo-greenfield /tmp/capsule-demo
+cd /tmp/capsule-demo
 
 # Verify
 bd ready   # → demo-001.1.1 (only ready task)
