@@ -27,11 +27,15 @@ capsule/
 │   └── summary.md              # Post-pipeline narrative summary
 ├── templates/
 │   ├── worklog.md.template     # Worklog template (envsubst)
-│   └── demo-capsule/           # Template project
-│       ├── src/                # Go source code
+│   ├── demo-capsule/           # Go template (1 epic, 1 feature, 2 tasks)
+│   │   ├── src/                # Go source code
+│   │   ├── CLAUDE.md           # Project conventions
+│   │   ├── README.md           # Project description
+│   │   ├── issues.jsonl        # Bead fixtures
+│   │   └── test-fixtures.sh    # Fixture validation tests
+│   └── demo-simple/            # JS template (2 epics, 1 feature, 3 tasks)
 │       ├── CLAUDE.md           # Project conventions
-│       ├── README.md           # Project description
-│       ├── issues.jsonl        # Bead fixtures (1 epic, 1 feature, 2 tasks)
+│       ├── issues.jsonl        # Bead fixtures
 │       └── test-fixtures.sh    # Fixture validation tests
 ├── tests/
 │   ├── features/               # BDD feature files (Gherkin)
@@ -54,19 +58,20 @@ capsule/
 
 ### setup-template.sh
 
-Create a fresh test environment from the demo-capsule template.
+Create a fresh test environment from a template.
 
 **Usage:**
 
 ```
-setup-template.sh [TARGET_DIR]
+setup-template.sh [--template=NAME] [TARGET_DIR]
 ```
 
 **Arguments:**
 
-| Argument     | Required | Default    | Description                        |
-|-------------|----------|------------|------------------------------------|
-| `TARGET_DIR` | no       | `mktemp -d` | Directory to create the project in |
+| Argument     | Required | Default        | Description                          |
+|-------------|----------|----------------|--------------------------------------|
+| `--template` | no       | `demo-capsule` | Template name from `templates/`      |
+| `TARGET_DIR` | no       | `mktemp -d`   | Directory to create the project in   |
 
 **Prerequisites:** `git`, `bd`
 
@@ -76,7 +81,7 @@ setup-template.sh [TARGET_DIR]
 2. Creates target directory (or temp dir if not specified)
 3. Rejects directories that already contain a git repo
 4. Initializes a git repo with test user config
-5. Copies template source files (`src/`, `CLAUDE.md`, `README.md`)
+5. Copies template files (`CLAUDE.md`, plus `src/` and `README.md` if present)
 6. Runs `bd init --prefix=demo` and `bd import` from fixtures
 7. Commits everything as "Add template project and bead fixtures"
 8. Prints the project directory path to stdout
