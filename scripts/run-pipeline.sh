@@ -254,6 +254,7 @@ if [ "$PREP_EXIT" -ne 0 ]; then
     exit 2
 fi
 
+# Surface prep output (includes context quality report)
 echo "$PREP_OUTPUT" | sed 's/^/  /'
 WORKTREE_DIR="$PROJECT_DIR/.capsule/worktrees/$BEAD_ID"
 echo ""

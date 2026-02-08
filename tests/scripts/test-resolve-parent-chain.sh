@@ -11,8 +11,15 @@ SETUP_SCRIPT="$REPO_ROOT/scripts/setup-template.sh"
 PASS=0
 FAIL=0
 
-pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
-fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
+pass() {
+    PASS=$((PASS + 1))
+    echo "  PASS: $1"
+}
+
+fail() {
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $1"
+}
 
 # --- Prerequisite checks ---
 for cmd in jq bd; do
@@ -48,32 +55,15 @@ echo "[1/5] Full chain: task → feature → epic"
 BEAD_JSON=$(cd "$PROJECT_DIR" && bd show demo-1.1.1 --json 2>/dev/null)
 resolve_parent_chain "$PROJECT_DIR" "$BEAD_JSON"
 
-CHAIN_OK=true
-if [ "$FEATURE_ID" != "demo-1.1" ]; then
-    fail "Expected FEATURE_ID=demo-1.1, got '$FEATURE_ID'"
-    CHAIN_OK=false
-fi
-if [ -z "$FEATURE_TITLE" ]; then
-    fail "FEATURE_TITLE is empty"
-    CHAIN_OK=false
-fi
-if [ "$EPIC_ID" != "demo-1" ]; then
-    fail "Expected EPIC_ID=demo-1, got '$EPIC_ID'"
-    CHAIN_OK=false
-fi
-if [ -z "$EPIC_TITLE" ]; then
-    fail "EPIC_TITLE is empty"
-    CHAIN_OK=false
-fi
-if [ -z "$FEATURE_GOAL" ]; then
-    fail "FEATURE_GOAL is empty"
-    CHAIN_OK=false
-fi
-if [ -z "$EPIC_GOAL" ]; then
-    fail "EPIC_GOAL is empty"
-    CHAIN_OK=false
-fi
-if [ "$CHAIN_OK" = true ]; then
+ALL_VALID=true
+[ "$FEATURE_ID" != "demo-1.1" ] && fail "Expected FEATURE_ID=demo-1.1, got '$FEATURE_ID'" && ALL_VALID=false
+[ -z "$FEATURE_TITLE" ] && fail "FEATURE_TITLE is empty" && ALL_VALID=false
+[ "$EPIC_ID" != "demo-1" ] && fail "Expected EPIC_ID=demo-1, got '$EPIC_ID'" && ALL_VALID=false
+[ -z "$EPIC_TITLE" ] && fail "EPIC_TITLE is empty" && ALL_VALID=false
+[ -z "$FEATURE_GOAL" ] && fail "FEATURE_GOAL is empty" && ALL_VALID=false
+[ -z "$EPIC_GOAL" ] && fail "EPIC_GOAL is empty" && ALL_VALID=false
+
+if [ "$ALL_VALID" = true ]; then
     pass "Full chain resolved: feature=$FEATURE_ID, epic=$EPIC_ID"
 fi
 

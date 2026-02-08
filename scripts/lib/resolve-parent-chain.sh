@@ -17,6 +17,7 @@
 
 # Extract parent ID from bd show JSON, with fallback to dependencies array.
 # See docs/bd-schema.md for the contract.
+# Args: $1 = JSON from bd show
 _extract_parent_id() {
     local json="$1"
     local parent_id
@@ -29,6 +30,9 @@ _extract_parent_id() {
     echo "$parent_id"
 }
 
+# Resolve parent chain from task up through feature to epic.
+# Args: $1 = project directory, $2 = JSON from bd show
+# Sets globals: FEATURE_ID, FEATURE_TITLE, FEATURE_GOAL, EPIC_ID, EPIC_TITLE, EPIC_GOAL
 resolve_parent_chain() {
     local project_dir="$1"
     local bead_json="$2"

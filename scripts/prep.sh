@@ -73,7 +73,7 @@ BEAD_JSON=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null) || {
 
 TASK_TITLE=$(echo "$BEAD_JSON" | jq -r '.[0].title // empty')
 if [ -z "$TASK_TITLE" ]; then
-    echo "ERROR: Bead '$BEAD_ID' not found" >&2
+    echo "ERROR: Bead '$BEAD_ID' has no title (malformed or missing)" >&2
     exit 1
 fi
 

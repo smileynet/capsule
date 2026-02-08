@@ -125,9 +125,7 @@ fi
 
 # --- Query bead hierarchy (graceful degradation if bd or jq missing) ---
 HAS_BD=false
-if command -v bd >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    HAS_BD=true
-fi
+command -v bd >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && HAS_BD=true
 
 BEAD_TITLE=""
 FEATURE_PROGRESS=""
@@ -144,6 +142,7 @@ if $HAS_BD; then
         resolve_parent_chain "$PROJECT_DIR" "$BEAD_JSON"
 
         # Query progress counts (summary-specific)
+        # Query feature progress (sibling tasks)
         if [ -n "$FEATURE_ID" ]; then
             SIBLING_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$FEATURE_ID" --all --json 2>/dev/null) || true
             if [ -n "$SIBLING_JSON" ]; then
@@ -152,12 +151,14 @@ if $HAS_BD; then
                 FEATURE_PROGRESS="$CLOSED of $TOTAL tasks closed"
             fi
         fi
+
+        # Query epic progress (child features)
         if [ -n "$EPIC_ID" ]; then
             EPIC_CHILDREN_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$EPIC_ID" --all --json 2>/dev/null) || true
             if [ -n "$EPIC_CHILDREN_JSON" ]; then
-                E_TOTAL=$(echo "$EPIC_CHILDREN_JSON" | jq 'length' 2>/dev/null) || E_TOTAL=0
-                E_CLOSED=$(echo "$EPIC_CHILDREN_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || E_CLOSED=0
-                EPIC_PROGRESS="$E_CLOSED of $E_TOTAL features closed"
+                EPIC_TOTAL=$(echo "$EPIC_CHILDREN_JSON" | jq 'length' 2>/dev/null) || EPIC_TOTAL=0
+                EPIC_CLOSED=$(echo "$EPIC_CHILDREN_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || EPIC_CLOSED=0
+                EPIC_PROGRESS="$EPIC_CLOSED of $EPIC_TOTAL features closed"
             fi
         fi
     fi
