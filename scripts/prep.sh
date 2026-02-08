@@ -90,6 +90,9 @@ TASK_AC=$(echo "$BEAD_JSON" | jq -r '.[0].acceptance_criteria // empty')
 
 # Walk up the parent chain to find feature and epic
 PARENT_ID=$(echo "$BEAD_JSON" | jq -r '.[0].parent // empty')
+if [ -z "$PARENT_ID" ]; then
+    PARENT_ID=$(echo "$BEAD_JSON" | jq -r '[.[0].dependencies[]? | select(.dependency_type == "parent-child")][0].id // empty')
+fi
 
 FEATURE_ID=""
 FEATURE_TITLE=""
@@ -108,6 +111,9 @@ if [ -n "$PARENT_ID" ]; then
             FEATURE_GOAL=$(echo "$PARENT_JSON" | jq -r '.[0].description // empty')
             # Look for epic above feature
             GRANDPARENT_ID=$(echo "$PARENT_JSON" | jq -r '.[0].parent // empty')
+            if [ -z "$GRANDPARENT_ID" ]; then
+                GRANDPARENT_ID=$(echo "$PARENT_JSON" | jq -r '[.[0].dependencies[]? | select(.dependency_type == "parent-child")][0].id // empty')
+            fi
             if [ -n "$GRANDPARENT_ID" ]; then
                 GRANDPARENT_JSON=$(cd "$PROJECT_DIR" && bd show "$GRANDPARENT_ID" --json 2>/dev/null) || true
                 if [ -n "$GRANDPARENT_JSON" ]; then
@@ -145,7 +151,12 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Use acceptance_criteria field if present, otherwise extract from description
 ACCEPTANCE_CRITERIA="$TASK_AC"
 if [ -z "$ACCEPTANCE_CRITERIA" ]; then
-    ACCEPTANCE_CRITERIA=$(echo "$TASK_DESCRIPTION" | sed -n '/[Aa]cceptance criteria/,$ { /[Aa]cceptance criteria/d; p; }')
+    ACCEPTANCE_CRITERIA=$(echo "$TASK_DESCRIPTION" | \
+      sed -n '/^#*[[:space:]]*[Aa]cceptance [Cc]riteria/,/^#/{/^#*[[:space:]]*[Aa]cceptance [Cc]riteria/d;/^#/d;p;}')
+fi
+if [ -z "$ACCEPTANCE_CRITERIA" ]; then
+    ACCEPTANCE_CRITERIA=$(echo "$TASK_DESCRIPTION" | \
+      sed -n '/^#*[[:space:]]*[Rr]equirements/,/^#/{/^#*[[:space:]]*[Rr]equirements/d;/^#/d;p;}')
 fi
 
 # Convert {{ }} to ${ } for envsubst
@@ -163,6 +174,24 @@ sed 's/{{/\${/g; s/}}/}/g' "$TEMPLATE" | \
     TIMESTAMP="$TIMESTAMP" \
     envsubst '${EPIC_ID} ${EPIC_TITLE} ${EPIC_GOAL} ${FEATURE_ID} ${FEATURE_TITLE} ${FEATURE_GOAL} ${TASK_ID} ${TASK_TITLE} ${TASK_DESCRIPTION} ${ACCEPTANCE_CRITERIA} ${TIMESTAMP}' \
     > "$WORKTREE_DIR/worklog.md"
+
+# --- Context quality report ---
+echo "Context:"
+if [ -n "$EPIC_ID" ]; then
+    echo "  Epic: $EPIC_ID — $EPIC_TITLE"
+else
+    echo "  Epic: (none)" >&2
+fi
+if [ -n "$FEATURE_ID" ]; then
+    echo "  Feature: $FEATURE_ID — $FEATURE_TITLE"
+else
+    echo "  Feature: (none)" >&2
+fi
+if [ -n "$ACCEPTANCE_CRITERIA" ]; then
+    echo "  Acceptance criteria: found"
+else
+    echo "  Acceptance criteria: (none)" >&2
+fi
 
 echo "Worktree created: $WORKTREE_DIR"
 echo "Branch: $BRANCH_NAME"

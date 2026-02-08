@@ -254,8 +254,8 @@ if [ "$PREP_EXIT" -ne 0 ]; then
     exit 2
 fi
 
+echo "$PREP_OUTPUT" | sed 's/^/  /'
 WORKTREE_DIR="$PROJECT_DIR/.capsule/worktrees/$BEAD_ID"
-echo "  Worktree: $WORKTREE_DIR"
 echo ""
 
 # --- Stage 2: test-writer → test-review ---
