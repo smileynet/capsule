@@ -15,6 +15,7 @@ capsule/
 │   ├── parse-signal.sh         # Extract and validate signal JSON
 │   ├── run-pipeline.sh         # Orchestrate full pipeline
 │   ├── merge.sh                # Agent-reviewed merge to main
+│   ├── run-summary.sh          # Post-pipeline narrative summary
 │   └── teardown.sh             # Clean up worktrees and output
 ├── prompts/                    # Phase prompt templates
 │   ├── test-writer.md          # RED: write failing tests
@@ -22,7 +23,8 @@ capsule/
 │   ├── execute.md              # GREEN: implement code
 │   ├── execute-review.md       # Review implementation
 │   ├── sign-off.md             # Final verification
-│   └── merge.md                # Stage and commit in worktree
+│   ├── merge.md                # Stage and commit in worktree
+│   └── summary.md              # Post-pipeline narrative summary
 ├── templates/
 │   ├── worklog.md.template     # Worklog template (envsubst)
 │   └── demo-capsule/           # Template project
@@ -41,7 +43,9 @@ capsule/
 └── .capsule/                   # Runtime state (gitignored)
     ├── worktrees/<bead-id>/    # Active git worktrees
     │   └── .capsule/output/   # Phase output logs (inside each worktree)
-    └── logs/<bead-id>/         # Archived worklogs and phase output
+    └── logs/<bead-id>/         # Archived worklogs, phase output, and summary
+        ├── worklog.md          # Archived worklog
+        └── summary.md          # Pipeline narrative summary
 ```
 
 ---
@@ -295,6 +299,7 @@ run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N]
 [3/5] execute         → execute-review  (phase pair, max retries)
 [4/5] Sign-off        → (retries re-run execute on NEEDS_WORK)
 [5/5] Merge           → merge.sh <bead-id>
+      Summary         → run-summary.sh <bead-id> (runs after pipeline, success or failure)
 ```
 
 **Phase pair retry logic (`run_phase_pair`):**
@@ -376,6 +381,58 @@ merge.sh <bead-id> [--project-dir=DIR]
 | 0    | Merge completed successfully                  |
 | 1    | Merge failed (agent NEEDS_WORK, no sign-off, conflict) |
 | 2    | Error (missing dependencies, invalid arguments) |
+
+---
+
+### run-summary.sh
+
+Generate a narrative summary of a pipeline run.
+
+**Usage:**
+
+```
+run-summary.sh <bead-id> [options]
+```
+
+**Arguments:**
+
+| Argument                     | Required | Default   | Description                              |
+|-----------------------------|----------|-----------|------------------------------------------|
+| `bead-id`                   | yes      | —         | The bead the pipeline ran for            |
+| `--project-dir`             | no       | `.`       | Project root directory                   |
+| `--outcome`                 | no       | `UNKNOWN` | Pipeline outcome: `SUCCESS`, `FAILED`, or `ERROR` |
+| `--failed-stage`            | no       | —         | Stage where pipeline failed              |
+| `--test-review-attempts`    | no       | `0`       | Number of test-review attempts           |
+| `--exec-review-attempts`    | no       | `0`       | Number of execute-review attempts        |
+| `--signoff-attempts`        | no       | `0`       | Number of sign-off attempts              |
+| `--max-retries`             | no       | `3`       | Max retries configured for pipeline      |
+| `--duration`                | no       | `0`       | Total pipeline duration in seconds       |
+
+**Prerequisites:** `claude` (required), `jq` and `bd` (optional, for hierarchy)
+
+**Behavior:**
+
+1. Locates the worklog: tries `.capsule/logs/<bead-id>/worklog.md` (post-merge archive), falls back to `.capsule/worktrees/<bead-id>/worklog.md` (failure case)
+2. Queries bead hierarchy via `bd` (graceful degradation if `bd` is missing):
+   - Walks parent chain to find feature and epic ancestors
+   - Calculates progress: closed/total counts for sibling tasks and features
+3. Assembles a context block with: pipeline outcome, retry history, worklog contents, and feature/epic progress
+4. Injects context into `prompts/summary.md` (replaces `{{CONTEXT}}` placeholder)
+5. Invokes `claude -p "$PROMPT" --dangerously-skip-permissions` in the project root
+6. Outputs the narrative to:
+   - **stdout** — always (user sees it)
+   - **`.capsule/logs/<bead-id>/summary.md`** — saved to archive
+   - **Bead comment** — posted via `bd comments add` (if `bd` is available)
+7. Runs on both success and failure paths
+
+**Exit codes:**
+
+| Code | Meaning                                       |
+|------|-----------------------------------------------|
+| 0    | Summary generated successfully                |
+| 1    | Summary generation failed (non-fatal)         |
+
+**Note:** The pipeline wraps this script with `|| true` so summary failure never affects the pipeline exit code.
 
 ---
 
@@ -534,6 +591,31 @@ cd <worktree-path> && claude -p "<prompt-contents>" --dangerously-skip-permissio
 - Stages files with explicit `git add <path>` (never `git add -A`)
 - Commits with message from `$CAPSULE_COMMIT_MSG` environment variable
 - On PASS, signal includes an extra `commit_hash` field (not part of the core signal contract, but passed through by the parser)
+
+### Phase: summary
+
+**Prompt file:** `prompts/summary.md`
+
+**Purpose:** Produce a human-readable narrative about the pipeline run.
+
+**Invocation:** Not invoked via `run-phase.sh`. Instead, `run-summary.sh` injects context directly into the prompt and invokes `claude -p` without signal parsing.
+
+**Inputs (injected by run-summary.sh):**
+- Pipeline outcome (SUCCESS/FAILED/ERROR)
+- Retry history (attempt counts per phase pair)
+- Worklog contents
+- Feature and epic hierarchy with progress counts
+
+**Agent rules:**
+- Does NOT read files — all context is provided in the prompt
+- Does NOT emit a JSON signal — output is markdown narrative only
+- Produces four sections: What Was Accomplished, Challenges Encountered, End State, Feature & Epic Progress
+- Target length: 15-30 lines
+
+**Output destinations:**
+- stdout (always)
+- `.capsule/logs/<bead-id>/summary.md` (archive)
+- Bead comment via `bd comments add` (if `bd` available)
 
 ---
 
@@ -742,6 +824,7 @@ Every script validates its dependencies before executing:
 | run-phase.sh     | claude, jq                   |
 | run-pipeline.sh  | jq (+ subscripts)            |
 | merge.sh         | git, bd, jq, claude (via run-phase.sh) |
+| run-summary.sh   | claude (jq, bd optional)     |
 | teardown.sh      | git                          |
 
 ### Recovery procedures

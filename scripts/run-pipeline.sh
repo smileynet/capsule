@@ -81,14 +81,22 @@ for script in "$PREP_SCRIPT" "$RUN_PHASE" "$MERGE_SCRIPT"; do
     fi
 done
 
+# --- Tracking variables for summary ---
+PIPELINE_START=$(date +%s)
+TEST_REVIEW_ATTEMPTS=0
+EXEC_REVIEW_ATTEMPTS=0
+SIGNOFF_ATTEMPTS=0
+
 # --- Helper: run a phase pair with retry ---
-# Usage: run_phase_pair <writer-phase> <review-phase> <worktree> <max-retries>
+# Usage: run_phase_pair <writer-phase> <review-phase> <worktree> <max-retries> [attempts-var]
 # Returns: 0 on PASS, 1 on retries exhausted, 2 on ERROR
+# If attempts-var is provided, sets it to the number of attempts used.
 run_phase_pair() {
     local writer_phase="$1"
     local review_phase="$2"
     local worktree="$3"
     local max_retries="$4"
+    local attempts_var="${5:-}"
     local attempt=0
     local feedback=""
 
@@ -108,6 +116,7 @@ run_phase_pair() {
         if [ "$writer_exit" -ne 0 ]; then
             echo "  ERROR: $writer_phase failed (exit $writer_exit)" >&2
             echo "$writer_output" >&2
+            [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
             return 2
         fi
 
@@ -119,12 +128,14 @@ run_phase_pair() {
 
         if [ "$review_exit" -eq 0 ]; then
             echo "  $review_phase: PASS"
+            [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
             return 0
         fi
 
         if [ "$review_exit" -eq 2 ]; then
             echo "  ERROR: $review_phase failed" >&2
             echo "$review_output" >&2
+            [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
             return 2
         fi
 
@@ -133,6 +144,7 @@ run_phase_pair() {
         echo "  $review_phase: NEEDS_WORK (attempt $attempt/$max_retries)"
     done
 
+    [ -n "$attempts_var" ] && eval "$attempts_var=$attempt"
     echo "  Retries exhausted for $writer_phase → $review_phase ($max_retries attempts)" >&2
     return 1
 }
@@ -155,12 +167,14 @@ run_signoff() {
 
         if [ "$signoff_exit" -eq 0 ]; then
             echo "  sign-off: PASS"
+            SIGNOFF_ATTEMPTS=$attempt
             return 0
         fi
 
         if [ "$signoff_exit" -eq 2 ]; then
             echo "  ERROR: sign-off failed" >&2
             echo "$signoff_output" >&2
+            SIGNOFF_ATTEMPTS=$attempt
             return 2
         fi
 
@@ -175,12 +189,39 @@ run_signoff() {
         if [ "$exec_exit" -ne 0 ]; then
             echo "  ERROR: execute failed during sign-off retry (exit $exec_exit)" >&2
             echo "$exec_output" >&2
+            SIGNOFF_ATTEMPTS=$attempt
             return 2
         fi
     done
 
+    SIGNOFF_ATTEMPTS=$attempt
     echo "  Retries exhausted for sign-off ($max_retries attempts)" >&2
     return 1
+}
+
+# --- Helper: run summary (never affects pipeline exit) ---
+run_summary() {
+    local outcome="$1"
+    local failed_stage="${2:-}"
+    local duration=$(( $(date +%s) - PIPELINE_START ))
+
+    if [ -f "$SCRIPT_DIR/run-summary.sh" ]; then
+        echo ""
+        local summary_args=(
+            "$BEAD_ID"
+            "--project-dir=$PROJECT_DIR"
+            "--outcome=$outcome"
+            "--test-review-attempts=$TEST_REVIEW_ATTEMPTS"
+            "--exec-review-attempts=$EXEC_REVIEW_ATTEMPTS"
+            "--signoff-attempts=$SIGNOFF_ATTEMPTS"
+            "--max-retries=$MAX_RETRIES"
+            "--duration=$duration"
+        )
+        if [ -n "$failed_stage" ]; then
+            summary_args+=("--failed-stage=$failed_stage")
+        fi
+        "$SCRIPT_DIR/run-summary.sh" "${summary_args[@]}" || true
+    fi
 }
 
 # =============================================================================
@@ -208,12 +249,13 @@ echo ""
 # --- Stage 2: test-writer → test-review ---
 echo "[2/5] Phase pair: test-writer → test-review"
 PAIR_EXIT=0
-run_phase_pair "test-writer" "test-review" "$WORKTREE_DIR" "$MAX_RETRIES" || PAIR_EXIT=$?
+run_phase_pair "test-writer" "test-review" "$WORKTREE_DIR" "$MAX_RETRIES" TEST_REVIEW_ATTEMPTS || PAIR_EXIT=$?
 
 if [ "$PAIR_EXIT" -ne 0 ]; then
     echo ""
     echo "Pipeline aborted at test-writer/test-review (exit $PAIR_EXIT)" >&2
     echo "Worktree preserved: $WORKTREE_DIR" >&2
+    run_summary "FAILED" "test-writer/test-review"
     exit "$PAIR_EXIT"
 fi
 echo ""
@@ -221,12 +263,13 @@ echo ""
 # --- Stage 3: execute → execute-review ---
 echo "[3/5] Phase pair: execute → execute-review"
 PAIR_EXIT=0
-run_phase_pair "execute" "execute-review" "$WORKTREE_DIR" "$MAX_RETRIES" || PAIR_EXIT=$?
+run_phase_pair "execute" "execute-review" "$WORKTREE_DIR" "$MAX_RETRIES" EXEC_REVIEW_ATTEMPTS || PAIR_EXIT=$?
 
 if [ "$PAIR_EXIT" -ne 0 ]; then
     echo ""
     echo "Pipeline aborted at execute/execute-review (exit $PAIR_EXIT)" >&2
     echo "Worktree preserved: $WORKTREE_DIR" >&2
+    run_summary "FAILED" "execute/execute-review"
     exit "$PAIR_EXIT"
 fi
 echo ""
@@ -240,6 +283,7 @@ if [ "$SIGNOFF_EXIT" -ne 0 ]; then
     echo ""
     echo "Pipeline aborted at sign-off (exit $SIGNOFF_EXIT)" >&2
     echo "Worktree preserved: $WORKTREE_DIR" >&2
+    run_summary "FAILED" "sign-off"
     exit "$SIGNOFF_EXIT"
 fi
 echo ""
@@ -253,12 +297,15 @@ if [ "$MERGE_EXIT" -ne 0 ]; then
     echo "ERROR: Merge failed" >&2
     echo "$MERGE_OUTPUT" >&2
     echo "Worktree preserved: $WORKTREE_DIR" >&2
+    run_summary "FAILED" "merge"
     exit "$MERGE_EXIT"
 fi
 echo "  Merge: complete"
 echo ""
 
 # --- Summary ---
+run_summary "SUCCESS"
+echo ""
 echo "=== Pipeline Complete ==="
 echo "  Bead: $BEAD_ID"
 echo "  Status: SUCCESS"
