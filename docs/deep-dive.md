@@ -193,8 +193,8 @@ Worktree preserved at .capsule/worktrees/demo-001.1.1 for manual inspection.
 
 | Aspect | Detail |
 |--------|--------|
-| **Input** | Worktree with `worklog.md` + `CLAUDE.md`; optional feedback from prior review |
-| **Process** | Claude reads worklog (acceptance criteria) + CLAUDE.md (conventions). Writes failing tests — one per AC minimum. Tests must compile but fail due to missing implementation (RED phase TDD). No implementation code allowed. |
+| **Input** | Worktree with `worklog.md` + `AGENTS.md`; optional feedback from prior review |
+| **Process** | Claude reads worklog (acceptance criteria) + AGENTS.md (conventions). Writes failing tests — one per AC minimum. Tests must compile but fail due to missing implementation (RED phase TDD). No implementation code allowed. |
 | **Output** | Test files in worktree, worklog "Phase 1: test-writer" section updated |
 | **Signal** | PASS: all ACs covered, tests compile and fail correctly. NEEDS_WORK: couldn't cover all ACs. ERROR: couldn't read worklog or project structure. |
 
@@ -203,7 +203,7 @@ Worktree preserved at .capsule/worktrees/demo-001.1.1 for manual inspection.
 | Aspect | Detail |
 |--------|--------|
 | **Input** | Worktree with test files + updated worklog |
-| **Process** | Claude reviews tests against ACs. Runs test command from CLAUDE.md to verify tests fail for the right reason (missing impl, not compilation errors). Checks isolation, naming, edge cases. |
+| **Process** | Claude reviews tests against ACs. Runs test command from AGENTS.md to verify tests fail for the right reason (missing impl, not compilation errors). Checks isolation, naming, edge cases. |
 | **Output** | Worklog "Phase 2: test-review" section updated |
 | **Signal** | PASS: tests sufficient and failing correctly. NEEDS_WORK: specific issues with file, test name, problem, fix. ERROR: no test files found or can't run tests. |
 
@@ -395,8 +395,8 @@ This bead is a task under feature `demo-001.1` ("User can manage todos"), under 
 ### Setup
 
 ```bash
-# Create fresh demo project from template (includes beads, dependencies, CLAUDE.md)
-PROJECT_DIR=$(~/code/capsule/scripts/setup-template.sh --template=demo-simple /tmp/capsule-demo)
+# Create fresh demo project from template (includes beads, dependencies, AGENTS.md)
+PROJECT_DIR=$(~/code/capsule/scripts/setup-template.sh --template=demo-greenfield /tmp/capsule-demo)
 cd "$PROJECT_DIR"
 
 # Verify
@@ -415,7 +415,7 @@ bd ready   # → demo-001.1.1 (only ready task)
 
 1. **Prep** — Creates worktree at `.capsule/worktrees/demo-001.1.1/`. Worklog has full hierarchy: epic "TodoWebApp MVP" → feature "User can manage todos" → task "Implement add todo item functionality". Acceptance criteria extracted from the `## Requirements` section of the bead description.
 
-2. **Test-writer** — Creates `src/todo.test.js` with 4 tests matching the bead's test specifications. Tests use the simple test framework convention from CLAUDE.md (no Jest/Mocha). Tests should compile and fail because `src/todo.js` doesn't exist yet.
+2. **Test-writer** — Creates `src/todo.test.js` with 4 tests matching the bead's test specifications. Tests use the simple test framework convention from AGENTS.md (no Jest/Mocha). Tests should compile and fail because `src/todo.js` doesn't exist yet.
 
 3. **Test-review** — Verifies all acceptance criteria have test coverage (the bead specifies 4 unit tests across 5 requirements). Runs `node src/todo.test.js` to confirm tests fail for the right reason (missing module, not syntax errors).
 
@@ -462,9 +462,9 @@ test -d .capsule/worktrees/demo-001.1.1 && echo "FAIL" || echo "OK: worktree rem
 
 ---
 
-## 4. Minimal CLAUDE.md Template for Capsule Projects
+## 4. Minimal AGENTS.md Template for Capsule Projects
 
-### What capsule phases read from CLAUDE.md
+### What capsule phases read from AGENTS.md
 
 | Phase | Uses |
 |-------|------|
@@ -506,7 +506,7 @@ The test command is critical — 4 of 6 phases run it.
 ```
 ````
 
-### Reference: demo-simple CLAUDE.md (~30 lines)
+### Reference: demo-greenfield AGENTS.md (~30 lines)
 
 ````markdown
 # TodoWebApp
@@ -556,7 +556,7 @@ This provides everything capsule needs: stack (so agents know the language/runti
 
 ### Scaling guidance
 
-For larger projects, the CLAUDE.md should grow proportionally but stay **convention-focused**:
+For larger projects, the AGENTS.md should grow proportionally but stay **convention-focused**:
 
 ```markdown
 ## Conventions
@@ -569,3 +569,29 @@ For larger projects, the CLAUDE.md should grow proportionally but stay **convent
 ```
 
 The key insight: agents need to know **where things go** and **what patterns to follow**, not how the system works end-to-end.
+
+### Template directory specification
+
+Each template directory under `templates/` follows this file manifest:
+
+**Required files:**
+
+| File | Purpose |
+|------|---------|
+| `AGENTS.md` | Project conventions for pipeline agents (stack, structure, conventions, test command) |
+| `issues.jsonl` | Bead fixtures defining the epic/feature/task hierarchy |
+| `test-fixtures.sh` | Validation script for the fixture data (JSONL parsing, bd import, hierarchy) |
+
+**Optional files:**
+
+| File | Purpose |
+|------|---------|
+| `README.md` | Human-readable project description |
+| `src/` | Existing source code (brownfield templates only — greenfield templates have no source) |
+
+**Not included (and why):**
+
+- **`.claude/` directory** — Pipeline agents run headless (`claude -p`); auto-loading doesn't apply
+- **`worklog.md`** — Generated at runtime by `prep.sh`, not stored in template
+
+**Why AGENTS.md over CLAUDE.md:** AGENTS.md is an open standard for cross-tool compatibility. Pipeline agents receive context through explicit prompt instructions regardless of the conventions filename.

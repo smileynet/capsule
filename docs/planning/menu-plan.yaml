@@ -45,7 +45,7 @@ phases:
           beads so that I can repeatedly test the pipeline against a known
           starting state.
         acceptance_criteria:
-          - "Given a clean directory, When setup-template.sh runs, Then a git repo exists with source files, CLAUDE.md, and .beads/ initialized"
+          - "Given a clean directory, When setup-template.sh runs, Then a git repo exists with source files, AGENTS.md, and .beads/ initialized"
           - "Given the template repo, When bd ready runs, Then at least one task bead is available to work"
           - "Given the template beads, When bd show <task-id> runs, Then the bead has title, description, acceptance criteria, and parent feature/epic"
           - "Given multiple test runs, When setup-template.sh runs each time, Then the starting state is identical (deterministic)"
@@ -55,24 +55,24 @@ phases:
           expansion: "Multiple template projects for different languages/frameworks"
         tasks:
           - id: t-1.1.1
-            title: Create template project source files and CLAUDE.md
+            title: Create template project source files and AGENTS.md
             priority: 0
             tdd: true
             description: >
-              Create templates/demo-capsule/ with:
+              Create templates/demo-brownfield/ with:
               - src/ with a simple Go module (main.go, go.mod) that has
                 a clear feature gap for the test bead to fill
-              - CLAUDE.md documenting the project structure and conventions
+              - AGENTS.md documenting the project structure and conventions
               - README.md with project description
               Tests: validate files exist, go build succeeds on template.
-            deliverable: "templates/demo-capsule/ with buildable Go project"
+            deliverable: "templates/demo-brownfield/ with buildable Go project"
 
           - id: t-1.1.2
             title: Create template bead fixtures (JSONL)
             priority: 0
             tdd: true
             description: >
-              Create templates/demo-capsule/issues.jsonl with hierarchy:
+              Create templates/demo-brownfield/issues.jsonl with hierarchy:
               - 1 epic: "Demo Capsule Feature Set"
               - 1 feature: "Add input validation" (under epic)
               - 2 tasks: "Validate email format", "Validate phone format"
@@ -207,7 +207,7 @@ phases:
               - Tests must fail for the right reason (not syntax errors)
               - Update worklog.md with [TEST-WRITER] entry
               - Output structured JSON signal as final output
-              Include CLAUDE.md reference, worklog reference, and the
+              Include AGENTS.md reference, worklog reference, and the
               signal contract in the prompt.
               Tests: prompt contains required sections (worklog ref, signal
               contract, acceptance criteria instruction).
@@ -574,12 +574,12 @@ phases:
             deliverable: "Kong CLI with all command stubs"
 
           - id: t-2.1.3
-            title: Create Makefile and CLAUDE.md
+            title: Create Makefile and AGENTS.md
             priority: 1
             tdd: false
             depends_on: [t-2.1.1]
-            description: "build/test/lint/clean targets. CLAUDE.md with project conventions."
-            deliverable: "Makefile + CLAUDE.md"
+            description: "build/test/lint/clean targets. AGENTS.md with project conventions."
+            deliverable: "Makefile + AGENTS.md"
 
       # ------------------------------------------------------------------
       # F-2.2: Provider Interface & Claude Implementation

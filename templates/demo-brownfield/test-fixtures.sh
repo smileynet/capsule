@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test script for issues.jsonl bead fixtures.
+# Test script for demo-brownfield issues.jsonl bead fixtures.
 # Verifies: JSONL parsing, bd import, hierarchy validity.
 set -euo pipefail
 
@@ -130,6 +130,48 @@ if [ "$BEAD_COUNT" -eq 4 ]; then
 else
     fail "expected 4 beads after import, found $BEAD_COUNT"
     echo "$READY_OUTPUT"
+fi
+
+echo "=== Test: No shorthand parent/depends_on fields ==="
+SHORTHAND_OK=true
+while IFS= read -r line; do
+    ID=$(echo "$line" | jq -r '.id')
+    if echo "$line" | jq -e '.parent' >/dev/null 2>&1; then
+        fail "$ID has shorthand 'parent' field"
+        SHORTHAND_OK=false
+    fi
+    if echo "$line" | jq -e '.depends_on' >/dev/null 2>&1; then
+        fail "$ID has shorthand 'depends_on' field"
+        SHORTHAND_OK=false
+    fi
+done < "$JSONL"
+if [ "$SHORTHAND_OK" = true ]; then
+    pass "no shorthand parent/depends_on fields"
+fi
+
+echo "=== Test: Parent chain resolves after import ==="
+# Verify task has parent set to feature
+TASK_PARENT=$(cd "$TMPDIR" && bd show demo-1.1.1 --json 2>/dev/null | jq -r '.[0].parent // empty')
+if [ "$TASK_PARENT" = "demo-1.1" ]; then
+    pass "demo-1.1.1 parent resolves to demo-1.1"
+else
+    fail "demo-1.1.1 parent expected demo-1.1, got '$TASK_PARENT'"
+fi
+
+# Verify feature has parent set to epic
+FEAT_PARENT_IMPORTED=$(cd "$TMPDIR" && bd show demo-1.1 --json 2>/dev/null | jq -r '.[0].parent // empty')
+if [ "$FEAT_PARENT_IMPORTED" = "demo-1" ]; then
+    pass "demo-1.1 parent resolves to demo-1"
+else
+    fail "demo-1.1 parent expected demo-1, got '$FEAT_PARENT_IMPORTED'"
+fi
+
+echo "=== Test: Children query ==="
+CHILDREN_COUNT=$(cd "$TMPDIR" && bd list --parent=demo-1.1 --all --json 2>/dev/null | jq 'length')
+if [ "$CHILDREN_COUNT" -eq 2 ]; then
+    pass "demo-1.1 has 2 children"
+else
+    fail "demo-1.1 expected 2 children, got $CHILDREN_COUNT"
 fi
 
 echo ""

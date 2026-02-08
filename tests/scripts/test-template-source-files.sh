@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Test script for t-1.1.1: Create template project source files and CLAUDE.md
+# Test script for t-1.1.1: Create template project source files and AGENTS.md
 # Validates the template project structure, buildability, and documentation.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TEMPLATE_DIR="$REPO_ROOT/templates/demo-capsule"
+TEMPLATE_DIR="$REPO_ROOT/templates/demo-brownfield"
 
 PASS=0
 FAIL=0
@@ -17,15 +17,15 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 echo "=== t-1.1.1: Template Source Files ==="
 echo ""
 
-# Test 1: templates/demo-capsule/ exists with expected structure
+# Test 1: templates/demo-brownfield/ exists with expected structure
 echo "[1/6] Directory structure"
 # Given: the templates directory in the repository
-# When: checking for demo-capsule/ and src/ subdirectory
+# When: checking for demo-brownfield/ and src/ subdirectory
 # Then: both directories exist
 if [ -d "$TEMPLATE_DIR" ] && [ -d "$TEMPLATE_DIR/src" ]; then
-  pass "templates/demo-capsule/ and src/ exist"
+  pass "templates/demo-brownfield/ and src/ exist"
 else
-  fail "templates/demo-capsule/ or src/ missing"
+  fail "templates/demo-brownfield/ or src/ missing"
 fi
 
 # Test 2: go.mod exists with module declaration
@@ -63,15 +63,15 @@ else
 fi
 rm -rf "$TMPBIN"
 
-# Test 5: CLAUDE.md exists with content
-echo "[5/6] CLAUDE.md"
+# Test 5: AGENTS.md exists with content
+echo "[5/6] AGENTS.md"
 # Given: the template project root
-# When: checking for CLAUDE.md
+# When: checking for AGENTS.md
 # Then: file exists and is non-empty
-if [ -f "$TEMPLATE_DIR/CLAUDE.md" ] && [ -s "$TEMPLATE_DIR/CLAUDE.md" ]; then
-  pass "CLAUDE.md exists with content"
+if [ -f "$TEMPLATE_DIR/AGENTS.md" ] && [ -s "$TEMPLATE_DIR/AGENTS.md" ]; then
+  pass "AGENTS.md exists with content"
 else
-  fail "CLAUDE.md missing or empty"
+  fail "AGENTS.md missing or empty"
 fi
 
 # Test 6: README.md exists with content
@@ -111,15 +111,15 @@ else
   fail "No FEATURE_GAP marker in main.go"
 fi
 
-# CLAUDE.md does not reference paths outside template
-echo "[E3] CLAUDE.md path references"
-# Given: the template CLAUDE.md
+# AGENTS.md does not reference paths outside template
+echo "[E3] AGENTS.md path references"
+# Given: the template AGENTS.md
 # When: checking for absolute path references
 # Then: no /home/, /usr/, or /tmp/ paths are present
-if ! grep -qE "(^|[^.])/home/|/usr/|/tmp/" "$TEMPLATE_DIR/CLAUDE.md" 2>/dev/null; then
-  pass "CLAUDE.md has no absolute path references"
+if ! grep -qE "(^|[^.])/home/|/usr/|/tmp/" "$TEMPLATE_DIR/AGENTS.md" 2>/dev/null; then
+  pass "AGENTS.md has no absolute path references"
 else
-  fail "CLAUDE.md references paths outside template"
+  fail "AGENTS.md references paths outside template"
 fi
 
 # No hardcoded absolute paths in template files

@@ -2,7 +2,7 @@
 # setup-template.sh — Create a fresh test environment from a template.
 #
 # Usage: setup-template.sh [--template=NAME] [TARGET_DIR]
-#   --template=NAME: template to use (default: demo-capsule)
+#   --template=NAME: template to use (default: demo-brownfield)
 #   TARGET_DIR: optional directory to create the project in (default: mktemp -d)
 #
 # Prints the project directory path to stdout on success.
@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # --- Parse arguments ---
-TEMPLATE_NAME="demo-capsule"
+TEMPLATE_NAME="demo-brownfield"
 TARGET_DIR=""
 
 for arg in "$@"; do
@@ -63,7 +63,7 @@ fi
 )
 
 # --- Copy template files ---
-cp "$TEMPLATE_DIR/CLAUDE.md" "$TARGET_DIR/CLAUDE.md"
+cp "$TEMPLATE_DIR/AGENTS.md" "$TARGET_DIR/AGENTS.md"
 [ -d "$TEMPLATE_DIR/src" ] && cp -r "$TEMPLATE_DIR/src" "$TARGET_DIR/src"
 [ -f "$TEMPLATE_DIR/README.md" ] && cp "$TEMPLATE_DIR/README.md" "$TARGET_DIR/README.md"
 

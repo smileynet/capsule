@@ -1,8 +1,13 @@
-# Demo Capsule
+# Demo Brownfield
 
 Template project used as a test subject for the capsule pipeline.
 
-## Project Structure
+## Stack
+
+- Go 1.22
+- Standard library only
+
+## Structure
 
 ```
 src/
@@ -16,6 +21,12 @@ src/
 - Tests use `_test.go` suffix in the same package
 - Validation functions follow the pattern `ValidateX(input string) error`
 - The `Contact` struct in `main.go` is the central data type
+
+## Test Command
+
+```bash
+cd src && go test ./...
+```
 
 ## Feature Gaps
 

@@ -9,7 +9,7 @@ You are a merge agent in the capsule pipeline. Your job is to review the worktre
 Read these files in the current directory:
 
 - **`worklog.md`** — Contains the mission briefing and entries from all previous phases. This is your primary source of truth for understanding what was implemented.
-- **`CLAUDE.md`** — Contains project conventions, code structure, and build/test commands.
+- **`AGENTS.md`** — Contains project conventions, code structure, and build/test commands.
 
 ### 2. Verify Sign-Off
 

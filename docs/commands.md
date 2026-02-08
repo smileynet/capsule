@@ -27,16 +27,17 @@ capsule/
 │   └── summary.md              # Post-pipeline narrative summary
 ├── templates/
 │   ├── worklog.md.template     # Worklog template (envsubst)
-│   ├── demo-capsule/           # Go template (1 epic, 1 feature, 2 tasks)
-│   │   ├── src/                # Go source code
-│   │   ├── CLAUDE.md           # Project conventions
-│   │   ├── README.md           # Project description
-│   │   ├── issues.jsonl        # Bead fixtures
-│   │   └── test-fixtures.sh    # Fixture validation tests
-│   └── demo-simple/            # JS template (2 epics, 1 feature, 3 tasks)
-│       ├── CLAUDE.md           # Project conventions
-│       ├── issues.jsonl        # Bead fixtures
-│       └── test-fixtures.sh    # Fixture validation tests
+│   ├── demo-brownfield/           # Go template (1 epic, 1 feature, 2 tasks)
+│   │   ├── AGENTS.md           # Project conventions (required)
+│   │   ├── issues.jsonl        # Bead fixtures (required)
+│   │   ├── test-fixtures.sh    # Fixture validation tests (required)
+│   │   ├── README.md           # Project description (optional)
+│   │   └── src/                # Existing source code (optional, brownfield only)
+│   └── demo-greenfield/            # JS template (2 epics, 1 feature, 3 tasks)
+│       ├── AGENTS.md           # Project conventions (required)
+│       ├── issues.jsonl        # Bead fixtures (required)
+│       ├── test-fixtures.sh    # Fixture validation tests (required)
+│       └── README.md           # Project description (optional)
 ├── tests/
 │   ├── features/               # BDD feature files (Gherkin)
 │   ├── specs/                  # TDD test specifications
@@ -70,7 +71,7 @@ setup-template.sh [--template=NAME] [TARGET_DIR]
 
 | Argument     | Required | Default        | Description                          |
 |-------------|----------|----------------|--------------------------------------|
-| `--template` | no       | `demo-capsule` | Template name from `templates/`      |
+| `--template` | no       | `demo-brownfield` | Template name from `templates/`      |
 | `TARGET_DIR` | no       | `mktemp -d`   | Directory to create the project in   |
 
 **Prerequisites:** `git`, `bd`
@@ -81,7 +82,7 @@ setup-template.sh [--template=NAME] [TARGET_DIR]
 2. Creates target directory (or temp dir if not specified)
 3. Rejects directories that already contain a git repo
 4. Initializes a git repo with test user config
-5. Copies template files (`CLAUDE.md`, plus `src/` and `README.md` if present)
+5. Copies template files (`AGENTS.md`, plus `src/` and `README.md` if present)
 6. Runs `bd init --prefix=demo` and `bd import` from fixtures
 7. Commits everything as "Add template project and bead fixtures"
 8. Prints the project directory path to stdout
@@ -512,14 +513,14 @@ cd <worktree-path> && claude -p "<prompt-contents>" --dangerously-skip-permissio
 
 **Inputs read by agent:**
 - `worklog.md` — mission briefing, acceptance criteria
-- `CLAUDE.md` — project conventions, test patterns
+- `AGENTS.md` — project conventions, test patterns
 
 **Agent rules:**
 - At least one test per acceptance criterion
 - Tests MUST fail (implementation missing, not syntax errors)
 - Tests MUST compile
 - No implementation code allowed
-- Follow project conventions from `CLAUDE.md`
+- Follow project conventions from `AGENTS.md`
 - Update existing test files on retry rather than creating new ones
 - Appends phase entry to `worklog.md` under "Phase 1: test-writer"
 
@@ -533,7 +534,7 @@ cd <worktree-path> && claude -p "<prompt-contents>" --dangerously-skip-permissio
 
 **Inputs read by agent:**
 - `worklog.md` — acceptance criteria + test-writer phase entry
-- `CLAUDE.md` — project conventions
+- `AGENTS.md` — project conventions
 
 **Checks performed:**
 - Coverage: every acceptance criterion has tests
@@ -553,7 +554,7 @@ cd <worktree-path> && claude -p "<prompt-contents>" --dangerously-skip-permissio
 
 **Inputs read by agent:**
 - `worklog.md` — all prior phase entries
-- `CLAUDE.md` — project conventions
+- `AGENTS.md` — project conventions
 
 **Agent rules:**
 - Confirms RED state (tests fail before implementation)
@@ -772,7 +773,7 @@ The worktree is branched from HEAD of the project's current branch.
 ### During pipeline execution
 
 Phases run inside the worktree directory. Each phase:
-- Reads `worklog.md` and `CLAUDE.md`
+- Reads `worklog.md` and `AGENTS.md`
 - Creates/modifies source and test files
 - Appends to `worklog.md`
 - Output logs written to `.capsule/output/<phase>-<timestamp>-<pid>.log`
@@ -792,15 +793,15 @@ Removes all worktrees and output files. Preserves archived logs.
 
 ## Template Project
 
-The `templates/demo-capsule/` directory provides a deterministic starting state for pipeline testing.
+The `templates/demo-brownfield/` directory provides a deterministic starting state for pipeline testing.
 
 ### Contents
 
 | File              | Purpose                                      |
 |-------------------|----------------------------------------------|
-| `src/go.mod`      | Go module definition (`example.com/demo-capsule`, Go 1.22) |
+| `src/go.mod`      | Go module definition (`example.com/demo-brownfield`, Go 1.22) |
 | `src/main.go`     | Entry point with `Contact` struct and feature gaps |
-| `CLAUDE.md`       | Project conventions for pipeline agents      |
+| `AGENTS.md`       | Project conventions for pipeline agents      |
 | `README.md`       | Project description                          |
 | `issues.jsonl`    | Bead fixtures: 1 epic, 1 feature, 2 tasks   |
 | `test-fixtures.sh`| Validation tests for the fixtures            |

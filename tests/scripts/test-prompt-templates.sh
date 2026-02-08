@@ -94,8 +94,8 @@ echo "=== test-writer edge cases ==="
 echo "[E1] Does not assume specific test framework or states which one"
 # Given: the test-writer prompt
 # When: checking for framework-agnostic approach
-# Then: references project conventions (CLAUDE.md) for framework choice
-if grep -qi "CLAUDE.md\|project conventions\|conventions" "$TW_PROMPT"; then
+# Then: references project conventions (AGENTS.md) for framework choice
+if grep -qi "AGENTS.md\|project conventions\|conventions" "$TW_PROMPT"; then
     pass "References project conventions for test framework"
 else
     fail "Missing reference to project conventions"
@@ -358,12 +358,12 @@ else
     fail "Missing instruction to refactor after GREEN"
 fi
 
-echo "[E4] References CLAUDE.md for project conventions"
+echo "[E4] References AGENTS.md for project conventions"
 # Given: the execute prompt
 # When: checking for project convention reference
-# Then: references CLAUDE.md for coding conventions
-if grep -qi "CLAUDE.md\|project conventions\|conventions" "$EX_PROMPT"; then
-    pass "References project conventions (CLAUDE.md)"
+# Then: references AGENTS.md for coding conventions
+if grep -qi "AGENTS.md\|project conventions\|conventions" "$EX_PROMPT"; then
+    pass "References project conventions (AGENTS.md)"
 else
     fail "Missing reference to project conventions"
 fi
@@ -400,7 +400,7 @@ echo "[3/7] sign-off instructs running tests"
 # Given: the sign-off prompt
 # When: checking content for test running instruction
 # Then: contains instruction to run tests and verify all pass
-if grep -qi "run.*test\|test.*command\|all.*pass" "$SO_PROMPT" && grep -qi "CLAUDE.md" "$SO_PROMPT"; then
+if grep -qi "run.*test\|test.*command\|all.*pass" "$SO_PROMPT" && grep -qi "AGENTS.md" "$SO_PROMPT"; then
     pass "Contains instruction to run tests and verify all pass"
 else
     fail "Missing instruction to run tests"
@@ -461,14 +461,14 @@ fi
 echo ""
 echo "=== sign-off edge cases ==="
 
-echo "[E1] References CLAUDE.md for test commands"
+echo "[E1] References AGENTS.md for test commands"
 # Given: the sign-off prompt
-# When: checking for CLAUDE.md reference for build/test commands
-# Then: references CLAUDE.md
-if grep -qi "CLAUDE.md" "$SO_PROMPT"; then
-    pass "References CLAUDE.md for project conventions and test commands"
+# When: checking for AGENTS.md reference for build/test commands
+# Then: references AGENTS.md
+if grep -qi "AGENTS.md" "$SO_PROMPT"; then
+    pass "References AGENTS.md for project conventions and test commands"
 else
-    fail "Missing reference to CLAUDE.md"
+    fail "Missing reference to AGENTS.md"
 fi
 
 echo "[E2] Handles incomplete prior phases"

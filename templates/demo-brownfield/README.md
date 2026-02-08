@@ -1,4 +1,4 @@
-# Demo Capsule
+# Demo Brownfield
 
 A minimal Go project used as a test subject for the capsule pipeline.
 

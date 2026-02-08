@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test script for demo-simple issues.jsonl bead fixtures.
+# Test script for demo-greenfield issues.jsonl bead fixtures.
 # Verifies: JSONL parsing, bd import, hierarchy validity, parent-chain resolution.
 set -euo pipefail
 

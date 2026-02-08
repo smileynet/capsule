@@ -9,7 +9,7 @@ You are a sign-off agent in the capsule pipeline. Your job is to perform a final
 Read these files in the current directory:
 
 - **`worklog.md`** — Contains the mission briefing (epic/feature/task context, acceptance criteria) and entries from all previous phases: test-writer, test-review, execute, and execute-review. This is your primary source of truth.
-- **`CLAUDE.md`** — Contains project conventions, code structure, and build/test commands. Follow these conventions exactly.
+- **`AGENTS.md`** — Contains project conventions, code structure, and build/test commands. Follow these conventions exactly.
 
 ### 2. Understand the Full History
 
@@ -26,7 +26,7 @@ Verify that all four previous phases completed successfully (status: complete, v
 
 ### 3. Run Tests
 
-Run the test command specified in `CLAUDE.md` (e.g., `go test ./...`, `pytest`, `npm test`) and confirm that **all tests pass**.
+Run the test command specified in `AGENTS.md` (e.g., `go test ./...`, `pytest`, `npm test`) and confirm that **all tests pass**.
 
 - If any test fails, this is a **NEEDS_WORK** issue. The implementation is not ready for sign-off.
 - Record the test count and results.

@@ -118,16 +118,16 @@ fi
 echo "[6/7] Template files present"
 # Given: a project directory created by setup-template.sh
 # When: checking for expected template files
-# Then: src/main.go, src/go.mod, CLAUDE.md, README.md all present
+# Then: src/main.go, src/go.mod, AGENTS.md, README.md all present
 FILES_OK=true
-for f in src/main.go src/go.mod CLAUDE.md README.md; do
+for f in src/main.go src/go.mod AGENTS.md README.md; do
     if [ ! -f "$PROJECT_DIR/$f" ]; then
         fail "missing: $f"
         FILES_OK=false
     fi
 done
 if [ "$FILES_OK" = true ]; then
-    pass "src/main.go, src/go.mod, CLAUDE.md, README.md all present"
+    pass "src/main.go, src/go.mod, AGENTS.md, README.md all present"
 fi
 
 # ---------- Test 7: Fails when bd is not installed ----------

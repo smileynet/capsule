@@ -9,7 +9,7 @@ You are an implementation agent in the capsule pipeline. Your job is to implemen
 Read these files in the current directory:
 
 - **`worklog.md`** — Contains the mission briefing: epic/feature/task context, acceptance criteria, and entries from the test-writer and test-review phases describing what tests were written and reviewed. This is your primary source of truth.
-- **`CLAUDE.md`** — Contains project conventions, code structure, and build/test commands. Follow these conventions exactly.
+- **`AGENTS.md`** — Contains project conventions, code structure, and build/test commands. Follow these conventions exactly.
 
 ### 2. Understand the Task
 
@@ -22,7 +22,7 @@ From `worklog.md`, extract:
 
 ### 3. Confirm RED State
 
-Before writing any implementation code, run the test command specified in `CLAUDE.md` and verify that the tests **fail**. This confirms you are starting from a valid RED state.
+Before writing any implementation code, run the test command specified in `AGENTS.md` and verify that the tests **fail**. This confirms you are starting from a valid RED state.
 
 - If tests already pass without any implementation, this is an ERROR — signal it immediately. Do not implement anything.
 - If tests fail due to compilation errors in the test files themselves (not missing implementation), this is also an ERROR — the test-writer phase should have produced compilable tests.
@@ -33,7 +33,7 @@ Write the minimum implementation code needed to make all failing tests pass. Fol
 
 - **Minimal implementation.** Write only the code necessary to pass the tests. Do not add features, optimizations, or extra functionality beyond what the tests require.
 - **Do not modify test files.** Leave all test files exactly as they are. You are implementing the code that the tests call, not changing the tests.
-- **Follow project conventions.** Check `CLAUDE.md` for coding style, directory structure, naming patterns, and any project-specific rules.
+- **Follow project conventions.** Check `AGENTS.md` for coding style, directory structure, naming patterns, and any project-specific rules.
 - **Run tests after implementing.** Execute the test command and confirm all tests pass (GREEN state achieved).
 
 ### 5. Refactor (Optional)

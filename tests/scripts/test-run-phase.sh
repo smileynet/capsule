@@ -35,11 +35,11 @@ echo "=== Setting up test environment ==="
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-# Create a minimal worktree directory with worklog.md and CLAUDE.md
+# Create a minimal worktree directory with worklog.md and AGENTS.md
 WORKTREE="$WORK_DIR/worktree"
 mkdir -p "$WORKTREE"
 echo "# Worklog" > "$WORKTREE/worklog.md"
-echo "# Project" > "$WORKTREE/CLAUDE.md"
+echo "# Project" > "$WORKTREE/AGENTS.md"
 
 # Create mock claude binary that returns configurable signals
 MOCK_DIR="$WORK_DIR/mock-bin"

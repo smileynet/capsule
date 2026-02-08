@@ -7,7 +7,7 @@ Feature: Reusable template project with bead fixtures
     Given a clean directory
     When setup-template.sh runs
     Then a git repo exists with source files
-    And CLAUDE.md is present
+    And AGENTS.md is present
     And .beads/ is initialized
 
   Scenario: Template repo has available task beads
