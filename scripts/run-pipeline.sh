@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # run-pipeline.sh — Orchestrate the full capsule pipeline for a bead.
 #
-# Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N]
-#   bead-id:       The bead to run the pipeline for
-#   --project-dir: Project root directory (default: current directory)
-#   --max-retries: Maximum retries per phase pair (default: 3)
+# Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]
+#   bead-id:        The bead to run the pipeline for
+#   --project-dir:  Project root directory (default: current directory)
+#   --max-retries:  Maximum retries per phase pair (default: 3)
+#   --main-branch:  Main branch name (default: auto-detect)
 #
 # Pipeline stages:
 #   1. Prep: create worktree and worklog
@@ -28,6 +29,7 @@ MERGE_SCRIPT="$SCRIPT_DIR/merge.sh"
 BEAD_ID=""
 PROJECT_DIR="."
 MAX_RETRIES=3
+MAIN_BRANCH_ARG=""
 
 for arg in "$@"; do
     case "$arg" in
@@ -37,9 +39,12 @@ for arg in "$@"; do
         --max-retries=*)
             MAX_RETRIES="${arg#--max-retries=}"
             ;;
+        --main-branch=*)
+            MAIN_BRANCH_ARG="${arg#--main-branch=}"
+            ;;
         -*)
             echo "ERROR: Unknown option: $arg" >&2
-            echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N]" >&2
+            echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]" >&2
             exit 2
             ;;
         *)
@@ -47,7 +52,7 @@ for arg in "$@"; do
                 BEAD_ID="$arg"
             else
                 echo "ERROR: Unexpected argument: $arg" >&2
-                echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N]" >&2
+                echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]" >&2
                 exit 2
             fi
             ;;
@@ -56,12 +61,12 @@ done
 
 if [ -z "$BEAD_ID" ]; then
     echo "ERROR: bead-id is required" >&2
-    echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N]" >&2
+    echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]" >&2
     exit 2
 fi
 
 if ! [[ "$MAX_RETRIES" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: --max-retries must be a positive integer, got: $MAX_RETRIES" >&2
+    echo "ERROR: --max-retries must be a positive integer (1 or greater), got: $MAX_RETRIES" >&2
     exit 2
 fi
 
@@ -80,6 +85,25 @@ for script in "$PREP_SCRIPT" "$RUN_PHASE" "$MERGE_SCRIPT"; do
         exit 2
     fi
 done
+
+# --- Check for blocking dependencies ---
+if command -v bd >/dev/null 2>&1; then
+    BEAD_JSON=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null) || true
+    if [ -n "$BEAD_JSON" ]; then
+        # Extract non-parent-child dependencies that are not closed
+        BLOCKERS=$(echo "$BEAD_JSON" | jq -r '
+          [.[0].dependencies[]? |
+           select(.dependency_type != "parent-child") |
+           select(.status != "closed")] |
+          if length > 0 then map(.id + " (" + .status + ")") | join(", ") else empty end
+        ' 2>/dev/null) || true
+        if [ -n "$BLOCKERS" ]; then
+            echo "ERROR: Bead $BEAD_ID has unresolved blocking dependencies: $BLOCKERS" >&2
+            echo "Resolve these issues before running the pipeline." >&2
+            exit 2
+        fi
+    fi
+fi
 
 # --- Tracking variables for summary ---
 PIPELINE_START=$(date +%s)
@@ -103,27 +127,25 @@ run_phase_pair() {
 
     while [ "$attempt" -lt "$max_retries" ]; do
         attempt=$((attempt + 1))
-        echo "  [$attempt/$max_retries] Running $writer_phase..."
+        echo "  (attempt $attempt/$max_retries) Running $writer_phase..."
 
         # Run writer phase (with feedback on retry)
         local writer_exit=0
         local writer_output
-        if [ -n "$feedback" ]; then
-            writer_output=$("$RUN_PHASE" "$writer_phase" "$worktree" --feedback="$feedback" 2>&1) || writer_exit=$?
-        else
-            writer_output=$("$RUN_PHASE" "$writer_phase" "$worktree" 2>&1) || writer_exit=$?
-        fi
+        local writer_args=("$RUN_PHASE" "$writer_phase" "$worktree")
+        [ -n "$feedback" ] && writer_args+=(--feedback="$feedback")
+        writer_output=$("${writer_args[@]}" 2>&1) || writer_exit=$?
 
         if [ "$writer_exit" -ne 0 ]; then
             echo "  ERROR: $writer_phase failed (exit $writer_exit)" >&2
-            echo "$writer_output" >&2
+            printf '%s\n' "$writer_output" >&2
             [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
             LAST_FEEDBACK="$writer_phase failed with exit code $writer_exit"
             return 2
         fi
 
         # Run review phase
-        echo "  [$attempt/$max_retries] Running $review_phase..."
+        echo "  (attempt $attempt/$max_retries) Running $review_phase..."
         local review_exit=0
         local review_output
         review_output=$("$RUN_PHASE" "$review_phase" "$worktree" 2>&1) || review_exit=$?
@@ -136,7 +158,7 @@ run_phase_pair() {
 
         if [ "$review_exit" -eq 2 ]; then
             echo "  ERROR: $review_phase failed" >&2
-            echo "$review_output" >&2
+            printf '%s\n' "$review_output" >&2
             [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
             LAST_FEEDBACK=$(echo "$review_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$review_output")
             return 2
@@ -160,10 +182,11 @@ run_signoff() {
     local worktree="$1"
     local max_retries="$2"
     local attempt=0
+    local feedback=""
 
     while [ "$attempt" -lt "$max_retries" ]; do
         attempt=$((attempt + 1))
-        echo "  [$attempt/$max_retries] Running sign-off..."
+        echo "  (attempt $attempt/$max_retries) Running sign-off..."
 
         local signoff_exit=0
         local signoff_output
@@ -177,14 +200,13 @@ run_signoff() {
 
         if [ "$signoff_exit" -eq 2 ]; then
             echo "  ERROR: sign-off failed" >&2
-            echo "$signoff_output" >&2
+            printf '%s\n' "$signoff_output" >&2
             SIGNOFF_ATTEMPTS=$attempt
             LAST_FEEDBACK=$(echo "$signoff_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$signoff_output")
             return 2
         fi
 
         # NEEDS_WORK — re-run execute phase before retrying sign-off
-        local feedback
         feedback=$(echo "$signoff_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$signoff_output")
         echo "  sign-off: NEEDS_WORK — re-running execute (attempt $attempt/$max_retries)"
 
@@ -193,7 +215,7 @@ run_signoff() {
         exec_output=$("$RUN_PHASE" execute "$worktree" --feedback="$feedback" 2>&1) || exec_exit=$?
         if [ "$exec_exit" -ne 0 ]; then
             echo "  ERROR: execute failed during sign-off retry (exit $exec_exit)" >&2
-            echo "$exec_output" >&2
+            printf '%s\n' "$exec_output" >&2
             SIGNOFF_ATTEMPTS=$attempt
             LAST_FEEDBACK="execute failed during sign-off retry with exit code $exec_exit"
             return 2
@@ -243,23 +265,26 @@ echo "=== Capsule Pipeline: $BEAD_ID ==="
 echo ""
 
 # --- Stage 1: Prep ---
+STAGE_START=$(date +%s)
 echo "[1/5] Prep"
 PREP_EXIT=0
 PREP_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1) || PREP_EXIT=$?
 
 if [ "$PREP_EXIT" -ne 0 ]; then
     echo "ERROR: Prep failed" >&2
-    echo "$PREP_OUTPUT" >&2
+    printf '%s\n' "$PREP_OUTPUT" >&2
     run_summary "ERROR" "prep"
     exit 2
 fi
 
 # Surface prep output (includes context quality report)
-echo "$PREP_OUTPUT" | sed 's/^/  /'
+printf '%s\n' "$PREP_OUTPUT" | sed 's/^/  /'
 WORKTREE_DIR="$PROJECT_DIR/.capsule/worktrees/$BEAD_ID"
+echo "  ($(( $(date +%s) - STAGE_START ))s)"
 echo ""
 
 # --- Stage 2: test-writer → test-review ---
+STAGE_START=$(date +%s)
 echo "[2/5] Phase pair: test-writer → test-review"
 PAIR_EXIT=0
 run_phase_pair "test-writer" "test-review" "$WORKTREE_DIR" "$MAX_RETRIES" TEST_REVIEW_ATTEMPTS || PAIR_EXIT=$?
@@ -271,9 +296,11 @@ if [ "$PAIR_EXIT" -ne 0 ]; then
     run_summary "FAILED" "test-writer/test-review"
     exit "$PAIR_EXIT"
 fi
+echo "  ($(( $(date +%s) - STAGE_START ))s)"
 echo ""
 
 # --- Stage 3: execute → execute-review ---
+STAGE_START=$(date +%s)
 echo "[3/5] Phase pair: execute → execute-review"
 PAIR_EXIT=0
 run_phase_pair "execute" "execute-review" "$WORKTREE_DIR" "$MAX_RETRIES" EXEC_REVIEW_ATTEMPTS || PAIR_EXIT=$?
@@ -285,9 +312,11 @@ if [ "$PAIR_EXIT" -ne 0 ]; then
     run_summary "FAILED" "execute/execute-review"
     exit "$PAIR_EXIT"
 fi
+echo "  ($(( $(date +%s) - STAGE_START ))s)"
 echo ""
 
 # --- Stage 4: Sign-off ---
+STAGE_START=$(date +%s)
 echo "[4/5] Sign-off"
 SIGNOFF_EXIT=0
 run_signoff "$WORKTREE_DIR" "$MAX_RETRIES" || SIGNOFF_EXIT=$?
@@ -299,27 +328,35 @@ if [ "$SIGNOFF_EXIT" -ne 0 ]; then
     run_summary "FAILED" "sign-off"
     exit "$SIGNOFF_EXIT"
 fi
+echo "  ($(( $(date +%s) - STAGE_START ))s)"
 echo ""
 
 # --- Stage 5: Merge ---
+STAGE_START=$(date +%s)
 echo "[5/5] Merge"
 MERGE_EXIT=0
-MERGE_OUTPUT=$("$MERGE_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1) || MERGE_EXIT=$?
+MERGE_ARGS=("$BEAD_ID" "--project-dir=$PROJECT_DIR")
+if [ -n "$MAIN_BRANCH_ARG" ]; then
+    MERGE_ARGS+=("--main-branch=$MAIN_BRANCH_ARG")
+fi
+MERGE_OUTPUT=$("$MERGE_SCRIPT" "${MERGE_ARGS[@]}" 2>&1) || MERGE_EXIT=$?
 
 if [ "$MERGE_EXIT" -ne 0 ]; then
     echo "ERROR: Merge failed" >&2
-    echo "$MERGE_OUTPUT" >&2
+    printf '%s\n' "$MERGE_OUTPUT" >&2
     echo "Worktree preserved: $WORKTREE_DIR" >&2
     run_summary "FAILED" "merge"
     exit "$MERGE_EXIT"
 fi
-echo "  Merge: complete"
+echo "  Merge: complete ($(( $(date +%s) - STAGE_START ))s)"
 echo ""
 
 # --- Summary ---
 run_summary "SUCCESS"
+TOTAL_ELAPSED=$(( $(date +%s) - PIPELINE_START ))
 echo ""
 echo "=== Pipeline Complete ==="
 echo "  Bead: $BEAD_ID"
 echo "  Status: SUCCESS"
+echo "  Total time: ${TOTAL_ELAPSED}s"
 echo ""

@@ -12,6 +12,10 @@ bd close <id>         # Complete work
 bd sync               # Sync with git
 ```
 
+## Data Handling in Pipeline Scripts
+
+When editing shell scripts that process untrusted content (task descriptions, LLM output, user feedback), refer to `docs/data-handling.md` for safe patterns. Key rules: use `printf '%s\n'` not `echo`, use `jq -r` not grep/sed for JSON, use `awk` not `${//}` for template substitution with untrusted content.
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

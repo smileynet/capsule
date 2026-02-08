@@ -20,6 +20,9 @@ fi
 # --- Read all input ---
 INPUT=$(cat)
 
+# Strip markdown code fences before scanning for JSON
+INPUT=$(printf '%s\n' "$INPUT" | grep -v '^\s*```') || INPUT=""
+
 # --- Synthetic ERROR signal helper ---
 error_signal() {
     local msg="$1"
@@ -38,7 +41,7 @@ while IFS= read -r line; do
         LAST_JSON="$line"
         break
     fi
-done <<< "$(echo "$INPUT" | tac)"
+done <<< "$(printf '%s\n' "$INPUT" | tac)"
 
 # --- No JSON found ---
 if [ -z "$LAST_JSON" ]; then
@@ -47,7 +50,7 @@ fi
 
 # --- Validate required fields ---
 for field in status feedback files_changed summary; do
-    if [ "$(echo "$LAST_JSON" | jq "has(\"$field\")")" != "true" ]; then
+    if ! echo "$LAST_JSON" | jq -e "has(\"$field\")" >/dev/null; then
         error_signal "Missing required field: $field"
     fi
 done
@@ -61,10 +64,9 @@ case "$STATUS_VAL" in
         ;;
 esac
 
-# --- Validate files_changed is array ---
-IS_ARRAY=$(echo "$LAST_JSON" | jq '.files_changed | type == "array"')
-if [ "$IS_ARRAY" != "true" ]; then
-    error_signal "files_changed must be an array"
+# --- Validate files_changed is array of strings ---
+if ! echo "$LAST_JSON" | jq -e '.files_changed | type == "array" and all(type == "string")' >/dev/null; then
+    error_signal "files_changed must be an array of strings"
 fi
 
 # --- Output validated signal ---

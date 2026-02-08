@@ -63,6 +63,6 @@ The parser checks that the last JSON block:
 1. Is valid JSON
 2. Contains all four required fields (`status`, `feedback`, `files_changed`, `summary`)
 3. Has a `status` value that is one of `PASS`, `NEEDS_WORK`, or `ERROR`
-4. Has `files_changed` as an array
+4. Has `files_changed` as an array of strings
 
 If any check fails, the parser returns a synthetic ERROR signal with a description of what was wrong.

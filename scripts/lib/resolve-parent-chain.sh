@@ -64,7 +64,7 @@ resolve_parent_chain() {
     if [ "$parent_type" = "feature" ]; then
         FEATURE_ID="$parent_id"
         FEATURE_TITLE=$(echo "$parent_json" | jq -r '.[0].title // empty' 2>/dev/null) || true
-        FEATURE_GOAL=$(echo "$parent_json" | jq -r '.[0].description // empty' 2>/dev/null) || true
+        FEATURE_GOAL=$(echo "$parent_json" | jq -r '.[0].description // empty' 2>/dev/null | awk '/^## /{exit} {print}') || true
 
         # Look for epic above feature
         local grandparent_id
@@ -78,13 +78,13 @@ resolve_parent_chain() {
                 if [ "$grandparent_type" = "epic" ]; then
                     EPIC_ID="$grandparent_id"
                     EPIC_TITLE=$(echo "$grandparent_json" | jq -r '.[0].title // empty' 2>/dev/null) || true
-                    EPIC_GOAL=$(echo "$grandparent_json" | jq -r '.[0].description // empty' 2>/dev/null) || true
+                    EPIC_GOAL=$(echo "$grandparent_json" | jq -r '.[0].description // empty' 2>/dev/null | awk '/^## /{exit} {print}') || true
                 fi
             fi
         fi
     elif [ "$parent_type" = "epic" ]; then
         EPIC_ID="$parent_id"
         EPIC_TITLE=$(echo "$parent_json" | jq -r '.[0].title // empty' 2>/dev/null) || true
-        EPIC_GOAL=$(echo "$parent_json" | jq -r '.[0].description // empty' 2>/dev/null) || true
+        EPIC_GOAL=$(echo "$parent_json" | jq -r '.[0].description // empty' 2>/dev/null | awk '/^## /{exit} {print}') || true
     fi
 }

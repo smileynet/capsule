@@ -17,20 +17,24 @@ set -euo pipefail
 
 # --- Parse arguments ---
 PROJECT_DIR="."
+DRY_RUN=false
 
 for arg in "$@"; do
     case "$arg" in
         --project-dir=*)
             PROJECT_DIR="${arg#--project-dir=}"
             ;;
+        --dry-run)
+            DRY_RUN=true
+            ;;
         -*)
             echo "ERROR: Unknown option: $arg" >&2
-            echo "Usage: teardown.sh [--project-dir=DIR]" >&2
+            echo "Usage: teardown.sh [--project-dir=DIR] [--dry-run]" >&2
             exit 1
             ;;
         *)
             echo "ERROR: Unexpected argument: $arg" >&2
-            echo "Usage: teardown.sh [--project-dir=DIR]" >&2
+            echo "Usage: teardown.sh [--project-dir=DIR] [--dry-run]" >&2
             exit 1
             ;;
     esac
@@ -51,29 +55,40 @@ if [ -d "$WORKTREES_DIR" ]; then
         [ -d "$wt" ] || continue
         wt_name="$(basename "$wt")"
 
-        # Try git worktree remove first, fall back to manual removal
-        if ! (cd "$PROJECT_DIR" && git worktree remove "$wt" --force 2>/dev/null); then
-            rm -rf "$wt"
+        if $DRY_RUN; then
+            echo "[dry-run] Would remove worktree: $wt_name (branch: capsule-$wt_name)"
+        else
+            # Try git worktree remove first, fall back to manual removal
+            if ! (cd "$PROJECT_DIR" && git worktree remove "$wt" --force 2>/dev/null); then
+                rm -rf "$wt"
+            fi
+
+            # Delete the capsule branch if it exists
+            (cd "$PROJECT_DIR" && git branch -D "capsule-$wt_name" 2>/dev/null) || true
+
+            echo "Removed worktree: $wt_name"
         fi
 
-        # Delete the capsule branch if it exists
-        (cd "$PROJECT_DIR" && git branch -D "capsule-$wt_name" 2>/dev/null) || true
-
         CLEANED_WORKTREES=$((CLEANED_WORKTREES + 1))
-        echo "Removed worktree: $wt_name"
     done
 
     # Prune stale worktree metadata
-    (cd "$PROJECT_DIR" && git worktree prune 2>/dev/null) || true
+    if ! $DRY_RUN; then
+        (cd "$PROJECT_DIR" && git worktree prune 2>/dev/null) || true
+    fi
 fi
 
 # --- Clean .capsule/output/ ---
 if [ -d "$OUTPUT_DIR" ]; then
     FILE_COUNT=$(find "$OUTPUT_DIR" -type f 2>/dev/null | wc -l)
     if [ "$FILE_COUNT" -gt 0 ]; then
-        rm -rf "$OUTPUT_DIR"/*
+        if $DRY_RUN; then
+            echo "[dry-run] Would clean output: $FILE_COUNT file(s)"
+        else
+            rm -rf "$OUTPUT_DIR"/*
+            echo "Cleaned output: $FILE_COUNT file(s)"
+        fi
         CLEANED_OUTPUT=$FILE_COUNT
-        echo "Cleaned output: $FILE_COUNT file(s)"
     fi
 fi
 
@@ -82,11 +97,15 @@ if [ "$CLEANED_WORKTREES" -eq 0 ] && [ "$CLEANED_OUTPUT" -eq 0 ]; then
     echo "Nothing to clean."
 else
     echo ""
-    echo "Teardown complete:"
+    if $DRY_RUN; then
+        echo "Dry run summary (no changes made):"
+    else
+        echo "Teardown complete:"
+    fi
     if [ "$CLEANED_WORKTREES" -gt 0 ]; then
-        echo "  Worktrees removed: $CLEANED_WORKTREES"
+        echo "  Worktrees: $CLEANED_WORKTREES"
     fi
     if [ "$CLEANED_OUTPUT" -gt 0 ]; then
-        echo "  Output files cleaned: $CLEANED_OUTPUT"
+        echo "  Output files: $CLEANED_OUTPUT"
     fi
 fi

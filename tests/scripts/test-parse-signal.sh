@@ -178,6 +178,24 @@ else
     echo "  Result: $RESULT"
 fi
 
+# E1b: JSON with indented code fences
+echo "[E1b] JSON with indented code fences"
+# Given: JSON signal wrapped in indented markdown fences
+INDENTED_FENCE_OUTPUT='Result:
+  ```json
+{"status":"PASS","feedback":"indented fences","files_changed":[],"summary":"ok"}
+  ```'
+# When: piped through parse-signal.sh
+RESULT=$(echo "$INDENTED_FENCE_OUTPUT" | "$PARSE_SCRIPT" 2>&1)
+# Then: JSON is extracted successfully
+STATUS=$(echo "$RESULT" | jq -r '.status')
+if [ "$STATUS" = "PASS" ]; then
+    pass "Extracted JSON from indented code fences"
+else
+    fail "Expected PASS from indented fences, got '$STATUS'"
+    echo "  Result: $RESULT"
+fi
+
 # E2: ERROR status passes through
 echo "[E2] ERROR status passes through"
 # Given: a valid ERROR signal with original feedback
@@ -191,6 +209,20 @@ if [ "$STATUS" = "ERROR" ] && [ "$FEEDBACK" = "claude crashed" ]; then
     pass "ERROR status passes through with original feedback"
 else
     fail "Expected ERROR pass-through, got status='$STATUS' feedback='$FEEDBACK'"
+fi
+
+# E2b: files_changed with non-string elements
+echo "[E2b] Reject files_changed with non-string elements"
+# Given: JSON with files_changed containing non-string elements
+BAD_ELEMENTS='{"status":"PASS","feedback":"ok","files_changed":[1, null],"summary":"done"}'
+# When: piped through parse-signal.sh
+RESULT=$(echo "$BAD_ELEMENTS" | "$PARSE_SCRIPT" 2>&1) || true
+# Then: ERROR signal is returned
+STATUS=$(echo "$RESULT" | jq -r '.status')
+if [ "$STATUS" = "ERROR" ]; then
+    pass "Non-string array elements in files_changed returns ERROR"
+else
+    fail "Expected ERROR for non-string elements, got '$STATUS'"
 fi
 
 # E3: files_changed with empty array

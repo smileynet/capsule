@@ -37,7 +37,7 @@ echo ""
 # =============================================================================
 # Test 1: Graceful on clean project (nothing to tear down)
 # =============================================================================
-echo "[1/6] Graceful when nothing to clean"
+echo "[1/7] Graceful when nothing to clean"
 # Given: a fresh template project with no worktrees or output
 # When: teardown.sh is run
 # Then: it exits 0 and reports nothing cleaned
@@ -58,7 +58,7 @@ fi
 # =============================================================================
 # Test 2: Removes capsule worktrees
 # =============================================================================
-echo "[2/6] Removes capsule worktrees"
+echo "[2/7] Removes capsule worktrees"
 # Given: a project with an active capsule worktree
 # When: teardown.sh is run
 # Then: the worktree directory is removed and git worktree list shows no capsule entries
@@ -96,7 +96,7 @@ fi
 # =============================================================================
 # Test 3: Cleans .capsule/output/ directory
 # =============================================================================
-echo "[3/6] Cleans .capsule/output/ directory"
+echo "[3/7] Cleans .capsule/output/ directory"
 # Given: a project with files in .capsule/output/
 # When: teardown.sh is run
 # Then: .capsule/output/ contents are removed
@@ -128,7 +128,7 @@ fi
 # =============================================================================
 # Test 4: Preserves .capsule/logs/ directory
 # =============================================================================
-echo "[4/6] Preserves .capsule/logs/"
+echo "[4/7] Preserves .capsule/logs/"
 # Given: a project with archived logs in .capsule/logs/
 # When: teardown.sh is run
 # Then: .capsule/logs/ and its contents are preserved
@@ -154,7 +154,7 @@ fi
 # =============================================================================
 # Test 5: Reports what was cleaned
 # =============================================================================
-echo "[5/6] Reports what was cleaned"
+echo "[5/7] Reports what was cleaned"
 # Given: a project with worktrees and output to clean
 # When: teardown.sh is run
 # Then: output contains report of cleaned items
@@ -176,7 +176,7 @@ fi
 # =============================================================================
 # Test 6: Handles multiple worktrees
 # =============================================================================
-echo "[6/6] Handles multiple worktrees"
+echo "[6/7] Handles multiple worktrees"
 # Given: a project with multiple capsule worktrees
 # When: teardown.sh is run
 # Then: all worktrees are removed
@@ -210,6 +210,50 @@ if [ "$CAPSULE_WORKTREE_COUNT" -eq 0 ]; then
 else
     fail "Found $CAPSULE_WORKTREE_COUNT capsule worktrees still registered"
 fi
+
+# =============================================================================
+# Test 7: --dry-run shows what would be cleaned without deleting
+# =============================================================================
+echo "[7/7] --dry-run previews without deleting"
+# Given: a project with a worktree and output files
+# When: teardown.sh --dry-run is run
+# Then: output contains [dry-run], worktree still exists, output files still exist
+
+"$PREP_SCRIPT" "$TEST_BEAD_ID" --project-dir="$PROJECT_DIR" >/dev/null 2>&1
+mkdir -p "$PROJECT_DIR/.capsule/output"
+echo "output" > "$PROJECT_DIR/.capsule/output/data.json"
+
+WORKTREE_DIR="$PROJECT_DIR/.capsule/worktrees/$TEST_BEAD_ID"
+
+TEARDOWN_EXIT=0
+TEARDOWN_OUTPUT=$("$TEARDOWN_SCRIPT" --project-dir="$PROJECT_DIR" --dry-run 2>&1) || TEARDOWN_EXIT=$?
+
+if [ "$TEARDOWN_EXIT" -eq 0 ]; then
+    pass "--dry-run exits 0"
+else
+    fail "--dry-run exited $TEARDOWN_EXIT (expected 0)"
+fi
+
+if echo "$TEARDOWN_OUTPUT" | grep -q '\[dry-run\]'; then
+    pass "--dry-run output contains [dry-run] marker"
+else
+    fail "--dry-run output missing [dry-run] marker: $TEARDOWN_OUTPUT"
+fi
+
+if [ -d "$WORKTREE_DIR" ]; then
+    pass "--dry-run preserves worktree"
+else
+    fail "--dry-run deleted worktree (should preserve)"
+fi
+
+if [ -f "$PROJECT_DIR/.capsule/output/data.json" ]; then
+    pass "--dry-run preserves output files"
+else
+    fail "--dry-run deleted output files (should preserve)"
+fi
+
+# Clean up for real after dry-run test
+"$TEARDOWN_SCRIPT" --project-dir="$PROJECT_DIR" >/dev/null 2>&1 || true
 
 # =============================================================================
 echo ""

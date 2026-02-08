@@ -110,11 +110,27 @@ TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")-$$
 LOG_FILE="$OUTPUT_DIR/$PHASE_NAME-$TIMESTAMP.log"
 
 # --- Invoke claude ---
+PHASE_TIMEOUT="${CAPSULE_PHASE_TIMEOUT:-600}"
 CLAUDE_EXIT=0
-CLAUDE_OUTPUT=$(cd "$WORKTREE_PATH" && claude -p "$PROMPT" --dangerously-skip-permissions 2>"$LOG_FILE.stderr") || CLAUDE_EXIT=$?
+CLAUDE_OUTPUT=$(cd "$WORKTREE_PATH" && timeout "$PHASE_TIMEOUT" claude -p "$PROMPT" --dangerously-skip-permissions 2>"$LOG_FILE.stderr") || CLAUDE_EXIT=$?
+
+if [ "$CLAUDE_EXIT" -eq 124 ]; then
+    echo "ERROR: claude timed out after ${PHASE_TIMEOUT}s" >&2
+    exit 2
+fi
 
 # --- Capture output to log (stdout only; stderr in separate .stderr file) ---
 printf '%s\n' "$CLAUDE_OUTPUT" > "$LOG_FILE"
+
+# --- Create combined log (stdout + stderr) ---
+{
+    printf '%s\n' "$CLAUDE_OUTPUT"
+    if [ -f "$LOG_FILE.stderr" ] && [ -s "$LOG_FILE.stderr" ]; then
+        echo ""
+        echo "=== STDERR ==="
+        cat "$LOG_FILE.stderr"
+    fi
+} > "$LOG_FILE.combined"
 
 # --- Handle claude failure ---
 if [ "$CLAUDE_EXIT" -ne 0 ]; then
@@ -136,6 +152,11 @@ if [ "$PARSE_EXIT" -ne 0 ]; then
     printf '%s\n' "$SIGNAL"
     exit 2
 fi
+
+# --- Append signal to log and combined log ---
+SIGNAL_BLOCK=$(printf '\n=== SIGNAL ===\n'; printf '%s\n' "$SIGNAL" | jq . 2>/dev/null || printf '%s\n' "$SIGNAL")
+printf '%s\n' "$SIGNAL_BLOCK" >> "$LOG_FILE" 2>/dev/null || true
+printf '%s\n' "$SIGNAL_BLOCK" >> "$LOG_FILE.combined" 2>/dev/null || true
 
 # --- Map status to exit code ---
 STATUS=$(printf '%s\n' "$SIGNAL" | jq -r '.status')

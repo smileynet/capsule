@@ -110,13 +110,35 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Use acceptance_criteria field if present, otherwise extract from description
 ACCEPTANCE_CRITERIA="$TASK_AC"
 if [ -z "$ACCEPTANCE_CRITERIA" ]; then
-    ACCEPTANCE_CRITERIA=$(echo "$TASK_DESCRIPTION" | \
+    ACCEPTANCE_CRITERIA=$(printf '%s\n' "$TASK_DESCRIPTION" | \
       sed -n '/^#*[[:space:]]*[Aa]cceptance [Cc]riteria/,/^#/{/^#*[[:space:]]*[Aa]cceptance [Cc]riteria/d;/^#/d;p;}')
 fi
 if [ -z "$ACCEPTANCE_CRITERIA" ]; then
-    ACCEPTANCE_CRITERIA=$(echo "$TASK_DESCRIPTION" | \
+    ACCEPTANCE_CRITERIA=$(printf '%s\n' "$TASK_DESCRIPTION" | \
       sed -n '/^#*[[:space:]]*[Rr]equirements/,/^#/{/^#*[[:space:]]*[Rr]equirements/d;/^#/d;p;}')
 fi
+
+# Strip the extracted AC/Requirements section from description to avoid duplication in worklog
+if [ -n "$ACCEPTANCE_CRITERIA" ] && [ -z "$TASK_AC" ]; then
+    TASK_DESCRIPTION=$(printf '%s' "$TASK_DESCRIPTION" | \
+      awk '/^#+ *(Acceptance Criteria|Requirements)/{skip=1; next} /^#/{skip=0} !skip')
+fi
+
+# Guard: warn if any variable value contains a whitelisted variable reference (self-referencing risk)
+# See docs/data-handling.md section 2 for details on envsubst self-referencing
+ENVSUBST_VARS="EPIC_ID EPIC_TITLE EPIC_GOAL FEATURE_ID FEATURE_TITLE FEATURE_GOAL TASK_ID TASK_TITLE TASK_DESCRIPTION ACCEPTANCE_CRITERIA TIMESTAMP"
+for _check_var in $ENVSUBST_VARS; do
+    # Use indirect expansion to get variable value
+    case "$_check_var" in
+        TASK_ID) _check_val="$BEAD_ID" ;;
+        *) _check_val="${!_check_var}" ;;
+    esac
+    for _ref_var in $ENVSUBST_VARS; do
+        if printf '%s' "$_check_val" | grep -qF "\${$_ref_var}"; then
+            echo "WARNING: $_check_var value contains \${$_ref_var} — envsubst may expand it" >&2
+        fi
+    done
+done
 
 # Convert {{ }} to ${ } for envsubst
 sed 's/{{/\${/g; s/}}/}/g' "$TEMPLATE" | \

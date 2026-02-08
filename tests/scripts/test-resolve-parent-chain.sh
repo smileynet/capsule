@@ -48,7 +48,7 @@ echo "=== resolve-parent-chain.sh ==="
 echo ""
 
 # ---------- Test 1: Task → Feature → Epic (full chain via .parent field) ----------
-echo "[1/5] Full chain: task → feature → epic"
+echo "[1/6] Full chain: task → feature → epic"
 # Given: a task bead (demo-1.1.1) with parent feature (demo-1.1) and grandparent epic (demo-1)
 # When: resolve_parent_chain is called with the task's JSON
 # Then: FEATURE_ID, FEATURE_TITLE, EPIC_ID, EPIC_TITLE are all populated
@@ -68,7 +68,7 @@ if [ "$ALL_VALID" = true ]; then
 fi
 
 # ---------- Test 2: Feature → Epic (one level) ----------
-echo "[2/5] Feature parent is epic"
+echo "[2/6] Feature parent is epic"
 # Given: a feature bead (demo-1.1) whose parent is an epic (demo-1)
 # When: resolve_parent_chain is called
 # Then: EPIC_ID is set, FEATURE_ID is empty (parent is epic, not feature)
@@ -82,7 +82,7 @@ else
 fi
 
 # ---------- Test 3: Epic has no parent ----------
-echo "[3/5] Epic has no parent"
+echo "[3/6] Epic has no parent"
 # Given: an epic bead (demo-1) with no parent
 # When: resolve_parent_chain is called
 # Then: both FEATURE_ID and EPIC_ID are empty
@@ -96,7 +96,7 @@ else
 fi
 
 # ---------- Test 4: Dependency fallback when .parent is absent ----------
-echo "[4/5] Dependency fallback when .parent is absent"
+echo "[4/6] Dependency fallback when .parent is absent"
 # Given: bd show JSON where .parent is null but dependencies[] has parent-child entry
 # When: _extract_parent_id is called
 # Then: parent ID is extracted from dependencies array
@@ -124,7 +124,7 @@ else
 fi
 
 # ---------- Test 5: No parent and no dependencies ----------
-echo "[5/5] No parent and no dependencies"
+echo "[5/6] No parent and no dependencies"
 # Given: bd show JSON with null .parent and empty dependencies
 # When: _extract_parent_id is called
 # Then: returns empty string
@@ -141,6 +141,27 @@ if [ -z "$EXTRACTED" ]; then
     pass "No parent or dependencies: returned empty"
 else
     fail "Expected empty for orphan, got '$EXTRACTED'"
+fi
+
+# ---------- Test 6: Goal text is truncated at first ## heading ----------
+echo "[6/6] Goal text truncated at ## heading"
+# Given: a task bead (demo-1.1.1) with parent feature whose description may contain ## headings
+# When: resolve_parent_chain is called
+# Then: FEATURE_GOAL and EPIC_GOAL do not contain ## headings (truncated at first one)
+BEAD_JSON=$(cd "$PROJECT_DIR" && bd show demo-1.1.1 --json 2>/dev/null)
+resolve_parent_chain "$PROJECT_DIR" "$BEAD_JSON"
+
+GOAL_VALID=true
+if echo "$FEATURE_GOAL" | grep -q '^## '; then
+    fail "FEATURE_GOAL contains ## heading (should be truncated)"
+    GOAL_VALID=false
+fi
+if echo "$EPIC_GOAL" | grep -q '^## '; then
+    fail "EPIC_GOAL contains ## heading (should be truncated)"
+    GOAL_VALID=false
+fi
+if [ "$GOAL_VALID" = true ]; then
+    pass "Goal text does not contain ## headings"
 fi
 
 # ---------- Edge Cases ----------

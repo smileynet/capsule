@@ -26,6 +26,7 @@ RUN_PHASE="$SCRIPT_DIR/run-phase.sh"
 # --- Parse arguments ---
 BEAD_ID=""
 PROJECT_DIR="."
+MAIN_BRANCH_ARG=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -33,9 +34,13 @@ while [ $# -gt 0 ]; do
             PROJECT_DIR="${1#--project-dir=}"
             shift
             ;;
+        --main-branch=*)
+            MAIN_BRANCH_ARG="${1#--main-branch=}"
+            shift
+            ;;
         -*)
             echo "ERROR: Unknown option: $1" >&2
-            echo "Usage: merge.sh <bead-id> [--project-dir=DIR]" >&2
+            echo "Usage: merge.sh <bead-id> [--project-dir=DIR] [--main-branch=BRANCH]" >&2
             exit 2
             ;;
         *)
@@ -43,7 +48,7 @@ while [ $# -gt 0 ]; do
                 BEAD_ID="$1"
             else
                 echo "ERROR: Unexpected argument: $1" >&2
-                echo "Usage: merge.sh <bead-id> [--project-dir=DIR]" >&2
+                echo "Usage: merge.sh <bead-id> [--project-dir=DIR] [--main-branch=BRANCH]" >&2
                 exit 2
             fi
             shift
@@ -53,7 +58,7 @@ done
 
 if [ -z "$BEAD_ID" ]; then
     echo "ERROR: bead-id is required" >&2
-    echo "Usage: merge.sh <bead-id> [--project-dir=DIR]" >&2
+    echo "Usage: merge.sh <bead-id> [--project-dir=DIR] [--main-branch=BRANCH]" >&2
     exit 2
 fi
 
@@ -111,29 +116,33 @@ PHASE_OUTPUT=$("$RUN_PHASE" merge "$WORKTREE_DIR" 2>&1) || PHASE_EXIT=$?
 
 if [ "$PHASE_EXIT" -eq 2 ]; then
     echo "ERROR: Merge agent failed" >&2
-    echo "$PHASE_OUTPUT" >&2
+    printf '%s\n' "$PHASE_OUTPUT" >&2
     exit 2
 fi
 
 if [ "$PHASE_EXIT" -eq 1 ]; then
     echo "NEEDS_WORK: Merge agent found issues" >&2
-    echo "$PHASE_OUTPUT" >&2
+    printf '%s\n' "$PHASE_OUTPUT" >&2
     exit 1
 fi
 
 echo "Merge agent: PASS"
 
 # --- Determine main branch ---
-MAIN_BRANCH=$(cd "$PROJECT_DIR" && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
-if [ -z "$MAIN_BRANCH" ]; then
-    # No remote HEAD, try local branches
-    if (cd "$PROJECT_DIR" && git rev-parse --verify main >/dev/null 2>&1); then
-        MAIN_BRANCH="main"
-    elif (cd "$PROJECT_DIR" && git rev-parse --verify master >/dev/null 2>&1); then
-        MAIN_BRANCH="master"
-    else
-        echo "ERROR: Could not determine main branch" >&2
-        exit 2
+if [ -n "$MAIN_BRANCH_ARG" ]; then
+    MAIN_BRANCH="$MAIN_BRANCH_ARG"
+else
+    MAIN_BRANCH=$(cd "$PROJECT_DIR" && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
+    if [ -z "$MAIN_BRANCH" ]; then
+        # No remote HEAD, try local branches
+        if (cd "$PROJECT_DIR" && git rev-parse --verify main >/dev/null 2>&1); then
+            MAIN_BRANCH="main"
+        elif (cd "$PROJECT_DIR" && git rev-parse --verify master >/dev/null 2>&1); then
+            MAIN_BRANCH="master"
+        else
+            echo "ERROR: Could not determine main branch" >&2
+            exit 2
+        fi
     fi
 fi
 
@@ -181,9 +190,15 @@ fi
 echo "Deleted branch $BRANCH_NAME"
 
 # --- Close bead ---
-if ! (cd "$PROJECT_DIR" && bd close "$BEAD_ID" 2>/dev/null); then
-    echo "WARNING: Could not close bead $BEAD_ID" >&2
+BEAD_STATUS=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null | jq -r '.[0].status // empty' 2>/dev/null) || true
+if [ "$BEAD_STATUS" = "closed" ]; then
+    echo "Bead $BEAD_ID already closed, skipping"
+else
+    if ! (cd "$PROJECT_DIR" && bd close "$BEAD_ID" 2>/dev/null); then
+        echo "WARNING: Could not close bead $BEAD_ID" >&2
+    else
+        echo "Closed bead $BEAD_ID"
+    fi
 fi
-echo "Closed bead $BEAD_ID"
 echo ""
 echo "Merge complete: $COMMIT_MSG"

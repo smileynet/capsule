@@ -1,0 +1,112 @@
+# Data Handling Reference
+
+Concise reference for anyone editing capsule pipeline scripts. These principles prevent silent data corruption when shell scripts process untrusted content (task descriptions, LLM output, user feedback).
+
+## 1. JSON Extraction
+
+Always use `jq -r '.field // empty'` for optional fields. Use `-e` for required fields (exits non-zero on null/false).
+
+```bash
+# Good: null-safe optional field
+TITLE=$(echo "$JSON" | jq -r '.[0].title // empty')
+
+# Good: required field — fails if missing
+TITLE=$(echo "$JSON" | jq -e -r '.[0].title') || { echo "missing title" >&2; exit 1; }
+
+# Bad: grep/sed on JSON
+TITLE=$(echo "$JSON" | grep '"title"' | sed 's/.*: "\(.*\)"/\1/')
+```
+
+Validate types before use. An array field might contain unexpected element types.
+
+## 2. Template Rendering
+
+`envsubst` with an explicit variable whitelist is safe **except** for self-referencing: if a variable's *value* contains `${LISTED_VAR}`, envsubst expands it. Example: `TASK_DESCRIPTION='Set via ${TASK_ID}'` — envsubst replaces `${TASK_ID}` inside the value too.
+
+```bash
+# Safe: explicit whitelist prevents uncontrolled expansion
+envsubst '${TASK_ID} ${TITLE}' < template.md > output.md
+
+# Risk: if TITLE contains literal "${TASK_ID}", it gets expanded
+# Guard: warn if any value contains a whitelisted variable reference
+```
+
+For untrusted content, prefer `awk`-based rendering (see section 3) or `printf`-based substitution. `awk -v` assignments are literal — no shell expansion occurs.
+
+## 3. Bash String Replacement
+
+`${var//pattern/replacement}` treats `&` as a backreference to the matched text and `\` as an escape character in the replacement string. **Never use this for untrusted content.**
+
+```bash
+# Dangerous: if CONTENT contains & or \, output is corrupted
+RESULT="${TEMPLATE//\{\{PLACEHOLDER\}\}/$CONTENT}"
+
+# Safe: awk with file-based substitution
+printf '%s\n' "$CONTENT" > "$tmpfile"
+RESULT=$(awk -v f="$tmpfile" '/\{\{PLACEHOLDER\}\}/{while((getline l<f)>0)print l;close(f);next}{print}' "$TEMPLATE_FILE")
+```
+
+Note: `awk gsub()` also treats `&` as backreference in the replacement. For multiline untrusted content, use the file-read approach above.
+
+## 4. Variable Quoting
+
+Always double-quote: `"$var"`. Double-quoted expansion does **not** recursively evaluate `$(...)` or backticks within the value — it performs simple parameter substitution. This is safe.
+
+```bash
+# Safe: $feedback may contain $(rm -rf /) but it's treated as literal text
+PROMPT="Review feedback: $feedback"
+
+# DANGEROUS: eval re-parses the string, executing embedded commands
+eval "$var"   # Never use eval with untrusted data
+```
+
+## 5. printf vs echo
+
+Always use `printf '%s\n' "$var"` for arbitrary content. `echo` interprets `-n`, `-e` flags and may interpret backslash escapes depending on shell configuration.
+
+```bash
+# Good: handles any content safely
+printf '%s\n' "$arbitrary_content" > output.txt
+
+# Bad: breaks if content starts with -n, -e, or contains \n
+echo "$arbitrary_content" > output.txt
+```
+
+## 6. Passing Data Between Scripts
+
+| Method | Safe for | Limits |
+|--------|----------|--------|
+| CLI args with `"$var"` | Moderate strings | ARG_MAX (~2MB on Linux) |
+| stdin / temp files | Large/multiline data | Disk space |
+| Environment variables | Moderate strings | ~128KB combined on Linux |
+
+Prefer stdin or temp files for large or multiline data. Always clean up temp files in a trap.
+
+## 7. Signal Parsing
+
+Validate all required fields **and** their types. Array elements should be type-checked, not just the array itself.
+
+```bash
+# Incomplete: only checks that files_changed is an array
+jq '.files_changed | type == "array"'
+
+# Complete: checks array AND that all elements are strings
+jq '.files_changed | type == "array" and all(type == "string")'
+```
+
+## 8. Boundary Principle
+
+Sanitize data at every format crossing:
+
+- **JSON → shell**: Use `jq -r` with `// empty`, never grep/sed
+- **Shell → template**: Use awk or guarded envsubst, never raw `${//}`
+- **Shell → markdown**: Content is generally safe (markdown doesn't execute), but beware of template placeholders in content
+- **Shell → git**: Quote arguments, use `--` to separate flags from paths
+
+## Existing Correct Patterns
+
+These patterns in the codebase are correct — reference them:
+
+- `printf '%s\n'` for writing arbitrary content (`run-phase.sh`)
+- `jq -r '... // empty'` for null-safe field extraction (throughout)
+- `envsubst '$VAR1 $VAR2'` explicit whitelist (`prep.sh`)

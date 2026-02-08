@@ -182,11 +182,12 @@ echo "<phase output>" | parse-signal.sh
 **Behavior:**
 
 1. Reads all input from stdin
-2. Scans lines from bottom up to find the last valid JSON object
-3. Validates required fields: `status`, `feedback`, `files_changed`, `summary`
-4. Validates `status` is one of `PASS`, `NEEDS_WORK`, or `ERROR`
-5. Validates `files_changed` is an array
-6. Outputs the validated JSON (compact, single-line) to stdout
+2. Strips markdown code fences (`` ``` ``) before scanning
+3. Scans lines from bottom up to find the last valid JSON object
+4. Validates required fields: `status`, `feedback`, `files_changed`, `summary`
+5. Validates `status` is one of `PASS`, `NEEDS_WORK`, or `ERROR`
+6. Validates `files_changed` is an array of strings
+7. Outputs the validated JSON (compact, single-line) to stdout
 
 **On failure:** Prints a synthetic ERROR signal to stdout:
 
@@ -229,11 +230,13 @@ run-phase.sh <phase-name> <worktree-path> [--feedback=...]
 1. Loads prompt from `prompts/<phase-name>.md`
 2. If `--feedback` is provided, appends a "Previous Feedback" section to the prompt
 3. Creates output directory at `<worktree-path>/.capsule/output/`
-4. Invokes `claude -p "$PROMPT" --dangerously-skip-permissions` in the worktree directory
+4. Invokes `claude -p "$PROMPT" --dangerously-skip-permissions` in the worktree directory with a timeout (default 600s, configurable via `CAPSULE_PHASE_TIMEOUT`)
 5. Captures stdout to `<worktree-path>/.capsule/output/<phase-name>-<timestamp>-<pid>.log`
 6. Captures stderr to a separate `.log.stderr` file
-7. Pipes stdout through `parse-signal.sh`
-8. Maps the signal status to an exit code
+7. Creates a combined log (`.log.combined`) with stdout + stderr + parsed signal
+8. Pipes stdout through `parse-signal.sh`
+9. Appends parsed signal to log files
+10. Maps the signal status to an exit code
 
 **Claude invocation:**
 
@@ -269,10 +272,11 @@ The previous review returned NEEDS_WORK with the following feedback. Address the
 
 **Output files:**
 
-| File                                            | Contents                |
-|-------------------------------------------------|-------------------------|
-| `.capsule/output/<phase>-<timestamp>-<pid>.log` | Claude stdout           |
-| `.capsule/output/<phase>-<timestamp>-<pid>.log.stderr` | Claude stderr  |
+| File                                            | Contents                          |
+|-------------------------------------------------|-----------------------------------|
+| `.capsule/output/<phase>-<timestamp>-<pid>.log` | Claude stdout + parsed signal     |
+| `.capsule/output/<phase>-<timestamp>-<pid>.log.stderr` | Claude stderr            |
+| `.capsule/output/<phase>-<timestamp>-<pid>.log.combined` | stdout + stderr + signal |
 
 ---
 
@@ -283,18 +287,23 @@ Orchestrate the full capsule pipeline for a bead.
 **Usage:**
 
 ```
-run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N]
+run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]
 ```
 
 **Arguments:**
 
-| Argument          | Required | Default | Description                          |
-|-------------------|----------|---------|--------------------------------------|
-| `bead-id`         | yes      | —       | The bead to run the pipeline for     |
-| `--project-dir`   | no       | `.`     | Project root directory               |
-| `--max-retries`   | no       | `3`     | Maximum retries per phase pair       |
+| Argument          | Required | Default       | Description                          |
+|-------------------|----------|---------------|--------------------------------------|
+| `bead-id`         | yes      | —             | The bead to run the pipeline for     |
+| `--project-dir`   | no       | `.`           | Project root directory               |
+| `--max-retries`   | no       | `3`           | Maximum retries per phase pair       |
+| `--main-branch`   | no       | auto-detect   | Main branch name (passed to merge.sh)|
 
 **Prerequisites:** `jq`, `prep.sh`, `run-phase.sh`, `merge.sh`
+
+**Pre-flight checks:**
+
+Before starting stages, the pipeline validates that the bead has no unresolved blocking dependencies (non-parent-child dependencies that are not closed). If blocked, it exits with an error listing the blocking issues.
 
 **Pipeline stages:**
 
@@ -347,15 +356,16 @@ Agent-reviewed merge driver for the capsule pipeline.
 **Usage:**
 
 ```
-merge.sh <bead-id> [--project-dir=DIR]
+merge.sh <bead-id> [--project-dir=DIR] [--main-branch=BRANCH]
 ```
 
 **Arguments:**
 
-| Argument        | Required | Default | Description                          |
-|----------------|----------|---------|--------------------------------------|
-| `bead-id`      | yes      | —       | The bead whose worktree to merge     |
-| `--project-dir` | no       | `.`     | Project root directory               |
+| Argument         | Required | Default     | Description                          |
+|-----------------|----------|-------------|--------------------------------------|
+| `bead-id`       | yes      | —           | The bead whose worktree to merge     |
+| `--project-dir` | no       | `.`         | Project root directory               |
+| `--main-branch` | no       | auto-detect | Main branch name (main or master)    |
 
 **Prerequisites:** `git`, `bd`, `jq`, `claude`
 
@@ -449,14 +459,15 @@ Clean up capsule worktrees and output from a project.
 **Usage:**
 
 ```
-teardown.sh [--project-dir=DIR]
+teardown.sh [--project-dir=DIR] [--dry-run]
 ```
 
 **Arguments:**
 
-| Argument        | Required | Default | Description            |
-|----------------|----------|---------|------------------------|
-| `--project-dir` | no       | `.`     | Project root directory |
+| Argument        | Required | Default | Description                              |
+|----------------|----------|---------|------------------------------------------|
+| `--project-dir` | no       | `.`     | Project root directory                   |
+| `--dry-run`    | no       | —       | List what would be cleaned without deleting |
 
 **Prerequisites:** `git` (used implicitly, no formal check)
 
@@ -670,10 +681,11 @@ Every phase must produce a JSON signal as the last JSON object in its stdout.
 
 ### Validation rules (parse-signal.sh)
 
-1. Input must contain at least one valid JSON object
-2. All four fields (`status`, `feedback`, `files_changed`, `summary`) must be present
-3. `status` must be one of: `PASS`, `NEEDS_WORK`, `ERROR`
-4. `files_changed` must be an array
+1. Markdown code fences (`` ``` ``) are stripped before scanning
+2. Input must contain at least one valid JSON object
+3. All four fields (`status`, `feedback`, `files_changed`, `summary`) must be present
+4. `status` must be one of: `PASS`, `NEEDS_WORK`, `ERROR`
+5. `files_changed` must be an array of strings
 
 On validation failure, a synthetic ERROR signal is returned.
 
@@ -848,9 +860,11 @@ Every script validates its dependencies before executing:
 
 ## Environment Variables
 
-| Variable             | Used by    | Description                               | Default |
-|---------------------|------------|-------------------------------------------|---------|
-| `CAPSULE_COMMIT_MSG` | merge.sh → merge agent | Commit message for the merge commit | (required, set by merge.sh) |
+| Variable                 | Used by          | Description                                | Default |
+|-------------------------|------------------|--------------------------------------------|---------|
+| `CAPSULE_COMMIT_MSG`    | merge.sh → merge agent | Commit message for the merge commit  | (required, set by merge.sh) |
+| `CAPSULE_PHASE_TIMEOUT` | run-phase.sh     | Timeout in seconds for `claude -p` calls   | `600` (10 min) |
+| `CAPSULE_SUMMARY_TIMEOUT` | run-summary.sh | Timeout in seconds for summary generation  | `600` (10 min) |
 
 ---
 

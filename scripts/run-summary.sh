@@ -124,8 +124,11 @@ if [ -n "$WORKLOG" ]; then
 fi
 
 # --- Query bead hierarchy (graceful degradation if bd or jq missing) ---
-HAS_BD=false
-command -v bd >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && HAS_BD=true
+if command -v bd >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    HAS_BD=true
+else
+    HAS_BD=false
+fi
 
 BEAD_TITLE=""
 FEATURE_PROGRESS=""
@@ -141,7 +144,6 @@ if $HAS_BD; then
         source "$SCRIPT_DIR/lib/resolve-parent-chain.sh"
         resolve_parent_chain "$PROJECT_DIR" "$BEAD_JSON"
 
-        # Query progress counts (summary-specific)
         # Query feature progress (sibling tasks)
         if [ -n "$FEATURE_ID" ]; then
             SIBLING_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$FEATURE_ID" --all --json 2>/dev/null) || true
@@ -224,13 +226,31 @@ if [ -z "$FEATURE_ID" ] && [ -z "$EPIC_ID" ]; then
 fi
 
 # --- Build prompt ---
-PROMPT_TEMPLATE=$(cat "$PROMPT_FILE")
-PROMPT="${PROMPT_TEMPLATE//\{\{CONTEXT\}\}/$CONTEXT}"
+# Use awk for safe substitution — bash ${//} treats & and \ as special in replacement
+CONTEXT_FILE=$(mktemp)
+trap 'rm -f "$CONTEXT_FILE"' EXIT
+printf '%s\n' "$CONTEXT" > "$CONTEXT_FILE"
+
+PROMPT=$(awk -v ctx_file="$CONTEXT_FILE" '
+  /\{\{CONTEXT\}\}/ {
+    while ((getline line < ctx_file) > 0) print line
+    close(ctx_file)
+    next
+  }
+  {print}
+' "$PROMPT_FILE")
+rm -f "$CONTEXT_FILE"
 
 # --- Invoke Claude ---
+SUMMARY_TIMEOUT="${CAPSULE_SUMMARY_TIMEOUT:-600}"
 CLAUDE_OUTPUT=""
 CLAUDE_EXIT=0
-CLAUDE_OUTPUT=$(cd "$PROJECT_DIR" && claude -p "$PROMPT" --dangerously-skip-permissions 2>/dev/null) || CLAUDE_EXIT=$?
+CLAUDE_OUTPUT=$(cd "$PROJECT_DIR" && timeout "$SUMMARY_TIMEOUT" claude -p "$PROMPT" --dangerously-skip-permissions 2>/dev/null) || CLAUDE_EXIT=$?
+
+if [ "$CLAUDE_EXIT" -eq 124 ]; then
+    echo "WARNING: Summary generation timed out after ${SUMMARY_TIMEOUT}s" >&2
+    exit 1
+fi
 
 if [ "$CLAUDE_EXIT" -ne 0 ]; then
     echo "WARNING: Summary generation failed (claude exit $CLAUDE_EXIT)" >&2
@@ -243,7 +263,7 @@ if [ -z "$CLAUDE_OUTPUT" ]; then
 fi
 
 # --- Output to stdout ---
-echo "$CLAUDE_OUTPUT"
+printf '%s\n' "$CLAUDE_OUTPUT"
 
 # --- Save to archive ---
 mkdir -p "$ARCHIVE_DIR"
