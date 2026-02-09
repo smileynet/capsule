@@ -81,6 +81,21 @@ fi
 WORKTREE_DIR="$PROJECT_DIR/.capsule/worktrees/$BEAD_ID"
 if [ -d "$WORKTREE_DIR" ]; then
     echo "ERROR: Worktree already exists at $WORKTREE_DIR" >&2
+    # Diagnose what state exists
+    if [ -f "$WORKTREE_DIR/worklog.md" ]; then
+        echo "  State: worklog.md exists (prep was completed previously)" >&2
+    else
+        echo "  State: directory exists but no worklog.md (partial prep)" >&2
+    fi
+    PHASE_FILES=$(find "$PROJECT_DIR/.capsule/output" -name "${BEAD_ID}*" 2>/dev/null | head -5) || true
+    if [ -n "$PHASE_FILES" ]; then
+        echo "  Phase outputs found — pipeline was partially run" >&2
+    fi
+    echo "" >&2
+    echo "To fix (choose one):" >&2
+    echo "  1. Re-run with --clean:  run-pipeline.sh $BEAD_ID --clean --project-dir=$PROJECT_DIR" >&2
+    echo "  2. Remove manually:      rm -rf $WORKTREE_DIR" >&2
+    echo "  3. Full teardown:        scripts/teardown.sh $BEAD_ID --project-dir=$PROJECT_DIR" >&2
     exit 1
 fi
 
@@ -96,8 +111,17 @@ resolve_parent_chain "$PROJECT_DIR" "$BEAD_JSON"
 BRANCH_NAME="capsule-$BEAD_ID"
 mkdir -p "$(dirname "$WORKTREE_DIR")"
 
-(cd "$PROJECT_DIR" && git worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" HEAD) || {
+GIT_WT_ERR=""
+GIT_WT_ERR=$( (cd "$PROJECT_DIR" && git worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" HEAD) 2>&1) || {
     echo "ERROR: Failed to create git worktree" >&2
+    printf '%s\n' "$GIT_WT_ERR" >&2
+    # Clean up partial directory if created
+    [ -d "$WORKTREE_DIR" ] && rm -rf "$WORKTREE_DIR"
+    if printf '%s\n' "$GIT_WT_ERR" | grep -q "already exists"; then
+        echo "" >&2
+        echo "To fix: Delete the stale branch and retry:" >&2
+        echo "  cd $PROJECT_DIR && git branch -D $BRANCH_NAME" >&2
+    fi
     exit 1
 }
 
