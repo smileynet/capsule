@@ -142,3 +142,55 @@ Comments should explain *why*, not *what*. The code already says what.
 
 - [Effective Go: Commentary](https://go.dev/doc/effective_go#commentary)
 - [Go Doc Comments](https://go.dev/doc/comment)
+
+## 8. CLI (Kong)
+
+Use [Kong](https://github.com/alecthomas/kong) for CLI parsing. Define commands as nested structs with a `Run(...deps) error` method on each leaf command. Keep `main.go` thin — parse, bind, and dispatch.
+
+```go
+// cmd/capsule/main.go
+type CLI struct {
+    Version kong.VersionFlag `help:"Show version."`
+    Run     RunCmd           `cmd:"" default:"1" help:"Run a capsule."`
+}
+
+type RunCmd struct {
+    Config string `arg:"" type:"existingfile" help:"Path to capsule config."`
+}
+
+func (r *RunCmd) Run(orch *capsule.Orchestrator) error {
+    return orch.Execute(r.Config)
+}
+
+func main() {
+    var cli CLI
+    ctx := kong.Parse(&cli, kong.Vars{"version": version})
+    orch := capsule.NewOrchestrator(/* ... */)
+    ctx.Bind(orch)
+    ctx.FatalIfErrorf(ctx.Run())
+}
+```
+
+In tests, use `kong.New` (not `kong.Parse`) to avoid `os.Exit` on error.
+
+```go
+func TestRunCmd(t *testing.T) {
+    var cli CLI
+    k, err := kong.New(&cli)
+    if err != nil {
+        t.Fatal(err)
+    }
+    kctx, err := k.Parse([]string{"run", "testdata/config.yaml"})
+    if err != nil {
+        t.Fatal(err)
+    }
+    // Bind test doubles, then kctx.Run()
+}
+```
+
+**Avoid:**
+- `ctx.Command()` string switching — use `Run()` methods instead.
+- Validation in `BeforeApply` — prefer `AfterApply` (positional arguments aren't populated yet).
+
+- [Kong README](https://github.com/alecthomas/kong)
+- [Kong examples](https://github.com/alecthomas/kong/tree/master/_examples)
