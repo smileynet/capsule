@@ -24,7 +24,7 @@ func TestSmoke_GoProjectSkeleton(t *testing.T) {
 
 	t.Run("go build produces a capsule binary", func(t *testing.T) {
 		// Given: the project
-		// When: go build ./... runs
+		// When: go build runs
 		cmd := exec.Command("go", "build",
 			"-ldflags", "-X main.version=smoke-test -X main.commit=abc1234 -X main.date=2026-01-01",
 			"-o", binary, "./cmd/capsule")
@@ -56,9 +56,8 @@ func TestSmoke_GoProjectSkeleton(t *testing.T) {
 		output := string(out)
 
 		// Then: version, commit, and date are printed
-		// Kong prints version and exits 0, but we catch the output
 		if err != nil {
-			// Kong exits with code 1 on --version in some configurations
+			// Kong may exit non-zero on --version in some configurations
 			if !strings.Contains(output, "smoke-test") {
 				t.Fatalf("--version failed: %v\n%s", err, output)
 			}
@@ -70,7 +69,7 @@ func TestSmoke_GoProjectSkeleton(t *testing.T) {
 		}
 	})
 
-	t.Run("capsule without args prints usage and exits non-zero", func(t *testing.T) {
+	t.Run("capsule without args exits non-zero with usage", func(t *testing.T) {
 		// Given: the binary
 		if _, err := os.Stat(binary); err != nil {
 			t.Fatal("binary not available -- the build subtest must run first and succeed")
@@ -85,7 +84,7 @@ func TestSmoke_GoProjectSkeleton(t *testing.T) {
 			t.Fatal("expected non-zero exit code when no command provided")
 		}
 
-		// And: usage/error message is printed
+		// And: usage or error message is printed
 		output := string(out)
 		if !strings.Contains(output, "run") && !strings.Contains(output, "expected") {
 			t.Errorf("expected usage or error output, got: %q", output)

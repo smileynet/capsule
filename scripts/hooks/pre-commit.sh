@@ -5,7 +5,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
-# Detect staged Go files — skip entirely if none
+# Detect staged Go files and exit early if none
 staged=$(git diff --cached --name-only -- '*.go')
 if [ -z "$staged" ]; then
   exit 0

@@ -4,8 +4,8 @@
 
 ```bash
 make build      # Build binary with version info
-make test       # Run unit tests (-short, skips slow tests)
-make test-full  # Run all tests including slow ones
+make test       # Run unit tests (-short)
+make test-full  # Run all tests (no -short)
 make smoke      # Run end-to-end smoke tests (builds binary)
 make lint       # Run golangci-lint
 make clean      # Remove binary and test cache

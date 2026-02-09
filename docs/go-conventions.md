@@ -17,7 +17,7 @@ internal/provider/
 
 ## 2. Interface Design
 
-Accept interfaces, return structs. Define interfaces where they're consumed, not where they're implemented — this keeps packages decoupled.
+Accept interfaces, return structs. Define interfaces where consumed, not where implemented — this keeps packages decoupled.
 
 ```go
 // In orchestrator package (consumer):
@@ -140,11 +140,11 @@ func WithLogger(l *slog.Logger) Option {
 
 ## 7. Code Style
 
-Use `goimports` over `gofmt` — it's a superset that formats code and manages imports (adds missing, removes unused). This is enforced automatically:
+Use `goimports` over `gofmt` — it's a superset that formats code and manages imports (adds missing, removes unused). Enforcement is automatic:
 
-**Post-edit enforcement:** Every `.go` file edit triggers `goimports -w`, `go build`, and `go vet`, scoped to the edited package. See `scripts/hooks/claude-go-check.sh`.
+**Post-edit:** Every `.go` file edit triggers `goimports -w`, `go build`, and `go vet` scoped to the edited package. See `scripts/hooks/claude-go-check.sh`.
 
-**Pre-commit enforcement:** Incremental `golangci-lint` (only new issues via `--new-from-rev=HEAD`) and `go test -short` run on staged packages before every commit via bd hook chaining. The canonical hook lives at `scripts/hooks/pre-commit.sh` and must be installed as `.git/hooks/pre-commit.old` for bd to discover it. See `CLAUDE.md` "Hook Setup" for installation instructions and `.golangci.yml` for linter config.
+**Pre-commit:** Incremental `golangci-lint` (only new issues via `--new-from-rev=HEAD`) and `go test -short` run on staged packages via bd hook chaining. The canonical hook lives at `scripts/hooks/pre-commit.sh` and must be installed as `.git/hooks/pre-commit.old` for bd to discover it. See `CLAUDE.md` "Hook Setup" for installation and `.golangci.yml` for linter config.
 
 Add a doc comment to every exported symbol — `go doc` and IDE tooling depend on it.
 
@@ -205,7 +205,7 @@ func TestRunCmd(t *testing.T) {
 
 **Avoid:**
 - `ctx.Command()` string switching — use `Run()` methods instead.
-- Validation in `BeforeApply` — prefer `AfterApply` (positional arguments aren't populated yet).
+- Validation in `BeforeApply` — prefer `AfterApply` (positional arguments not yet populated).
 
 - [Kong README](https://github.com/alecthomas/kong)
 - [Kong examples](https://github.com/alecthomas/kong/tree/master/_examples)
