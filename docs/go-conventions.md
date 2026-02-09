@@ -131,11 +131,11 @@ func WithLogger(l *slog.Logger) Option {
 
 ## 7. Code Style
 
-Use `goimports` over `gofmt` — it's a superset that formats code *and* manages imports (adds missing, removes unused). This is enforced automatically:
+Use `goimports` over `gofmt` — it's a superset that formats code and manages imports (adds missing, removes unused). This is enforced automatically:
 
-**Automated enforcement (Claude Code PostToolUse hook):** Every `.go` file edit triggers `goimports -w`, `go build ./...`, and `go vet ./...`. See `scripts/hooks/claude-go-check.sh`.
+**Post-edit enforcement:** Every `.go` file edit triggers `goimports -w`, `go build ./...`, and `go vet ./...`. See `scripts/hooks/claude-go-check.sh`.
 
-**Pre-commit gate:** `golangci-lint run ./...` and `go test ./...` run before every commit via beads hook chaining. See `scripts/hooks/pre-commit.sh` and `.golangci.yml` for linter config.
+**Pre-commit enforcement:** `golangci-lint run ./...` and `go test ./...` run before every commit via beads hook chaining. See `scripts/hooks/pre-commit.sh` and `.golangci.yml` for linter config.
 
 Add a doc comment to every exported symbol — `go doc` and IDE tooling depend on it.
 
