@@ -1,14 +1,19 @@
 BINARY  := capsule
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
 
-.PHONY: build test lint clean
+.PHONY: build test smoke lint clean
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/capsule
 
 test:
 	go test ./...
+
+smoke:
+	go test -tags smoke ./cmd/capsule/
 
 lint:
 	golangci-lint run ./...

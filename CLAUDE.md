@@ -5,6 +5,7 @@
 ```bash
 make build   # Build binary with version info
 make test    # Run all tests
+make smoke   # Run end-to-end smoke tests (builds binary)
 make lint    # Run golangci-lint
 make clean   # Remove binary and test cache
 ```

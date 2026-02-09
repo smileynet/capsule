@@ -6,7 +6,11 @@ import (
 	"github.com/alecthomas/kong"
 )
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
 
 // CLI is the top-level command structure for capsule.
 type CLI struct {
@@ -52,6 +56,6 @@ func (c *CleanCmd) Run() error {
 
 func main() {
 	var cli CLI
-	ctx := kong.Parse(&cli, kong.Vars{"version": version})
+	ctx := kong.Parse(&cli, kong.Vars{"version": version + " " + commit + " " + date})
 	ctx.FatalIfErrorf(ctx.Run())
 }
