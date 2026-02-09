@@ -85,6 +85,15 @@ func TestParseDuration(t *testing.T) {
 }
 ```
 
+### Test Speed Tiers
+
+Guard slow tests with `testing.Short()` so pre-commit hooks stay fast:
+
+- **Fast** (always run): Pure logic, no I/O, no sleeps. No guard needed.
+- **Slow** (skip in `-short` mode): Subprocess execution, file I/O, `time.Sleep`.
+  Use `if testing.Short() { t.Skip("...") }`.
+- **Smoke** (build-tag gated): End-to-end binary tests. Use `//go:build smoke`.
+
 - [Go Wiki: TableDrivenTests](https://go.dev/wiki/TableDrivenTests)
 - [Go Blog: Using Subtests and Sub-benchmarks](https://go.dev/blog/subtests)
 
@@ -133,9 +142,9 @@ func WithLogger(l *slog.Logger) Option {
 
 Use `goimports` over `gofmt` — it's a superset that formats code and manages imports (adds missing, removes unused). This is enforced automatically:
 
-**Post-edit enforcement:** Every `.go` file edit triggers `goimports -w`, `go build ./...`, and `go vet ./...`. See `scripts/hooks/claude-go-check.sh`.
+**Post-edit enforcement:** Every `.go` file edit triggers `goimports -w`, `go build`, and `go vet`, scoped to the edited package. See `scripts/hooks/claude-go-check.sh`.
 
-**Pre-commit enforcement:** `golangci-lint run ./...` and `go test ./...` run before every commit via beads hook chaining. See `scripts/hooks/pre-commit.sh` and `.golangci.yml` for linter config.
+**Pre-commit enforcement:** Incremental `golangci-lint` (only new issues via `--new-from-rev=HEAD`) and `go test -short` run on staged packages before every commit via bd hook chaining. The canonical hook lives at `scripts/hooks/pre-commit.sh` and must be installed as `.git/hooks/pre-commit.old` for bd to discover it. See `CLAUDE.md` "Hook Setup" for installation instructions and `.golangci.yml` for linter config.
 
 Add a doc comment to every exported symbol — `go doc` and IDE tooling depend on it.
 

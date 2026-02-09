@@ -22,8 +22,12 @@ cd "$PROJECT_ROOT" || exit 0
 # Format and fix imports
 goimports -w "$FILE_PATH" 2>&1
 
+# Compute the package path relative to the module root
+pkg_dir="${FILE_PATH#"$PROJECT_ROOT"/}"
+pkg_dir="$(dirname "$pkg_dir")"
+
 # Build check — catches type errors, missing methods, undefined references
-go build ./... 2>&1
+go build "./$pkg_dir/..." 2>&1
 
 # Vet check — catches shadowed vars, printf mismatches, unreachable code
-go vet ./... 2>&1
+go vet "./$pkg_dir/..." 2>&1

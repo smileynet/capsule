@@ -3,11 +3,13 @@
 ## Build & Test
 
 ```bash
-make build   # Build binary with version info
-make test    # Run all tests
-make smoke   # Run end-to-end smoke tests (builds binary)
-make lint    # Run golangci-lint
-make clean   # Remove binary and test cache
+make build      # Build binary with version info
+make test       # Run unit tests (-short, skips slow tests)
+make test-full  # Run all tests including slow ones
+make smoke      # Run end-to-end smoke tests (builds binary)
+make lint       # Run golangci-lint
+make clean      # Remove binary and test cache
+make hooks      # Install pre-commit hook for bd chaining
 ```
 
 ## Project Structure
@@ -40,6 +42,21 @@ docs/                     # Architecture and conventions
 
 ## Quality Gates
 
-- **Post-edit hook**: `goimports -w`, `go build ./...`, `go vet ./...` run after every `.go` file edit
-- **Pre-commit**: `golangci-lint run ./...` and `go test ./...` via beads hook
+| Scope | Gate | What Runs |
+|-------|------|-----------|
+| Every edit | PostToolUse hook | `goimports` + `go build` + `go vet` (scoped to edited package) |
+| Every commit | Pre-commit hook | Incremental lint + `-short` tests (staged packages only) |
+| Feature close | Manual before `bd close` | `make lint && make test-full` |
+| Epic close | Manual before `bd close` | `make lint && make test-full && make smoke` |
+
 - **Linter config**: `.golangci.yml` (errorlint, gocritic enabled)
+
+## Hook Setup (Fresh Clone)
+
+After cloning, install the Go quality pre-commit hook:
+
+```bash
+make hooks
+```
+
+The bd pre-commit shim at `.git/hooks/pre-commit` calls `bd hook pre-commit`, which discovers and runs `.git/hooks/pre-commit.old` before its own export logic.

@@ -92,21 +92,21 @@ func TestSmoke_GoProjectSkeleton(t *testing.T) {
 		}
 	})
 
-	t.Run("make test passes", func(t *testing.T) {
+	t.Run("make test-full passes", func(t *testing.T) {
 		// Given: the Makefile
 		makefile := filepath.Join(projectRoot, "Makefile")
 		if _, err := os.Stat(makefile); err != nil {
 			t.Fatalf("Makefile not found: %v", err)
 		}
 
-		// When: make test runs
-		cmd := exec.Command("make", "test")
+		// When: make test-full runs (all tests, no -short)
+		cmd := exec.Command("make", "test-full")
 		cmd.Dir = projectRoot
 		out, err := cmd.CombinedOutput()
 
 		// Then: all tests pass
 		if err != nil {
-			t.Fatalf("make test failed: %v\n%s", err, out)
+			t.Fatalf("make test-full failed: %v\n%s", err, out)
 		}
 	})
 }
