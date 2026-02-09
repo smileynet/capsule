@@ -151,7 +151,7 @@ Use [Kong](https://github.com/alecthomas/kong) for CLI parsing. Define commands 
 // cmd/capsule/main.go
 type CLI struct {
     Version kong.VersionFlag `help:"Show version."`
-    Run     RunCmd           `cmd:"" default:"1" help:"Run a capsule."`
+    Run     RunCmd           `cmd:"" help:"Run a capsule."`
 }
 
 type RunCmd struct {
