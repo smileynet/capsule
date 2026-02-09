@@ -2,5 +2,6 @@ package tui
 
 import "testing"
 
-func TestPlaceholder(t *testing.T) {
+func TestPackageCompiles(t *testing.T) {
+	// Placeholder: verifies the package compiles and is testable.
 }
