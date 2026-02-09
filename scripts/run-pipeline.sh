@@ -371,6 +371,7 @@ if [ "$MERGE_EXIT" -ne 0 ]; then
     echo "Worktree preserved: $WORKTREE_DIR" >&2
     echo "To fix: Inspect the worktree and merge manually:" >&2
     echo "  cd $PROJECT_DIR" >&2
+    echo "  git checkout main" >&2
     echo "  git merge --no-ff capsule-$BEAD_ID" >&2
     run_summary "FAILED" "merge"
     exit "$MERGE_EXIT"
