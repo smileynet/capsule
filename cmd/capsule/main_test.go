@@ -37,7 +37,7 @@ func TestVersionFlag(t *testing.T) {
 		}
 	}()
 
-	k.Parse([]string{"--version"})
+	k.Parse([]string{"--version"}) //nolint:errcheck // --version triggers panic via Exit hook; return value is irrelevant
 }
 
 func TestRunCommand(t *testing.T) {
