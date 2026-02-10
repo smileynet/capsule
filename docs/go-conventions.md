@@ -284,3 +284,70 @@ func (c *Config) Validate() error {
 
 - [go-yaml KnownFields](https://pkg.go.dev/gopkg.in/yaml.v3#Decoder.KnownFields)
 - [12-Factor Config](https://12factor.net/config)
+
+## 10. Subprocess Execution
+
+Use `exec.Command` with separate arguments — never shell string concatenation. This prevents command injection because arguments are passed directly to the process, not interpreted by a shell.
+
+```go
+// Good: arguments are separate strings, safe from injection
+cmd := exec.Command("git", "worktree", "add", "-b", branchName, wtPath, baseBranch)
+cmd.Dir = repoRoot
+
+// Bad: shell interprets special characters in user data
+cmd := exec.Command("sh", "-c", "git worktree add -b "+branchName+" "+wtPath)
+```
+
+### Input Validation
+
+Validate any external input before passing to `exec.Command`. Even with argument separation, certain tools interpret arguments as flags or special values:
+
+```go
+// Reject values that git might interpret as flags
+if strings.HasPrefix(id, "-") {
+    return fmt.Errorf("invalid id %q: must not start with -", id)
+}
+
+// Reject path traversal
+if strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
+    return fmt.Errorf("invalid id %q", id)
+}
+```
+
+### Working Directory
+
+Always set `cmd.Dir` explicitly. Never rely on the process's inherited working directory — it may not be what you expect, especially in tests.
+
+### Error Reporting
+
+Capture stderr for diagnostic context. Always include the command's output in error messages:
+
+```go
+if out, err := cmd.CombinedOutput(); err != nil {
+    return fmt.Errorf("git worktree add: %w\n%s", err, strings.TrimSpace(string(out)))
+}
+```
+
+### Timeout Management
+
+For long-running subprocesses, use `exec.CommandContext` with a deadline:
+
+```go
+ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+defer cancel()
+cmd := exec.CommandContext(ctx, "claude", "-p", prompt)
+```
+
+### Antipatterns
+
+| Antipattern | Risk | Fix |
+|-------------|------|-----|
+| `exec.Command("sh", "-c", userInput)` | Command injection | Separate arguments: `exec.Command("git", arg1, arg2)` |
+| Accepting `-`-prefixed user input as args | Flag injection | Validate: reject strings starting with `-` |
+| No `cmd.Dir` | Wrong working directory | Always set `cmd.Dir` explicitly |
+| Discarding stderr | Silent failures | Capture with `CombinedOutput()` or `bytes.Buffer` |
+| No timeout on external commands | Hung processes | Use `exec.CommandContext` with deadline |
+
+- [Go Blog: Command PATH Security](https://go.dev/blog/path-security)
+- [Snyk: Go Command Injection](https://snyk.io/blog/understanding-go-command-injection-vulnerabilities/)
+- [Semgrep: Command Injection in Go](https://semgrep.dev/docs/cheat-sheets/go-command-injection)

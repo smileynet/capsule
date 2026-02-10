@@ -1,6 +1,6 @@
 # Data Handling Reference
 
-Concise reference for anyone editing capsule pipeline scripts. These principles prevent silent data corruption when shell scripts process untrusted content (task descriptions, LLM output, user feedback).
+Concise reference for anyone editing capsule pipeline scripts or Go subprocess code. These principles prevent silent data corruption when processing untrusted content (task descriptions, LLM output, user feedback).
 
 ## 1. JSON Extraction
 
@@ -102,6 +102,49 @@ Sanitize data at every format crossing:
 - **Shell → template**: Use awk or guarded envsubst, never raw `${//}`
 - **Shell → markdown**: Content is generally safe (markdown doesn't execute), but beware of template placeholders in content
 - **Shell → git**: Quote arguments, use `--` to separate flags from paths
+- **Go → subprocess**: Use `exec.Command` with separate arguments, never `"sh", "-c", concatenated`
+
+## 9. Go Subprocess Safety
+
+The same boundary principles apply when Go code shells out to git or other tools via `exec.Command`. See also `docs/go-conventions.md` section 10.
+
+### Argument Separation
+
+`exec.Command` passes arguments directly to the process (no shell interpretation). This is inherently safe from command injection — but not from flag injection:
+
+```go
+// Safe from command injection (no shell)
+cmd := exec.Command("git", "branch", "-D", branchName)
+
+// UNSAFE: shell interprets special chars, semicolons, pipes
+cmd := exec.Command("sh", "-c", "git branch -D "+branchName)
+```
+
+### Flag Injection
+
+Even with argument separation, an ID like `--version` or `-rf` can be interpreted as a flag by the target command. Validate inputs at the boundary:
+
+```go
+// Reject values that look like flags
+if strings.HasPrefix(id, "-") {
+    return fmt.Errorf("invalid id: must not start with -")
+}
+```
+
+For git commands accepting paths, use `--` to signal end-of-flags:
+
+```bash
+# Shell: -- prevents $FILE from being interpreted as a flag
+git checkout -- "$FILE"
+```
+
+### Git Worktree Operations
+
+Special considerations for `git worktree` commands:
+
+- **`git worktree remove --force`** discards uncommitted changes silently. Document this in godoc if used.
+- **`git worktree prune`** cleans orphaned metadata after manual directory deletion. Call after bulk removal operations.
+- **Always use `git worktree remove`** instead of `rm -rf` — manual deletion orphans git's internal tracking in `.git/worktrees/`.
 
 ## Existing Correct Patterns
 
@@ -110,3 +153,5 @@ These patterns in the codebase are correct — reference them:
 - `printf '%s\n'` for writing arbitrary content (`run-phase.sh`)
 - `jq -r '... // empty'` for null-safe field extraction (throughout)
 - `envsubst '$VAR1 $VAR2'` explicit whitelist (`prep.sh`)
+- `exec.Command("git", arg1, arg2)` with separate arguments (`worktree.go`, `claude.go`)
+- `validateID()` rejecting `-`, `/\`, `.`, `..` before path construction (`worktree.go`)
