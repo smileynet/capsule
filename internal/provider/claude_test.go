@@ -51,7 +51,11 @@ func helperCommand(ctx context.Context, mode string) *exec.Cmd {
 }
 
 func TestClaudeProvider_Name(t *testing.T) {
+	// Given: a default ClaudeProvider
 	p := NewClaudeProvider()
+
+	// When: Name is called
+	// Then: it returns "claude"
 	if got := p.Name(); got != "claude" {
 		t.Errorf("Name() = %q, want %q", got, "claude")
 	}
@@ -103,14 +107,17 @@ func TestClaudeProvider_Execute(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given: a provider configured per test case
 			p := NewClaudeProvider(WithTimeout(tt.timeout))
 			// Override command builder to use re-exec helper.
 			p.cmdBuilder = func(ctx context.Context, prompt, workDir string) *exec.Cmd {
 				return helperCommand(ctx, tt.mode)
 			}
 
+			// When: Execute is called
 			result, err := p.Execute(context.Background(), "test prompt", t.TempDir())
 
+			// Then: the expected outcome is observed
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -155,6 +162,7 @@ func TestClaudeProvider_ExecuteRespectsContext(t *testing.T) {
 		t.Skip("skipping subprocess test in short mode")
 	}
 
+	// Given: an already-cancelled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Already cancelled.
 
@@ -163,7 +171,10 @@ func TestClaudeProvider_ExecuteRespectsContext(t *testing.T) {
 		return helperCommand(ctx, "slow")
 	}
 
+	// When: Execute is called with the cancelled context
 	_, err := p.Execute(ctx, "prompt", t.TempDir())
+
+	// Then: a ProviderError is returned
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}

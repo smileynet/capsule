@@ -201,12 +201,16 @@ func TestApplyEnv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given: a default config and environment variable per test case
 			for k, v := range tt.envs {
 				t.Setenv(k, v)
 			}
 			cfg := DefaultConfig()
+
+			// When: ApplyEnv is called
 			err := cfg.ApplyEnv()
 
+			// Then: the expected override or error is observed
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("ApplyEnv() should return error")
@@ -274,9 +278,14 @@ func TestValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given: a config modified per test case
 			cfg := DefaultConfig()
 			tt.modify(&cfg)
+
+			// When: Validate is called
 			err := cfg.Validate()
+
+			// Then: the expected validation result is returned
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
