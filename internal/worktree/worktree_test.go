@@ -80,6 +80,7 @@ func TestCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given a git repo with optional pre-existing worktree state
 			repoDir := t.TempDir()
 			initGitRepo(t, repoDir)
 			baseDir := ".capsule/worktrees"
@@ -89,7 +90,7 @@ func TestCreate(t *testing.T) {
 				tt.setup(t, m)
 			}
 
-			// When: Create is called
+			// When Create is called
 			err := m.Create(tt.id, tt.baseBranch)
 
 			if tt.wantErr != nil {
@@ -105,13 +106,13 @@ func TestCreate(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			// Then: directory exists at expected path
+			// Then directory exists at expected path
 			wtPath := filepath.Join(repoDir, baseDir, tt.id)
 			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 				t.Errorf("worktree dir does not exist: %s", wtPath)
 			}
 
-			// Then: git branch capsule-<id> exists
+			// Then git branch capsule-<id> exists
 			branchName := "capsule-" + tt.id
 			cmd := exec.Command("git", "branch", "--list", branchName)
 			cmd.Dir = repoDir
@@ -169,6 +170,7 @@ func TestRemove(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given a git repo with optional pre-existing worktree
 			repoDir := t.TempDir()
 			initGitRepo(t, repoDir)
 			baseDir := ".capsule/worktrees"
@@ -178,7 +180,7 @@ func TestRemove(t *testing.T) {
 				tt.setup(t, m)
 			}
 
-			// When: Remove is called
+			// When Remove is called
 			err := m.Remove(tt.id, tt.deleteBranch)
 
 			if tt.wantErr != nil {
@@ -194,13 +196,13 @@ func TestRemove(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			// Then: directory is gone
+			// Then directory is gone
 			wtPath := filepath.Join(repoDir, baseDir, tt.id)
 			if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 				t.Errorf("worktree dir still exists: %s", wtPath)
 			}
 
-			// Then: branch state matches deleteBranch flag
+			// Then branch state matches deleteBranch flag
 			branchName := "capsule-" + tt.id
 			cmd := exec.Command("git", "branch", "--list", branchName)
 			cmd.Dir = repoDir
@@ -249,6 +251,7 @@ func TestList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given a git repo with optional pre-created worktrees
 			repoDir := t.TempDir()
 			initGitRepo(t, repoDir)
 			m := NewManager(repoDir, ".capsule/worktrees")
@@ -257,13 +260,13 @@ func TestList(t *testing.T) {
 				tt.setup(t, m)
 			}
 
-			// When: List is called
+			// When List is called
 			got, err := m.List()
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			// Then: returned IDs match expected (List guarantees sorted order)
+			// Then returned IDs match expected (List guarantees sorted order)
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
@@ -289,12 +292,12 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("manual remove: %v", err)
 	}
 
-	// When: Prune is called
+	// When Prune is called
 	if err := m.Prune(); err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
 
-	// Then: git no longer tracks the orphaned worktree
+	// Then git no longer tracks the orphaned worktree
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = repoDir
 	out, err := cmd.Output()
@@ -324,13 +327,13 @@ func TestListExcludesStaleDirectories(t *testing.T) {
 		t.Fatalf("mkdir stale: %v", err)
 	}
 
-	// When: List is called
+	// When List is called
 	got, err := m.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 
-	// Then: only the real worktree is returned, not the stale directory
+	// Then only the real worktree is returned, not the stale directory
 	want := []string{"real-wt"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
@@ -368,6 +371,7 @@ func TestExists(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given a git repo with optional pre-created worktree
 			repoDir := t.TempDir()
 			initGitRepo(t, repoDir)
 			m := NewManager(repoDir, ".capsule/worktrees")
@@ -376,10 +380,10 @@ func TestExists(t *testing.T) {
 				tt.setup(t, m)
 			}
 
-			// When: Exists is called
+			// When Exists is called
 			got := m.Exists(tt.id)
 
-			// Then: result matches expected
+			// Then result matches expected
 			if got != tt.want {
 				t.Errorf("Exists(%q) = %v, want %v", tt.id, got, tt.want)
 			}

@@ -6,6 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Worktree management: create, remove, list, and check existence of isolated git worktrees per mission (`internal/worktree`)
+- Worklog lifecycle: template instantiation, phase entry append, and archive to `.capsule/logs/` (`internal/worklog`)
+- Input validation and sentinel errors (`ErrAlreadyExists`, `ErrNotFound`, `ErrInvalidID`) for both packages
 - Run a full AI-driven development pipeline on any task with a single command (`run-pipeline.sh <bead-id>`)
 - Automatically generate tests from task acceptance criteria, then implement code to pass them
 - AI reviews tests and implementation at each stage, retrying with feedback on failure
