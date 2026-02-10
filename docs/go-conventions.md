@@ -209,3 +209,78 @@ func TestRunCmd(t *testing.T) {
 
 - [Kong README](https://github.com/alecthomas/kong)
 - [Kong examples](https://github.com/alecthomas/kong/tree/master/_examples)
+
+## 9. YAML Configuration
+
+Use `gopkg.in/yaml.v3` with strict decoding. Key patterns:
+
+### Strict Unmarshaling
+
+Always use `yaml.NewDecoder` with `KnownFields(true)` to catch typos. Without it, `provder: openai` silently produces an empty provider.
+
+```go
+dec := yaml.NewDecoder(bytes.NewReader(data))
+dec.KnownFields(true) // rejects unknown fields
+if err := dec.Decode(&cfg); err != nil {
+    return nil, fmt.Errorf("config: parsing %s: %w", path, err)
+}
+```
+
+**Avoid** `yaml.Unmarshal` for config files — it cannot enable strict mode.
+
+### Layered Config with Pointer Disambiguation
+
+Go zero values make it impossible to distinguish "field not set" from "field set to zero." Use pointer-based intermediate structs for layered merging:
+
+```go
+// rawConfig uses pointers to distinguish set vs unset
+type rawConfig struct {
+    Runtime *rawRuntime `yaml:"runtime"`
+}
+type rawRuntime struct {
+    Timeout *time.Duration `yaml:"timeout"` // nil = not set, &0 = explicitly zero
+}
+
+// merge only overwrites fields that were explicitly set
+if layer.Runtime.Timeout != nil {
+    cfg.Runtime.Timeout = *layer.Runtime.Timeout
+}
+```
+
+### Config Precedence
+
+Follow 12-factor conventions. Later sources override earlier:
+
+1. **Compiled defaults** (`DefaultConfig()`)
+2. **User config** (`~/.config/capsule/config.yaml`)
+3. **Project config** (`.capsule/config.yaml`)
+4. **Environment variables** (`CAPSULE_*`)
+5. **CLI flags** (highest priority)
+
+### Validation
+
+Add a `Validate()` method that checks invariants after all layers are applied. Call it once, after the final config is assembled — not per-layer.
+
+```go
+func (c *Config) Validate() error {
+    if c.Runtime.Provider == "" {
+        return errors.New("config: runtime.provider cannot be empty")
+    }
+    if c.Runtime.Timeout <= 0 {
+        return fmt.Errorf("config: runtime.timeout must be positive, got %v", c.Runtime.Timeout)
+    }
+    return nil
+}
+```
+
+### Antipatterns
+
+| Antipattern | Risk | Fix |
+|-------------|------|-----|
+| `yaml.Unmarshal` for config | Silent typo acceptance | `yaml.NewDecoder` + `KnownFields(true)` |
+| Zero-value merge confusion | Layer overwrites with defaults | Pointer-based raw structs |
+| No validation after load | Invalid state at runtime | `Validate()` after full assembly |
+| Secrets in YAML files | Credential leaks in VCS | Env vars or secret refs (`op://...`) |
+
+- [go-yaml KnownFields](https://pkg.go.dev/gopkg.in/yaml.v3#Decoder.KnownFields)
+- [12-Factor Config](https://12factor.net/config)
