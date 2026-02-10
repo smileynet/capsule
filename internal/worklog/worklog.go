@@ -88,7 +88,10 @@ func Create(templatePath, worktreePath string, bead BeadContext) error {
 		content = strings.ReplaceAll(content, placeholder, value)
 	}
 
-	return os.WriteFile(outPath, []byte(content), 0o644)
+	if err := os.WriteFile(outPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("worklog: writing %s: %w", outPath, err)
+	}
+	return nil
 }
 
 // AppendPhaseEntry appends a phase result entry to the worklog at worktreePath/worklog.md.

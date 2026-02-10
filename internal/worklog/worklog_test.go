@@ -49,7 +49,7 @@ Generated: {{TIMESTAMP}}
 		t.Fatal(err)
 	}
 
-	ctx := BeadContext{
+	bead := BeadContext{
 		EpicID:             "epic-001",
 		EpicTitle:          "Build CLI",
 		EpicGoal:           "Migrate scripts to Go",
@@ -65,7 +65,7 @@ Generated: {{TIMESTAMP}}
 	worktreeDir := t.TempDir()
 
 	// When Create is called
-	err := Create(tmplPath, worktreeDir, ctx)
+	err := Create(tmplPath, worktreeDir, bead)
 
 	// Then worklog.md is created with substituted values
 	if err != nil {
@@ -114,10 +114,10 @@ Generated: {{TIMESTAMP}}
 func TestCreate_MissingTemplate(t *testing.T) {
 	// Given a template path that does not exist
 	worktreeDir := t.TempDir()
-	ctx := BeadContext{TaskID: "task-001"}
+	bead := BeadContext{TaskID: "task-001"}
 
 	// When Create is called
-	err := Create("/nonexistent/template.md", worktreeDir, ctx)
+	err := Create("/nonexistent/template.md", worktreeDir, bead)
 
 	// Then an error is returned
 	if err == nil {
