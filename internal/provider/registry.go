@@ -28,7 +28,14 @@ func NewRegistry() *Registry {
 }
 
 // Register adds a named provider factory. Overwrites if name already exists.
+// Panics if name is empty or f is nil (programmer error).
 func (r *Registry) Register(name string, f Factory) {
+	if name == "" {
+		panic("provider: Register called with empty name")
+	}
+	if f == nil {
+		panic("provider: Register called with nil factory")
+	}
 	r.factories[name] = f
 }
 

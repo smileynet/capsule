@@ -11,6 +11,9 @@ import (
 // defaultTimeout is used when no timeout option is provided.
 const defaultTimeout = 5 * time.Minute
 
+// Verify ClaudeProvider satisfies Executor at compile time.
+var _ Executor = (*ClaudeProvider)(nil)
+
 // ClaudeProvider executes the claude CLI as a subprocess.
 type ClaudeProvider struct {
 	timeout    time.Duration

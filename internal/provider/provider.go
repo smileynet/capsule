@@ -39,6 +39,9 @@ func (r Result) ParseSignal() (Signal, error) {
 	return ParseSignal(r.Output)
 }
 
+// Verify MockProvider satisfies Executor at compile time.
+var _ Executor = (*MockProvider)(nil)
+
 // MockProvider is a test double that satisfies any Provider-shaped interface.
 type MockProvider struct {
 	NameVal     string

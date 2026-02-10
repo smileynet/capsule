@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"context"
 	"errors"
 	"sort"
 	"testing"
@@ -150,29 +149,26 @@ func TestUnknownProviderError(t *testing.T) {
 	}
 }
 
-// Verify MockProvider satisfies Executor at compile time.
-var _ Executor = (*MockProvider)(nil)
+func TestRegisterPanics(t *testing.T) {
+	t.Run("empty name panics", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic for empty name, got none")
+			}
+		}()
+		r := NewRegistry()
+		r.Register("", func() (Executor, error) {
+			return &MockProvider{NameVal: "x"}, nil
+		})
+	})
 
-// Verify ClaudeProvider satisfies Executor at compile time.
-var _ Executor = (*ClaudeProvider)(nil)
-
-// Verify Executor methods match what ClaudeProvider and MockProvider expose.
-func TestExecutorInterface(t *testing.T) {
-	// This test exists mainly to verify the interface is usable.
-	var e Executor = &MockProvider{
-		NameVal: "test",
-		ExecuteFunc: func(ctx context.Context, prompt, workDir string) (Result, error) {
-			return Result{Output: "ok"}, nil
-		},
-	}
-	if e.Name() != "test" {
-		t.Errorf("Name() = %q, want %q", e.Name(), "test")
-	}
-	r, err := e.Execute(context.Background(), "p", "/d")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if r.Output != "ok" {
-		t.Errorf("Output = %q, want %q", r.Output, "ok")
-	}
+	t.Run("nil factory panics", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic for nil factory, got none")
+			}
+		}()
+		r := NewRegistry()
+		r.Register("mock", nil)
+	})
 }

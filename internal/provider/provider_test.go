@@ -275,6 +275,27 @@ func TestMockProvider(t *testing.T) {
 	})
 }
 
+// --- Executor interface test ---
+
+func TestExecutorInterface(t *testing.T) {
+	var e Executor = &MockProvider{
+		NameVal: "test",
+		ExecuteFunc: func(ctx context.Context, prompt, workDir string) (Result, error) {
+			return Result{Output: "ok"}, nil
+		},
+	}
+	if e.Name() != "test" {
+		t.Errorf("Name() = %q, want %q", e.Name(), "test")
+	}
+	r, err := e.Execute(context.Background(), "p", "/d")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.Output != "ok" {
+		t.Errorf("Output = %q, want %q", r.Output, "ok")
+	}
+}
+
 // --- Result.ParseSignal convenience method test ---
 
 func TestResultParseSignal(t *testing.T) {
