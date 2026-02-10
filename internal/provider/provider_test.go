@@ -109,11 +109,11 @@ some log output
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Given: provider output per test case
-			// When: ParseSignal is called
+			// Given provider output per test case
+			// When ParseSignal is called
 			got, err := ParseSignal(tt.output)
 
-			// Then: the expected signal or error is returned
+			// Then the expected signal or error is returned
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -155,11 +155,12 @@ some log output
 
 func TestErrorTypes(t *testing.T) {
 	t.Run("SignalParseError", func(t *testing.T) {
-		// Given: a SignalParseError with a reason
+		// Given a SignalParseError with a reason
 		err := &SignalParseError{Reason: "missing field: status"}
 		want := "provider: signal parse: missing field: status"
 
-		// When/Then: Error() returns the formatted message and errors.As succeeds
+		// When Error() is called
+		// Then the formatted message is returned and errors.As succeeds
 		if err.Error() != want {
 			t.Errorf("Error() = %q, want %q", err.Error(), want)
 		}
@@ -170,12 +171,13 @@ func TestErrorTypes(t *testing.T) {
 	})
 
 	t.Run("ProviderError", func(t *testing.T) {
-		// Given: a ProviderError wrapping a cause
+		// Given a ProviderError wrapping a cause
 		cause := errors.New("connection refused")
 		err := &ProviderError{Provider: "claude", Err: cause}
 		want := "provider: claude: connection refused"
 
-		// When/Then: Error() returns the formatted message and Unwrap works
+		// When Error() is called
+		// Then the formatted message is returned and Unwrap works
 		if err.Error() != want {
 			t.Errorf("Error() = %q, want %q", err.Error(), want)
 		}
@@ -189,11 +191,12 @@ func TestErrorTypes(t *testing.T) {
 	})
 
 	t.Run("TimeoutError", func(t *testing.T) {
-		// Given: a TimeoutError with provider and duration
+		// Given a TimeoutError with provider and duration
 		err := &TimeoutError{Provider: "claude", Duration: 30 * time.Second}
 		want := "provider: claude: timed out after 30s"
 
-		// When/Then: Error() returns the formatted message and errors.As succeeds
+		// When Error() is called
+		// Then the formatted message is returned and errors.As succeeds
 		if err.Error() != want {
 			t.Errorf("Error() = %q, want %q", err.Error(), want)
 		}
@@ -208,7 +211,7 @@ func TestErrorTypes(t *testing.T) {
 
 func TestMockProvider(t *testing.T) {
 	t.Run("returns configured result", func(t *testing.T) {
-		// Given: a MockProvider with a configured ExecuteFunc
+		// Given a MockProvider with a configured ExecuteFunc
 		mock := &MockProvider{
 			NameVal: "mock",
 			ExecuteFunc: func(ctx context.Context, prompt, workDir string) (Result, error) {
@@ -220,8 +223,8 @@ func TestMockProvider(t *testing.T) {
 			},
 		}
 
-		// When: Name and Execute are called
-		// Then: the configured name and result are returned
+		// When Name and Execute are called
+		// Then the configured name and result are returned
 		if mock.Name() != "mock" {
 			t.Errorf("Name() = %q, want %q", mock.Name(), "mock")
 		}
@@ -239,7 +242,7 @@ func TestMockProvider(t *testing.T) {
 	})
 
 	t.Run("returns configured error", func(t *testing.T) {
-		// Given: a MockProvider whose ExecuteFunc returns a ProviderError
+		// Given a MockProvider whose ExecuteFunc returns a ProviderError
 		mock := &MockProvider{
 			NameVal: "mock",
 			ExecuteFunc: func(ctx context.Context, prompt, workDir string) (Result, error) {
@@ -247,10 +250,10 @@ func TestMockProvider(t *testing.T) {
 			},
 		}
 
-		// When: Execute is called
+		// When Execute is called
 		_, err := mock.Execute(context.Background(), "test prompt", "/tmp/work")
 
-		// Then: the configured error is returned
+		// Then the configured error is returned
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -261,13 +264,13 @@ func TestMockProvider(t *testing.T) {
 	})
 
 	t.Run("nil ExecuteFunc returns zero result", func(t *testing.T) {
-		// Given: a MockProvider with no ExecuteFunc set
+		// Given a MockProvider with no ExecuteFunc set
 		mock := &MockProvider{NameVal: "mock"}
 
-		// When: Execute is called
+		// When Execute is called
 		result, err := mock.Execute(context.Background(), "prompt", "/dir")
 
-		// Then: a zero Result is returned with no error
+		// Then a zero Result is returned with no error
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -280,7 +283,7 @@ func TestMockProvider(t *testing.T) {
 	})
 
 	t.Run("captures call args", func(t *testing.T) {
-		// Given: a MockProvider that captures call arguments
+		// Given a MockProvider that captures call arguments
 		var capturedPrompt, capturedWorkDir string
 		mock := &MockProvider{
 			NameVal: "mock",
@@ -291,10 +294,10 @@ func TestMockProvider(t *testing.T) {
 			},
 		}
 
-		// When: Execute is called with specific arguments
+		// When Execute is called with specific arguments
 		_, _ = mock.Execute(context.Background(), "my prompt", "/my/dir")
 
-		// Then: the arguments are captured correctly
+		// Then the arguments are captured correctly
 		if capturedPrompt != "my prompt" {
 			t.Errorf("prompt = %q, want %q", capturedPrompt, "my prompt")
 		}
@@ -307,15 +310,15 @@ func TestMockProvider(t *testing.T) {
 // --- Executor interface test ---
 
 func TestExecutorInterface(t *testing.T) {
-	// Given: a MockProvider assigned to the Executor interface
+	// Given a MockProvider assigned to the Executor interface
 	var e Executor = &MockProvider{
 		NameVal: "test",
 		ExecuteFunc: func(ctx context.Context, prompt, workDir string) (Result, error) {
 			return Result{Output: "ok"}, nil
 		},
 	}
-	// When: Name and Execute are called via the interface
-	// Then: the expected values are returned
+	// When Name and Execute are called via the interface
+	// Then the expected values are returned
 	if e.Name() != "test" {
 		t.Errorf("Name() = %q, want %q", e.Name(), "test")
 	}
@@ -331,16 +334,16 @@ func TestExecutorInterface(t *testing.T) {
 // --- Result.ParseSignal convenience method test ---
 
 func TestResultParseSignal(t *testing.T) {
-	// Given: a Result with a valid JSON signal in its output
+	// Given a Result with a valid JSON signal in its output
 	r := Result{
 		Output:   `{"status":"PASS","feedback":"ok","files_changed":["a.go"],"summary":"done"}`,
 		ExitCode: 0,
 		Duration: time.Second,
 	}
-	// When: ParseSignal is called on the Result
+	// When ParseSignal is called on the Result
 	sig, err := r.ParseSignal()
 
-	// Then: the parsed signal has the expected status
+	// Then the parsed signal has the expected status
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

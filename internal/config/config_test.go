@@ -8,11 +8,11 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
-	// Given: no configuration loaded
-	// When: DefaultConfig is called
+	// Given no configuration loaded
+	// When DefaultConfig is called
 	cfg := DefaultConfig()
 
-	// Then: sensible defaults are returned
+	// Then sensible defaults are returned
 	if cfg.Runtime.Provider != "claude" {
 		t.Errorf("default provider = %q, want %q", cfg.Runtime.Provider, "claude")
 	}
@@ -25,7 +25,7 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestLoad_ValidFile(t *testing.T) {
-	// Given: a config.yaml with provider, timeout, and base_dir set
+	// Given a config.yaml with provider, timeout, and base_dir set
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "capsule.yaml")
 	if err := os.WriteFile(cfgPath, []byte(`
@@ -38,13 +38,13 @@ worktree:
 		t.Fatal(err)
 	}
 
-	// When: config is loaded from the file
+	// When config is loaded from the file
 	cfg, err := Load(cfgPath)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	// Then: Runtime.Provider, Runtime.Timeout, and Worktree.BaseDir are set
+	// Then Runtime.Provider, Runtime.Timeout, and Worktree.BaseDir are set
 	if cfg.Runtime.Provider != "openai" {
 		t.Errorf("provider = %q, want %q", cfg.Runtime.Provider, "openai")
 	}
@@ -57,14 +57,14 @@ worktree:
 }
 
 func TestLoad_MissingFile(t *testing.T) {
-	// Given: no config file exists
-	// When: Load is called with a nonexistent path
+	// Given no config file exists
+	// When Load is called with a nonexistent path
 	cfg, err := Load("/nonexistent/capsule.yaml")
 	if err != nil {
 		t.Fatalf("Load() should return defaults for missing file, got error: %v", err)
 	}
 
-	// Then: sensible defaults are used
+	// Then sensible defaults are used
 	want := DefaultConfig()
 	if *cfg != want {
 		t.Errorf("Load(missing) = %+v, want defaults %+v", *cfg, want)
@@ -72,24 +72,24 @@ func TestLoad_MissingFile(t *testing.T) {
 }
 
 func TestLoad_InvalidYAML(t *testing.T) {
-	// Given: a config file with invalid YAML syntax
+	// Given a config file with invalid YAML syntax
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "capsule.yaml")
 	if err := os.WriteFile(cfgPath, []byte("{{invalid yaml"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// When: Load is called
+	// When Load is called
 	_, err := Load(cfgPath)
 
-	// Then: an error is returned
+	// Then an error is returned
 	if err == nil {
 		t.Fatal("Load(invalid YAML) should return error")
 	}
 }
 
 func TestLoad_PartialConfig(t *testing.T) {
-	// Given: a config file that only sets provider (timeout and base_dir omitted)
+	// Given a config file that only sets provider (timeout and base_dir omitted)
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "capsule.yaml")
 	if err := os.WriteFile(cfgPath, []byte(`
@@ -99,13 +99,13 @@ runtime:
 		t.Fatal(err)
 	}
 
-	// When: config is loaded
+	// When config is loaded
 	cfg, err := Load(cfgPath)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	// Then: provider is set and unset fields retain defaults
+	// Then provider is set and unset fields retain defaults
 	if cfg.Runtime.Provider != "gemini" {
 		t.Errorf("provider = %q, want %q", cfg.Runtime.Provider, "gemini")
 	}
@@ -118,7 +118,7 @@ runtime:
 }
 
 func TestLoad_LayeredPriority(t *testing.T) {
-	// Given: a user config with provider+timeout and a project config overriding timeout
+	// Given a user config with provider+timeout and a project config overriding timeout
 	userDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -139,13 +139,13 @@ runtime:
 		t.Fatal(err)
 	}
 
-	// When: configs are loaded with layered priority (user < project)
+	// When configs are loaded with layered priority (user < project)
 	cfg, err := LoadLayered(userCfg, projectCfg)
 	if err != nil {
 		t.Fatalf("LoadLayered() error = %v", err)
 	}
 
-	// Then: project overrides user, unset fields fall through
+	// Then project overrides user, unset fields fall through
 	if cfg.Runtime.Provider != "openai" {
 		t.Errorf("provider = %q, want %q", cfg.Runtime.Provider, "openai")
 	}
@@ -201,16 +201,16 @@ func TestApplyEnv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Given: a default config and environment variable per test case
+			// Given a default config and environment variable per test case
 			for k, v := range tt.envs {
 				t.Setenv(k, v)
 			}
 			cfg := DefaultConfig()
 
-			// When: ApplyEnv is called
+			// When ApplyEnv is called
 			err := cfg.ApplyEnv()
 
-			// Then: the expected override or error is observed
+			// Then the expected override or error is observed
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("ApplyEnv() should return error")
@@ -226,7 +226,7 @@ func TestApplyEnv(t *testing.T) {
 }
 
 func TestLoad_UnknownField(t *testing.T) {
-	// Given: a config file with a typo ("provder" instead of "provider")
+	// Given a config file with a typo ("provder" instead of "provider")
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "capsule.yaml")
 	if err := os.WriteFile(cfgPath, []byte(`
@@ -236,10 +236,10 @@ runtime:
 		t.Fatal(err)
 	}
 
-	// When: Load is called
+	// When Load is called
 	_, err := Load(cfgPath)
 
-	// Then: an error is returned (strict parsing rejects unknown fields)
+	// Then an error is returned (strict parsing rejects unknown fields)
 	if err == nil {
 		t.Fatal("Load() should return error for unknown field 'provder'")
 	}
@@ -278,14 +278,14 @@ func TestValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Given: a config modified per test case
+			// Given a config modified per test case
 			cfg := DefaultConfig()
 			tt.modify(&cfg)
 
-			// When: Validate is called
+			// When Validate is called
 			err := cfg.Validate()
 
-			// Then: the expected validation result is returned
+			// Then the expected validation result is returned
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -294,20 +294,20 @@ func TestValidate(t *testing.T) {
 }
 
 func TestLoad_CommentOnlyFile(t *testing.T) {
-	// Given: a config file containing only YAML comments
+	// Given a config file containing only YAML comments
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "capsule.yaml")
 	if err := os.WriteFile(cfgPath, []byte("# just a comment\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// When: Load is called
+	// When Load is called
 	cfg, err := Load(cfgPath)
 	if err != nil {
 		t.Fatalf("Load(comment-only) error = %v", err)
 	}
 
-	// Then: defaults are returned (comment-only is treated as empty)
+	// Then defaults are returned (comment-only is treated as empty)
 	want := DefaultConfig()
 	if *cfg != want {
 		t.Errorf("Load(comment-only) = %+v, want defaults %+v", *cfg, want)
@@ -315,14 +315,14 @@ func TestLoad_CommentOnlyFile(t *testing.T) {
 }
 
 func TestLoadLayered_AllMissing(t *testing.T) {
-	// Given: no config files exist at any layer path
-	// When: LoadLayered is called with nonexistent paths
+	// Given no config files exist at any layer path
+	// When LoadLayered is called with nonexistent paths
 	cfg, err := LoadLayered("/no/user.yaml", "/no/project.yaml")
 	if err != nil {
 		t.Fatalf("LoadLayered(all missing) error = %v", err)
 	}
 
-	// Then: defaults are returned
+	// Then defaults are returned
 	want := DefaultConfig()
 	if *cfg != want {
 		t.Errorf("got %+v, want defaults %+v", *cfg, want)
@@ -330,20 +330,20 @@ func TestLoadLayered_AllMissing(t *testing.T) {
 }
 
 func TestLoad_EmptyFile(t *testing.T) {
-	// Given: an empty config file
+	// Given an empty config file
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "capsule.yaml")
 	if err := os.WriteFile(cfgPath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	// When: Load is called
+	// When Load is called
 	cfg, err := Load(cfgPath)
 	if err != nil {
 		t.Fatalf("Load(empty) error = %v", err)
 	}
 
-	// Then: defaults are returned
+	// Then defaults are returned
 	want := DefaultConfig()
 	if *cfg != want {
 		t.Errorf("Load(empty) = %+v, want defaults %+v", *cfg, want)

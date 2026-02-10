@@ -8,16 +8,16 @@ import (
 
 func TestRegistry(t *testing.T) {
 	t.Run("register and create provider", func(t *testing.T) {
-		// Given: a registry with a "mock" factory registered
+		// Given a registry with a "mock" factory registered
 		r := NewRegistry()
 		r.Register("mock", func() (Executor, error) {
 			return &MockProvider{NameVal: "mock"}, nil
 		})
 
-		// When: NewProvider is called with "mock"
+		// When NewProvider is called with "mock"
 		p, err := r.NewProvider("mock")
 
-		// Then: a provider with the correct name is returned
+		// Then a provider with the correct name is returned
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -27,16 +27,16 @@ func TestRegistry(t *testing.T) {
 	})
 
 	t.Run("unknown provider returns UnknownProviderError", func(t *testing.T) {
-		// Given: a registry with only "claude" registered
+		// Given a registry with only "claude" registered
 		r := NewRegistry()
 		r.Register("claude", func() (Executor, error) {
 			return &MockProvider{NameVal: "claude"}, nil
 		})
 
-		// When: NewProvider is called with "nonexistent"
+		// When NewProvider is called with "nonexistent"
 		_, err := r.NewProvider("nonexistent")
 
-		// Then: an UnknownProviderError is returned with available providers
+		// Then an UnknownProviderError is returned with available providers
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -53,7 +53,7 @@ func TestRegistry(t *testing.T) {
 	})
 
 	t.Run("available providers returns sorted names", func(t *testing.T) {
-		// Given: a registry with "zebra" and "alpha" registered
+		// Given a registry with "zebra" and "alpha" registered
 		r := NewRegistry()
 		r.Register("zebra", func() (Executor, error) {
 			return &MockProvider{NameVal: "zebra"}, nil
@@ -62,9 +62,10 @@ func TestRegistry(t *testing.T) {
 			return &MockProvider{NameVal: "alpha"}, nil
 		})
 
-		// When: AvailableProviders is called
+		// When AvailableProviders is called
 		got := r.AvailableProviders()
-		// Then: names are returned in sorted order
+
+		// Then names are returned in sorted order
 		want := []string{"alpha", "zebra"}
 		if len(got) != len(want) {
 			t.Fatalf("len = %d, want %d", len(got), len(want))
@@ -80,7 +81,7 @@ func TestRegistry(t *testing.T) {
 	})
 
 	t.Run("duplicate registration overwrites", func(t *testing.T) {
-		// Given: a registry where "mock" is registered twice
+		// Given a registry where "mock" is registered twice
 		r := NewRegistry()
 		r.Register("mock", func() (Executor, error) {
 			return &MockProvider{NameVal: "first"}, nil
@@ -89,10 +90,10 @@ func TestRegistry(t *testing.T) {
 			return &MockProvider{NameVal: "second"}, nil
 		})
 
-		// When: NewProvider is called
+		// When NewProvider is called
 		p, err := r.NewProvider("mock")
 
-		// Then: the second registration wins
+		// Then the second registration wins
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -102,17 +103,17 @@ func TestRegistry(t *testing.T) {
 	})
 
 	t.Run("factory error propagated", func(t *testing.T) {
-		// Given: a registry with a factory that returns an error
+		// Given a registry with a factory that returns an error
 		r := NewRegistry()
 		factoryErr := errors.New("config missing")
 		r.Register("broken", func() (Executor, error) {
 			return nil, factoryErr
 		})
 
-		// When: NewProvider is called
+		// When NewProvider is called
 		_, err := r.NewProvider("broken")
 
-		// Then: the factory error is propagated
+		// Then the factory error is propagated
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -122,13 +123,13 @@ func TestRegistry(t *testing.T) {
 	})
 
 	t.Run("empty registry returns empty slice", func(t *testing.T) {
-		// Given: an empty registry
+		// Given an empty registry
 		r := NewRegistry()
 
-		// When: AvailableProviders is called
+		// When AvailableProviders is called
 		got := r.AvailableProviders()
 
-		// Then: a non-nil empty slice is returned
+		// Then a non-nil empty slice is returned
 		if got == nil {
 			t.Fatal("AvailableProviders() returned nil, want empty slice")
 		}
@@ -138,7 +139,7 @@ func TestRegistry(t *testing.T) {
 	})
 
 	t.Run("factory creates fresh instance each call", func(t *testing.T) {
-		// Given: a registry with a factory that tracks call count
+		// Given a registry with a factory that tracks call count
 		r := NewRegistry()
 		callCount := 0
 		r.Register("mock", func() (Executor, error) {
@@ -146,7 +147,7 @@ func TestRegistry(t *testing.T) {
 			return &MockProvider{NameVal: "mock"}, nil
 		})
 
-		// When: NewProvider is called twice
+		// When NewProvider is called twice
 		p1, err := r.NewProvider("mock")
 		if err != nil {
 			t.Fatalf("unexpected error creating p1: %v", err)
@@ -155,7 +156,7 @@ func TestRegistry(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error creating p2: %v", err)
 		}
-		// Then: the factory is called twice and returns different instances
+		// Then the factory is called twice and returns different instances
 		if callCount != 2 {
 			t.Errorf("factory called %d times, want 2", callCount)
 		}
@@ -166,14 +167,14 @@ func TestRegistry(t *testing.T) {
 }
 
 func TestUnknownProviderError(t *testing.T) {
-	// Given: an UnknownProviderError with name and available providers
+	// Given an UnknownProviderError with name and available providers
 	err := &UnknownProviderError{
 		Name:      "gemini",
 		Available: []string{"claude", "mock"},
 	}
 
-	// When: Error() is called
-	// Then: it returns a formatted message with the unknown name and available options
+	// When Error() is called
+	// Then it returns a formatted message with the unknown name and available options
 	want := `unknown provider "gemini" (available: claude, mock)`
 	if err.Error() != want {
 		t.Errorf("Error() = %q, want %q", err.Error(), want)
@@ -182,9 +183,9 @@ func TestUnknownProviderError(t *testing.T) {
 
 func TestRegisterPanics(t *testing.T) {
 	t.Run("empty name panics", func(t *testing.T) {
-		// Given: a new registry
-		// When: Register is called with an empty name
-		// Then: it panics
+		// Given a new registry
+		// When Register is called with an empty name
+		// Then it panics
 		defer func() {
 			if r := recover(); r == nil {
 				t.Fatal("expected panic for empty name, got none")
@@ -197,9 +198,9 @@ func TestRegisterPanics(t *testing.T) {
 	})
 
 	t.Run("nil factory panics", func(t *testing.T) {
-		// Given: a new registry
-		// When: Register is called with a nil factory
-		// Then: it panics
+		// Given a new registry
+		// When Register is called with a nil factory
+		// Then it panics
 		defer func() {
 			if r := recover(); r == nil {
 				t.Fatal("expected panic for nil factory, got none")
