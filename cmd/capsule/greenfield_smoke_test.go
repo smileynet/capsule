@@ -19,7 +19,7 @@ import (
 // This test serves as executable documentation: a reader can understand exactly
 // what a user sees when they run capsule on a fresh project.
 func TestSmoke_GreenfieldNarrative(t *testing.T) {
-	// Prerequisites: node and bd must be on PATH.
+	// Prerequisites: node, bd, and git must be on PATH.
 	for _, cmd := range []string{"node", "bd", "git"} {
 		if _, err := exec.LookPath(cmd); err != nil {
 			t.Skipf("skipping: %s not on PATH", cmd)
@@ -55,7 +55,6 @@ func TestSmoke_GreenfieldNarrative(t *testing.T) {
 		happyOutput, happyExit = runCapsuleBinary(t, binary, projectDir, mockDir, "demo-001.1.1")
 		t.Log("--- capsule output ---\n" + happyOutput)
 
-		// Exit code 0.
 		if happyExit != 0 {
 			t.Fatalf("exit code = %d, want 0", happyExit)
 		}
@@ -70,7 +69,7 @@ func TestSmoke_GreenfieldNarrative(t *testing.T) {
 			t.Errorf("passed lines = %d, want 6", passedLines)
 		}
 
-		// files: lines appear for phases that changed files.
+		// TUI "files:" lines list files changed by each phase.
 		if !strings.Contains(happyOutput, "files: src/todo.test.js") {
 			t.Error("missing files line for test-writer")
 		}
@@ -94,7 +93,7 @@ func TestSmoke_GreenfieldNarrative(t *testing.T) {
 			t.Error("missing worklog path message")
 		}
 
-		// Files on main branch.
+		// Implementation files exist on main after merge.
 		if _, err := os.Stat(filepath.Join(projectDir, "src", "todo.js")); err != nil {
 			t.Error("src/todo.js not found on main branch")
 		}
@@ -102,7 +101,7 @@ func TestSmoke_GreenfieldNarrative(t *testing.T) {
 			t.Error("src/todo.test.js not found on main branch")
 		}
 
-		// node src/todo.test.js passes.
+		// Tests pass when executed directly.
 		nodeCmd := exec.Command("node", "src/todo.test.js")
 		nodeCmd.Dir = projectDir
 		nodeOut, nodeErr := nodeCmd.CombinedOutput()
@@ -229,10 +228,8 @@ func setupGreenfieldProject(t *testing.T, projectRoot string) string {
 	projectDir := strings.TrimSpace(string(out))
 	t.Cleanup(func() { os.RemoveAll(projectDir) })
 
-	// Copy prompts/ into project.
 	copyDir(t, filepath.Join(projectRoot, "prompts"), filepath.Join(projectDir, "prompts"))
 
-	// Copy templates/worklog.md.template into project.
 	dstTemplates := filepath.Join(projectDir, "templates")
 	if err := os.MkdirAll(dstTemplates, 0o755); err != nil {
 		t.Fatalf("mkdir templates: %v", err)
@@ -411,7 +408,7 @@ func runCapsuleBinary(t *testing.T, binary, projectDir, mockDir, beadID string) 
 	return string(out), exitCode
 }
 
-// countMatches returns the number of lines matching the given regex pattern.
+// countMatches returns the number of occurrences matching the given regex pattern.
 func countMatches(output, pattern string) int {
 	re := regexp.MustCompile(pattern)
 	return len(re.FindAllString(output, -1))
