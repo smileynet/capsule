@@ -30,8 +30,7 @@ If `$ARGUMENTS` is provided, investigate that specific bead:
 1. **Worktree path** and **branch**: `git -C .capsule/worktrees/$ARGUMENTS branch --show-current`
 2. **Recent commits**: `git -C .capsule/worktrees/$ARGUMENTS log --oneline -10`
 3. **Worklog**: Read `.capsule/worktrees/$ARGUMENTS/worklog.md` in full
-4. **Phase outputs**: List files in `.capsule/worktrees/$ARGUMENTS/.capsule/output/`
-   - Read the most recent output log to find the last signal
+4. **Phase outputs**: If `.capsule/worktrees/$ARGUMENTS/.capsule/output/` exists, list files and read the most recent log to find the last signal. If not, note that phase output is captured in the worklog instead.
 5. **Diagnosis**: Identify the last phase that ran, its status, and any NEEDS_WORK feedback
 
 ### Archived only (if no worktree but `.capsule/logs/$ARGUMENTS/` exists)

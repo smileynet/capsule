@@ -6,7 +6,7 @@ Given a task (bead), capsule creates an isolated git worktree, runs AI agents th
 
 ## Prerequisites
 
-- **Go 1.22+** (building from source)
+- **Go 1.25+** (building from source)
 - **git**
 - **[bd](https://github.com/smileynet/beads)** (beads CLI) for task management
 - **[claude](https://docs.anthropic.com/en/docs/claude-code)** CLI for pipeline execution
@@ -41,7 +41,7 @@ scripts/setup-template.sh --template=demo-brownfield /tmp/capsule-demo
 
 # Copy pipeline prompts and templates into it
 cp -r prompts/ /tmp/capsule-demo/prompts/
-cp -r templates/worklog.md.template /tmp/capsule-demo/templates/worklog.md.template
+cp templates/worklog.md.template /tmp/capsule-demo/templates/worklog.md.template
 
 # Run the pipeline
 cd /tmp/capsule-demo

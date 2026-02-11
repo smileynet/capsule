@@ -42,5 +42,5 @@ If `$ARGUMENTS` is empty, clean up all capsule artifacts:
 
 If confirmed:
 1. Run `scripts/teardown.sh`
-2. Delete any remaining orphaned `capsule-*` branches (the teardown script handles branches for active worktrees, but orphaned branches from previously aborted runs may remain)
+2. Delete any remaining orphaned `capsule-*` branches (teardown handles active worktree branches, but orphaned branches from prior aborted runs may remain)
 3. Verify clean state: no worktrees, no orphaned branches

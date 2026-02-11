@@ -8,7 +8,7 @@ Run the capsule pipeline for the given bead ID.
 
 **Bead ID:** `$ARGUMENTS` (required — if empty, ask the user which bead to run).
 
-## Pre-flight
+## Pre-flight checks
 
 1. Verify `capsule` binary is available: `capsule --version`
 2. Verify `prompts/` directory exists with required files
