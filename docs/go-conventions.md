@@ -160,52 +160,106 @@ Comments should explain *why*, not *what*. The code already says what.
 
 ## 8. CLI (Kong)
 
-Use [Kong](https://github.com/alecthomas/kong) for CLI parsing. Define commands as nested structs with a `Run(...deps) error` method on each leaf command. Keep `main.go` thin — parse, bind, and dispatch.
+Use [Kong](https://github.com/alecthomas/kong) for CLI parsing. Define commands as nested structs with a `Run() error` method on each leaf command. Keep `main()` thin — parse and dispatch.
+
+### Main Structure
 
 ```go
-// cmd/capsule/main.go
 type CLI struct {
-    Version kong.VersionFlag `help:"Show version."`
-    Run     RunCmd           `cmd:"" help:"Run a capsule."`
-}
-
-type RunCmd struct {
-    Config string `arg:"" type:"existingfile" help:"Path to capsule config."`
-}
-
-func (r *RunCmd) Run(orch *capsule.Orchestrator) error {
-    return orch.Execute(r.Config)
+    Version kong.VersionFlag `help:"Show version." short:"V"`
+    Run     RunCmd           `cmd:"" help:"Run a capsule pipeline."`
 }
 
 func main() {
     var cli CLI
-    ctx := kong.Parse(&cli, kong.Vars{"version": version})
-    orch := capsule.NewOrchestrator(/* ... */)
-    ctx.Bind(orch)
-    ctx.FatalIfErrorf(ctx.Run())
+    ctx := kong.Parse(&cli, kong.Vars{"version": version + " " + commit + " " + date})
+    err := ctx.Run()
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "error: %s\n", err)
+        os.Exit(exitCode(err))
+    }
 }
 ```
 
-In tests, use `kong.New` (not `kong.Parse`) to avoid `os.Exit` on error.
+### Testability: Run() / run() Split
+
+Each command's `Run()` method constructs real dependencies, then delegates to a lowercase `run()` that accepts interfaces. Tests call `run()` directly with mocks, bypassing config loading and provider construction.
 
 ```go
-func TestRunCmd(t *testing.T) {
-    var cli CLI
-    k, err := kong.New(&cli)
-    if err != nil {
-        t.Fatal(err)
-    }
-    kctx, err := k.Parse([]string{"run", "testdata/config.yaml"})
-    if err != nil {
-        t.Fatal(err)
-    }
-    // Bind test doubles, then kctx.Run()
+// pipelineRunner abstracts orchestrator.RunPipeline for testing.
+type pipelineRunner interface {
+    RunPipeline(ctx context.Context, input orchestrator.PipelineInput) error
+}
+
+// Run constructs real deps (config, provider, orchestrator), then calls run().
+func (r *RunCmd) Run() error {
+    cfg, err := loadConfig()
+    // ... build real provider, orchestrator ...
+    return r.run(os.Stdout, orch)
+}
+
+// run accepts interfaces — testable without real deps.
+func (r *RunCmd) run(w io.Writer, runner pipelineRunner) error {
+    return runner.RunPipeline(ctx, orchestrator.PipelineInput{BeadID: r.BeadID})
 }
 ```
 
-**Avoid:**
-- `ctx.Command()` string switching — use `Run()` methods instead.
-- Validation in `BeforeApply` — prefer `AfterApply` (positional arguments not yet populated).
+### Exit Codes
+
+Map errors to exit codes in `main()`, not in command methods. Commands return errors; `main()` translates:
+
+```go
+const (
+    exitSuccess  = 0 // no error
+    exitPipeline = 1 // pipeline phase failure or context cancellation
+    exitSetup    = 2 // config, provider, or wiring error
+)
+
+func exitCode(err error) int {
+    if err == nil {
+        return exitSuccess
+    }
+    var pe *orchestrator.PipelineError
+    if errors.As(err, &pe) {
+        return exitPipeline
+    }
+    return exitSetup
+}
+```
+
+### Testing
+
+Use `kong.New` (not `kong.Parse`) to avoid `os.Exit` on parse errors. For `--version` testing, use `kong.Exit` to replace `os.Exit` with a recoverable panic:
+
+```go
+func TestVersionFlag(t *testing.T) {
+    var cli CLI
+    var buf bytes.Buffer
+    k, err := kong.New(&cli,
+        kong.Vars{"version": "v1.0.0 abc1234 2026-01-01"},
+        kong.Writers(&buf, &buf),
+        kong.Exit(func(int) { panic(errExitCalled) }),
+    )
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer func() {
+        r := recover()
+        // assert r is errExitCalled, then check buf.String()
+    }()
+    k.Parse([]string{"--version"})
+}
+```
+
+### Antipatterns
+
+| Antipattern | Risk | Fix |
+|-------------|------|-----|
+| `ctx.Command()` string switching | Fragile, bypasses `Run()` dispatch | Define `Run()` method on each command struct |
+| Validation in `BeforeApply` | Positional args not populated yet | Use `AfterApply` for validation that needs args |
+| `os.Exit` in `Run()` methods | Untestable, skips deferred cleanup | Return errors; let `main()` call `os.Exit` |
+| Real deps in testable path | Tests need config files, providers | Split `Run()` / `run()`; pass interfaces to `run()` |
+| `kong.Parse` in tests | Calls `os.Exit` on parse error | Use `kong.New` + `k.Parse()` for testable parsing |
 
 - [Kong README](https://github.com/alecthomas/kong)
 - [Kong examples](https://github.com/alecthomas/kong/tree/master/_examples)
