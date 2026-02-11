@@ -1,9 +1,22 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"time"
 
 	"github.com/alecthomas/kong"
+
+	"github.com/smileynet/capsule/internal/config"
+	"github.com/smileynet/capsule/internal/orchestrator"
+	"github.com/smileynet/capsule/internal/prompt"
+	"github.com/smileynet/capsule/internal/provider"
+	"github.com/smileynet/capsule/internal/worklog"
+	"github.com/smileynet/capsule/internal/worktree"
 )
 
 var (
@@ -28,20 +41,105 @@ type RunCmd struct {
 	Debug    bool   `help:"Enable debug output."`
 }
 
+// pipelineRunner abstracts orchestrator.RunPipeline for testing.
+type pipelineRunner interface {
+	RunPipeline(ctx context.Context, input orchestrator.PipelineInput) error
+}
+
+// loadConfig loads layered config from user and project paths with env overrides.
+func loadConfig() (*config.Config, error) {
+	cfg, err := config.LoadLayered(
+		os.ExpandEnv("$HOME/.config/capsule/config.yaml"),
+		".capsule/config.yaml",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.ApplyEnv(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 // Run executes the run command.
 func (r *RunCmd) Run() error {
-	return fmt.Errorf("run: not implemented")
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
+
+	// Apply CLI flag overrides.
+	cfg.Runtime.Provider = r.Provider
+	cfg.Runtime.Timeout = time.Duration(r.Timeout) * time.Second
+
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
+
+	// Create provider via registry.
+	reg := provider.NewRegistry()
+	reg.Register("claude", func() (provider.Executor, error) {
+		return provider.NewClaudeProvider(provider.WithTimeout(cfg.Runtime.Timeout)), nil
+	})
+
+	p, err := reg.NewProvider(cfg.Runtime.Provider)
+	if err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
+
+	// Build orchestrator.
+	promptLoader := prompt.NewLoader("prompts")
+	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+	wlMgr := worklog.NewManager("templates/worklog.md.template", ".capsule/logs")
+
+	orch := orchestrator.New(p,
+		orchestrator.WithPromptLoader(promptLoader),
+		orchestrator.WithWorktreeManager(wtMgr),
+		orchestrator.WithWorklogManager(wlMgr),
+		orchestrator.WithStatusCallback(plainTextCallback(os.Stdout)),
+	)
+
+	return r.run(os.Stdout, orch)
 }
 
-// AbortCmd aborts a running capsule.
+// run executes the pipeline with the given runner, enabling testable wiring.
+func (r *RunCmd) run(_ io.Writer, runner pipelineRunner) error {
+	// Set up Ctrl+C handling.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	input := orchestrator.PipelineInput{
+		BeadID: r.BeadID,
+	}
+
+	return runner.RunPipeline(ctx, input)
+}
+
+// AbortCmd aborts a running capsule by removing the worktree.
+// The branch is preserved so work can be inspected. Use clean to remove everything.
 type AbortCmd struct {
 	BeadID string `arg:"" help:"Bead ID to abort."`
-	Force  bool   `help:"Force abort without confirmation."`
 }
 
-// Run executes the abort command.
+// Run executes the abort command by removing the worktree.
 func (a *AbortCmd) Run() error {
-	return fmt.Errorf("abort: not implemented")
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("abort: %w", err)
+	}
+
+	mgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+	if !mgr.Exists(a.BeadID) {
+		return fmt.Errorf("abort: no worktree found for %q", a.BeadID)
+	}
+
+	// Preserve branch for inspection; use clean to remove branch.
+	if err := mgr.Remove(a.BeadID, false); err != nil {
+		return fmt.Errorf("abort: %w", err)
+	}
+
+	fmt.Printf("Aborted capsule %s (branch preserved)\n", a.BeadID)
+	return nil
 }
 
 // CleanCmd cleans up capsule worktree and artifacts.
@@ -49,13 +147,67 @@ type CleanCmd struct {
 	BeadID string `arg:"" help:"Bead ID to clean."`
 }
 
-// Run executes the clean command.
+// Run executes the clean command by removing worktree, branch, and pruning.
 func (c *CleanCmd) Run() error {
-	return fmt.Errorf("clean: not implemented")
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("clean: %w", err)
+	}
+
+	mgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+	if !mgr.Exists(c.BeadID) {
+		return fmt.Errorf("clean: no worktree found for %q", c.BeadID)
+	}
+
+	if err := mgr.Remove(c.BeadID, true); err != nil {
+		return fmt.Errorf("clean: %w", err)
+	}
+
+	if err := mgr.Prune(); err != nil {
+		return fmt.Errorf("clean: prune: %w", err)
+	}
+
+	fmt.Printf("Cleaned capsule %s\n", c.BeadID)
+	return nil
+}
+
+// Exit codes.
+const (
+	exitSuccess  = 0
+	exitPipeline = 1
+	exitSetup    = 2
+)
+
+// exitCode maps an error to the appropriate exit code.
+func exitCode(err error) int {
+	if err == nil {
+		return exitSuccess
+	}
+	var pe *orchestrator.PipelineError
+	if errors.As(err, &pe) {
+		return exitPipeline
+	}
+	return exitSetup
+}
+
+// plainTextCallback returns a StatusCallback that prints timestamped phase lines.
+func plainTextCallback(w io.Writer) orchestrator.StatusCallback {
+	return func(su orchestrator.StatusUpdate) {
+		ts := time.Now().Format("15:04:05")
+		retry := ""
+		if su.Attempt > 1 {
+			retry = fmt.Sprintf(" (attempt %d/%d)", su.Attempt, su.MaxRetry)
+		}
+		_, _ = fmt.Fprintf(w, "[%s] [%s] %s %s%s\n", ts, su.Progress, su.Phase, su.Status, retry)
+	}
 }
 
 func main() {
 	var cli CLI
 	ctx := kong.Parse(&cli, kong.Vars{"version": version + " " + commit + " " + date})
-	ctx.FatalIfErrorf(ctx.Run())
+	err := ctx.Run()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(exitCode(err))
+	}
 }

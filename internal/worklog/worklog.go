@@ -10,6 +10,32 @@ import (
 	"time"
 )
 
+// Manager wraps the package-level worklog functions with config for template and archive paths.
+type Manager struct {
+	templatePath string
+	archiveDir   string
+}
+
+// NewManager creates a Manager with the given template and archive directory paths.
+func NewManager(templatePath, archiveDir string) *Manager {
+	return &Manager{templatePath: templatePath, archiveDir: archiveDir}
+}
+
+// Create instantiates a worklog from the configured template into worktreePath/worklog.md.
+func (m *Manager) Create(worktreePath string, bead BeadContext) error {
+	return Create(m.templatePath, worktreePath, bead)
+}
+
+// AppendPhaseEntry appends a phase result to the worklog at worktreePath/worklog.md.
+func (m *Manager) AppendPhaseEntry(worktreePath string, entry PhaseEntry) error {
+	return AppendPhaseEntry(worktreePath, entry)
+}
+
+// Archive copies the worklog to the configured archive directory under beadID.
+func (m *Manager) Archive(worktreePath, beadID string) error {
+	return Archive(worktreePath, m.archiveDir, beadID)
+}
+
 // Sentinel errors for caller-checkable conditions.
 var (
 	ErrAlreadyExists = errors.New("worklog: already exists")

@@ -108,7 +108,7 @@ func TestCreate(t *testing.T) {
 
 			// Then directory exists at expected path
 			wtPath := filepath.Join(repoDir, baseDir, tt.id)
-			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+			if _, err := os.Stat(wtPath); errors.Is(err, os.ErrNotExist) {
 				t.Errorf("worktree dir does not exist: %s", wtPath)
 			}
 
@@ -198,7 +198,7 @@ func TestRemove(t *testing.T) {
 
 			// Then directory is gone
 			wtPath := filepath.Join(repoDir, baseDir, tt.id)
-			if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+			if _, err := os.Stat(wtPath); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("worktree dir still exists: %s", wtPath)
 			}
 
@@ -337,6 +337,20 @@ func TestListExcludesStaleDirectories(t *testing.T) {
 	want := []string{"real-wt"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestPath(t *testing.T) {
+	// Given a manager with repo root and base directory
+	m := NewManager("/repo", ".capsule/worktrees")
+
+	// When Path is called with an ID
+	got := m.Path("task-1")
+
+	// Then it returns the absolute path to the worktree
+	want := filepath.Join("/repo", ".capsule/worktrees", "task-1")
+	if got != want {
+		t.Errorf("Path(%q) = %q, want %q", "task-1", got, want)
 	}
 }
 

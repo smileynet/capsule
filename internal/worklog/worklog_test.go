@@ -323,6 +323,91 @@ func TestArchive_MissingWorklog(t *testing.T) {
 	}
 }
 
+func TestManager_Create(t *testing.T) {
+	// Given a manager with a valid template
+	tmplDir := t.TempDir()
+	tmplPath := filepath.Join(tmplDir, "worklog.md.template")
+	if err := os.WriteFile(tmplPath, []byte("# {{TASK_ID}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archiveDir := t.TempDir()
+	mgr := NewManager(tmplPath, archiveDir)
+
+	worktreeDir := t.TempDir()
+	bead := BeadContext{TaskID: "task-mgr-1"}
+
+	// When Create is called through the manager
+	err := mgr.Create(worktreeDir, bead)
+
+	// Then worklog.md is created
+	if err != nil {
+		t.Fatalf("Manager.Create() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(worktreeDir, "worklog.md"))
+	if err != nil {
+		t.Fatalf("reading worklog.md: %v", err)
+	}
+	if !strings.Contains(string(data), "task-mgr-1") {
+		t.Errorf("worklog.md missing task ID, got: %s", data)
+	}
+}
+
+func TestManager_AppendPhaseEntry(t *testing.T) {
+	// Given a manager and an existing worklog
+	mgr := NewManager("", t.TempDir())
+	worktreeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(worktreeDir, "worklog.md"), []byte("# Worklog\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := PhaseEntry{
+		Name:      "test-writer",
+		Status:    "completed",
+		Verdict:   "PASS",
+		Timestamp: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	// When AppendPhaseEntry is called through the manager
+	err := mgr.AppendPhaseEntry(worktreeDir, entry)
+
+	// Then the entry is appended
+	if err != nil {
+		t.Fatalf("Manager.AppendPhaseEntry() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(worktreeDir, "worklog.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "test-writer") {
+		t.Errorf("worklog.md missing phase entry, got: %s", data)
+	}
+}
+
+func TestManager_Archive(t *testing.T) {
+	// Given a manager with an archive directory and a worktree with a worklog
+	archiveDir := t.TempDir()
+	mgr := NewManager("", archiveDir)
+	worktreeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(worktreeDir, "worklog.md"), []byte("archived content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When Archive is called through the manager
+	err := mgr.Archive(worktreeDir, "task-mgr-2")
+
+	// Then the worklog is archived
+	if err != nil {
+		t.Fatalf("Manager.Archive() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(archiveDir, "task-mgr-2", "worklog.md"))
+	if err != nil {
+		t.Fatalf("reading archived worklog: %v", err)
+	}
+	if string(data) != "archived content" {
+		t.Errorf("archived content = %q, want %q", string(data), "archived content")
+	}
+}
+
 func TestArchive_InvalidBeadID(t *testing.T) {
 	// Given a worktree with a worklog.md and an invalid bead ID
 	worktreeDir := t.TempDir()

@@ -83,7 +83,7 @@ func (m *Manager) Remove(id string, deleteBranch bool) error {
 		return err
 	}
 	wtPath := m.worktreePath(id)
-	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+	if _, err := os.Stat(wtPath); errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("worktree %q: %w", id, ErrNotFound)
 	}
 
@@ -124,7 +124,7 @@ func (m *Manager) List() ([]string, error) {
 	dir := filepath.Join(m.repoRoot, m.baseDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("worktree: reading %s: %w", dir, err)
@@ -166,6 +166,11 @@ func (m *Manager) registeredWorktrees() (map[string]bool, error) {
 		}
 	}
 	return registered, nil
+}
+
+// Path returns the absolute path for a worktree with the given ID.
+func (m *Manager) Path(id string) string {
+	return m.worktreePath(id)
 }
 
 // Exists reports whether a worktree directory exists for the given ID.

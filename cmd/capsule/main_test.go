@@ -2,10 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
+
+	"github.com/smileynet/capsule/internal/orchestrator"
+	"github.com/smileynet/capsule/internal/provider"
 )
 
 // errExitCalled is a sentinel used to catch kong's os.Exit calls in tests.
@@ -40,7 +46,7 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 			// Then: version, commit, and date are all present in output
 			output := buf.String()
 			for _, want := range []string{"v1.0.0", "abc1234", "2026-01-01T00:00:00Z"} {
-				if !bytes.Contains(buf.Bytes(), []byte(want)) {
+				if !strings.Contains(output, want) {
 					t.Errorf("version output = %q, want to contain %q", output, want)
 				}
 			}
@@ -186,26 +192,6 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 		}
 	})
 
-	t.Run("abort command accepts force flag", func(t *testing.T) {
-		// Given: a CLI parser
-		var cli CLI
-		k, err := kong.New(&cli, kong.Vars{"version": "test"})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// When: abort command is invoked with --force
-		_, err = k.Parse([]string{"abort", "bead-789", "--force"})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Then: force flag is set
-		if !cli.Abort.Force {
-			t.Error("force = false, want true")
-		}
-	})
-
 	t.Run("clean command parses bead ID", func(t *testing.T) {
 		// Given: a CLI parser
 		var cli CLI
@@ -228,4 +214,146 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 			t.Errorf("got bead-id %q, want %q", cli.Clean.BeadID, "bead-abc")
 		}
 	})
+}
+
+func TestFeature_OrchestratorWiring(t *testing.T) {
+	t.Run("plainTextCallback formats timestamped lines", func(t *testing.T) {
+		// Given a buffer and a plain text callback
+		var buf bytes.Buffer
+		cb := plainTextCallback(&buf)
+
+		// When a status update is sent
+		cb(orchestrator.StatusUpdate{
+			BeadID:   "cap-42",
+			Phase:    "test-writer",
+			Status:   orchestrator.PhaseRunning,
+			Progress: "1/6",
+			Attempt:  1,
+			MaxRetry: 3,
+		})
+
+		// Then output contains the phase name and status
+		output := buf.String()
+		if !strings.Contains(output, "test-writer") {
+			t.Errorf("output missing phase name, got: %q", output)
+		}
+		if !strings.Contains(output, "running") {
+			t.Errorf("output missing status, got: %q", output)
+		}
+		if !strings.Contains(output, "1/6") {
+			t.Errorf("output missing progress, got: %q", output)
+		}
+	})
+
+	t.Run("plainTextCallback shows attempt on retry", func(t *testing.T) {
+		// Given a buffer and a plain text callback
+		var buf bytes.Buffer
+		cb := plainTextCallback(&buf)
+
+		// When a retry status update is sent
+		cb(orchestrator.StatusUpdate{
+			BeadID:   "cap-42",
+			Phase:    "test-writer",
+			Status:   orchestrator.PhaseRunning,
+			Progress: "1/6",
+			Attempt:  2,
+			MaxRetry: 3,
+		})
+
+		// Then output includes attempt info
+		output := buf.String()
+		if !strings.Contains(output, "attempt 2/3") {
+			t.Errorf("output missing retry info, got: %q", output)
+		}
+	})
+
+	t.Run("exitCode returns 0 for nil error", func(t *testing.T) {
+		// Given no error
+		// When exitCode is called
+		code := exitCode(nil)
+		// Then it returns 0
+		if code != 0 {
+			t.Errorf("exitCode(nil) = %d, want 0", code)
+		}
+	})
+
+	t.Run("exitCode returns 1 for pipeline error", func(t *testing.T) {
+		// Given a PipelineError
+		err := &orchestrator.PipelineError{Phase: "execute", Attempt: 1, Signal: provider.Signal{Status: provider.StatusError}}
+		// When exitCode is called
+		code := exitCode(err)
+		// Then it returns 1
+		if code != 1 {
+			t.Errorf("exitCode(PipelineError) = %d, want 1", code)
+		}
+	})
+
+	t.Run("exitCode returns 2 for setup error", func(t *testing.T) {
+		// Given a non-pipeline error (setup/config issue)
+		err := fmt.Errorf("config: provider not found")
+		// When exitCode is called
+		code := exitCode(err)
+		// Then it returns 2
+		if code != 2 {
+			t.Errorf("exitCode(generic) = %d, want 2", code)
+		}
+	})
+
+	t.Run("exitCode returns 1 for context cancellation", func(t *testing.T) {
+		// Given a context.Canceled error wrapped in PipelineError
+		err := &orchestrator.PipelineError{Phase: "execute", Err: context.Canceled}
+		// When exitCode is called
+		code := exitCode(err)
+		// Then it returns 1 (pipeline failure, not setup error)
+		if code != 1 {
+			t.Errorf("exitCode(context.Canceled) = %d, want 1", code)
+		}
+	})
+
+	t.Run("RunCmd wires pipeline and returns nil on success", func(t *testing.T) {
+		// Given a RunCmd with a mock runner that succeeds
+		var buf bytes.Buffer
+		cmd := &RunCmd{BeadID: "cap-test", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: nil}
+
+		// When run is called with the mock
+		err := cmd.run(&buf, runner)
+
+		// Then no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And the runner was called with the correct bead ID
+		if runner.input.BeadID != "cap-test" {
+			t.Errorf("BeadID = %q, want %q", runner.input.BeadID, "cap-test")
+		}
+	})
+
+	t.Run("RunCmd returns pipeline error on failure", func(t *testing.T) {
+		// Given a RunCmd with a mock runner that fails
+		var buf bytes.Buffer
+		pipeErr := &orchestrator.PipelineError{Phase: "execute", Attempt: 1, Err: fmt.Errorf("broken")}
+		cmd := &RunCmd{BeadID: "cap-fail", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: pipeErr}
+
+		// When run is called
+		err := cmd.run(&buf, runner)
+
+		// Then the pipeline error is returned (main() handles error printing)
+		var pe *orchestrator.PipelineError
+		if !errors.As(err, &pe) {
+			t.Fatalf("expected PipelineError, got %T: %v", err, err)
+		}
+	})
+}
+
+// mockPipelineRunner captures RunPipeline calls for testing.
+type mockPipelineRunner struct {
+	input orchestrator.PipelineInput
+	err   error
+}
+
+func (m *mockPipelineRunner) RunPipeline(_ context.Context, input orchestrator.PipelineInput) error {
+	m.input = input
+	return m.err
 }
