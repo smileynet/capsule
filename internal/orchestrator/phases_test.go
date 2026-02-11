@@ -34,6 +34,7 @@ func TestPhaseKind_String(t *testing.T) {
 }
 
 func TestDefaultPhases_Count(t *testing.T) {
+	// Given the default phase registry
 	// When the default phases are queried
 	phases := DefaultPhases()
 
@@ -44,6 +45,7 @@ func TestDefaultPhases_Count(t *testing.T) {
 }
 
 func TestDefaultPhases_Order(t *testing.T) {
+	// Given the default phase registry
 	// When the default phases are queried
 	phases := DefaultPhases()
 
@@ -64,6 +66,7 @@ func TestDefaultPhases_Order(t *testing.T) {
 }
 
 func TestDefaultPhases_Kinds(t *testing.T) {
+	// Given the default phase registry
 	// When the default phases are queried
 	phases := DefaultPhases()
 
@@ -85,6 +88,7 @@ func TestDefaultPhases_Kinds(t *testing.T) {
 }
 
 func TestDefaultPhases_RetryTargets(t *testing.T) {
+	// Given the default phase registry
 	// When the default phases are queried
 	phases := DefaultPhases()
 

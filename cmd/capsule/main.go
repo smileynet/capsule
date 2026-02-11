@@ -121,6 +121,13 @@ type AbortCmd struct {
 	BeadID string `arg:"" help:"Bead ID to abort."`
 }
 
+// worktreeOps abstracts worktree operations for testing abort and clean commands.
+type worktreeOps interface {
+	Exists(id string) bool
+	Remove(id string, deleteBranch bool) error
+	Prune() error
+}
+
 // Run executes the abort command by removing the worktree.
 func (a *AbortCmd) Run() error {
 	cfg, err := loadConfig()
@@ -129,6 +136,11 @@ func (a *AbortCmd) Run() error {
 	}
 
 	mgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+	return a.run(os.Stdout, mgr)
+}
+
+// run executes the abort with the given worktree manager, enabling testable wiring.
+func (a *AbortCmd) run(w io.Writer, mgr worktreeOps) error {
 	if !mgr.Exists(a.BeadID) {
 		return fmt.Errorf("abort: no worktree found for %q", a.BeadID)
 	}
@@ -138,7 +150,7 @@ func (a *AbortCmd) Run() error {
 		return fmt.Errorf("abort: %w", err)
 	}
 
-	fmt.Printf("Aborted capsule %s (branch preserved)\n", a.BeadID)
+	_, _ = fmt.Fprintf(w, "Aborted capsule %s (branch preserved)\n", a.BeadID)
 	return nil
 }
 
@@ -155,6 +167,11 @@ func (c *CleanCmd) Run() error {
 	}
 
 	mgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+	return c.run(os.Stdout, mgr)
+}
+
+// run executes the clean with the given worktree manager, enabling testable wiring.
+func (c *CleanCmd) run(w io.Writer, mgr worktreeOps) error {
 	if !mgr.Exists(c.BeadID) {
 		return fmt.Errorf("clean: no worktree found for %q", c.BeadID)
 	}
@@ -167,7 +184,7 @@ func (c *CleanCmd) Run() error {
 		return fmt.Errorf("clean: prune: %w", err)
 	}
 
-	fmt.Printf("Cleaned capsule %s\n", c.BeadID)
+	_, _ = fmt.Fprintf(w, "Cleaned capsule %s\n", c.BeadID)
 	return nil
 }
 

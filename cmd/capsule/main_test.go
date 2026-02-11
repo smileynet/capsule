@@ -357,3 +357,177 @@ func (m *mockPipelineRunner) RunPipeline(_ context.Context, input orchestrator.P
 	m.input = input
 	return m.err
 }
+
+// mockWorktreeOps stubs worktree operations for abort/clean testing.
+type mockWorktreeOps struct {
+	exists    bool
+	removeErr error
+	pruneErr  error
+
+	removedID     string
+	removedBranch bool
+	pruned        bool
+}
+
+func (m *mockWorktreeOps) Exists(string) bool { return m.exists }
+
+func (m *mockWorktreeOps) Remove(id string, deleteBranch bool) error {
+	m.removedID = id
+	m.removedBranch = deleteBranch
+	return m.removeErr
+}
+
+func (m *mockWorktreeOps) Prune() error {
+	m.pruned = true
+	return m.pruneErr
+}
+
+func TestFeature_AbortCommand(t *testing.T) {
+	t.Run("abort removes worktree and preserves branch", func(t *testing.T) {
+		// Given an abort command and a worktree that exists
+		var buf bytes.Buffer
+		cmd := &AbortCmd{BeadID: "cap-test"}
+		mgr := &mockWorktreeOps{exists: true}
+
+		// When abort runs
+		err := cmd.run(&buf, mgr)
+
+		// Then no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And the worktree was removed without deleting the branch
+		if mgr.removedID != "cap-test" {
+			t.Errorf("removedID = %q, want %q", mgr.removedID, "cap-test")
+		}
+		if mgr.removedBranch {
+			t.Error("deleteBranch = true, want false (branch should be preserved)")
+		}
+		// And success message is printed
+		if !strings.Contains(buf.String(), "Aborted capsule cap-test") {
+			t.Errorf("output = %q, want to contain abort message", buf.String())
+		}
+	})
+
+	t.Run("abort returns error when worktree not found", func(t *testing.T) {
+		// Given an abort command and no worktree
+		var buf bytes.Buffer
+		cmd := &AbortCmd{BeadID: "nonexistent"}
+		mgr := &mockWorktreeOps{exists: false}
+
+		// When abort runs
+		err := cmd.run(&buf, mgr)
+
+		// Then an error mentioning "no worktree found" is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "no worktree found") {
+			t.Errorf("error = %q, want to contain 'no worktree found'", err)
+		}
+	})
+
+	t.Run("abort returns error when remove fails", func(t *testing.T) {
+		// Given an abort command and a worktree that fails to remove
+		var buf bytes.Buffer
+		cmd := &AbortCmd{BeadID: "cap-fail"}
+		mgr := &mockWorktreeOps{exists: true, removeErr: fmt.Errorf("lock held")}
+
+		// When abort runs
+		err := cmd.run(&buf, mgr)
+
+		// Then the remove error is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "lock held") {
+			t.Errorf("error = %q, want to contain 'lock held'", err)
+		}
+	})
+}
+
+func TestFeature_CleanCommand(t *testing.T) {
+	t.Run("clean removes worktree branch and prunes", func(t *testing.T) {
+		// Given a clean command and a worktree that exists
+		var buf bytes.Buffer
+		cmd := &CleanCmd{BeadID: "cap-test"}
+		mgr := &mockWorktreeOps{exists: true}
+
+		// When clean runs
+		err := cmd.run(&buf, mgr)
+
+		// Then no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And the worktree was removed with branch deletion
+		if mgr.removedID != "cap-test" {
+			t.Errorf("removedID = %q, want %q", mgr.removedID, "cap-test")
+		}
+		if !mgr.removedBranch {
+			t.Error("deleteBranch = false, want true (clean should delete branch)")
+		}
+		// And prune was called
+		if !mgr.pruned {
+			t.Error("prune was not called")
+		}
+		// And success message is printed
+		if !strings.Contains(buf.String(), "Cleaned capsule cap-test") {
+			t.Errorf("output = %q, want to contain clean message", buf.String())
+		}
+	})
+
+	t.Run("clean returns error when worktree not found", func(t *testing.T) {
+		// Given a clean command and no worktree
+		var buf bytes.Buffer
+		cmd := &CleanCmd{BeadID: "nonexistent"}
+		mgr := &mockWorktreeOps{exists: false}
+
+		// When clean runs
+		err := cmd.run(&buf, mgr)
+
+		// Then an error mentioning "no worktree found" is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "no worktree found") {
+			t.Errorf("error = %q, want to contain 'no worktree found'", err)
+		}
+	})
+
+	t.Run("clean returns error when remove fails", func(t *testing.T) {
+		// Given a clean command and a worktree that fails to remove
+		var buf bytes.Buffer
+		cmd := &CleanCmd{BeadID: "cap-fail"}
+		mgr := &mockWorktreeOps{exists: true, removeErr: fmt.Errorf("busy")}
+
+		// When clean runs
+		err := cmd.run(&buf, mgr)
+
+		// Then the remove error is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "busy") {
+			t.Errorf("error = %q, want to contain 'busy'", err)
+		}
+	})
+
+	t.Run("clean returns error when prune fails", func(t *testing.T) {
+		// Given a clean command where prune fails
+		var buf bytes.Buffer
+		cmd := &CleanCmd{BeadID: "cap-prune"}
+		mgr := &mockWorktreeOps{exists: true, pruneErr: fmt.Errorf("git error")}
+
+		// When clean runs
+		err := cmd.run(&buf, mgr)
+
+		// Then the prune error is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "prune") {
+			t.Errorf("error = %q, want to contain 'prune'", err)
+		}
+	})
+}

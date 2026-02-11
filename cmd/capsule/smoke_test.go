@@ -110,6 +110,115 @@ func TestSmoke_GoProjectSkeleton(t *testing.T) {
 	})
 }
 
+// TestSmoke_OrchestratorWiring exercises the run/abort/clean commands at the binary level,
+// validating exit code mapping and error formatting from cap-9qv.5.
+func TestSmoke_OrchestratorWiring(t *testing.T) {
+	projectRoot := findProjectRoot(t)
+	binary := filepath.Join(projectRoot, "capsule")
+
+	// Ensure binary exists (built by GoProjectSkeleton suite or build here).
+	if _, err := os.Stat(binary); err != nil {
+		cmd := exec.Command("go", "build",
+			"-ldflags", "-X main.version=smoke-test -X main.commit=abc1234 -X main.date=2026-01-01",
+			"-o", binary, "./cmd/capsule")
+		cmd.Dir = projectRoot
+		out, buildErr := cmd.CombinedOutput()
+		if buildErr != nil {
+			t.Fatalf("go build failed: %v\n%s", buildErr, out)
+		}
+		t.Cleanup(func() { os.Remove(binary) })
+	}
+
+	t.Run("capsule run without bead-id exits non-zero", func(t *testing.T) {
+		// Given the binary
+		// When run is invoked without a required bead-id argument
+		cmd := exec.Command(binary, "run")
+		out, err := cmd.CombinedOutput()
+
+		// Then it exits non-zero
+		if err == nil {
+			t.Fatal("expected non-zero exit code when bead-id missing")
+		}
+		// And the error mentions the missing argument
+		output := string(out)
+		if !strings.Contains(output, "bead-id") && !strings.Contains(output, "expected") {
+			t.Errorf("expected error about missing bead-id, got: %q", output)
+		}
+	})
+
+	t.Run("capsule run with unknown provider exits with setup error", func(t *testing.T) {
+		// Given the binary
+		// When run is invoked with an unregistered provider
+		cmd := exec.Command(binary, "run", "test-bead", "--provider", "nonexistent")
+		cmd.Dir = projectRoot
+		out, err := cmd.CombinedOutput()
+
+		// Then it exits non-zero
+		if err == nil {
+			t.Fatal("expected non-zero exit code for unknown provider")
+		}
+		// And the error mentions the unknown provider
+		output := string(out)
+		if !strings.Contains(output, "unknown provider") && !strings.Contains(output, "nonexistent") {
+			t.Errorf("expected error about unknown provider, got: %q", output)
+		}
+		// And exit code is 2 (setup error, not pipeline error)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() != 2 {
+				t.Errorf("exit code = %d, want 2 (setup error)", exitErr.ExitCode())
+			}
+		}
+	})
+
+	t.Run("capsule abort with nonexistent worktree exits with setup error", func(t *testing.T) {
+		// Given the binary
+		// When abort is invoked for a nonexistent worktree
+		cmd := exec.Command(binary, "abort", "nonexistent-bead")
+		cmd.Dir = projectRoot
+		out, err := cmd.CombinedOutput()
+
+		// Then it exits non-zero
+		if err == nil {
+			t.Fatal("expected non-zero exit code for nonexistent worktree")
+		}
+		// And the error mentions no worktree found
+		output := string(out)
+		if !strings.Contains(output, "no worktree found") {
+			t.Errorf("expected error about missing worktree, got: %q", output)
+		}
+		// And exit code is 2 (setup error)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() != 2 {
+				t.Errorf("exit code = %d, want 2 (setup error)", exitErr.ExitCode())
+			}
+		}
+	})
+
+	t.Run("capsule clean with nonexistent worktree exits with setup error", func(t *testing.T) {
+		// Given the binary
+		// When clean is invoked for a nonexistent worktree
+		cmd := exec.Command(binary, "clean", "nonexistent-bead")
+		cmd.Dir = projectRoot
+		out, err := cmd.CombinedOutput()
+
+		// Then it exits non-zero
+		if err == nil {
+			t.Fatal("expected non-zero exit code for nonexistent worktree")
+		}
+		// And the error mentions no worktree found
+		output := string(out)
+		if !strings.Contains(output, "no worktree found") {
+			t.Errorf("expected error about missing worktree, got: %q", output)
+		}
+		// And exit code is 2 (setup error)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() != 2 {
+				t.Errorf("exit code = %d, want 2 (setup error)", exitErr.ExitCode())
+			}
+		}
+	})
+}
+
 // findProjectRoot walks up from the test file to find the directory containing go.mod.
 func findProjectRoot(t *testing.T) string {
 	t.Helper()
