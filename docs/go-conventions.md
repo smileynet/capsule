@@ -1,6 +1,6 @@
 # Go Conventions
 
-Concise reference for anyone writing Go code in this project. Each section links to authoritative sources.
+Concise reference for anyone writing Go code in this project. Authoritative sources in [References](#references).
 
 ## 1. Project Structure
 
@@ -12,8 +12,8 @@ internal/config/        # one responsibility per package
 internal/provider/
 ```
 
-- [Standard Go Project Layout discussion](https://go.dev/doc/modules/layout)
-- [Ben Johnson: Standard Package Layout](https://www.gobeyond.dev/standard-package-layout/)
+- [Standard Go Project Layout discussion][go-layout]
+- [Ben Johnson: Standard Package Layout][standard-package-layout]
 
 ## 2. Interface Design
 
@@ -32,8 +32,8 @@ func (c *Claude) Complete(ctx context.Context, prompt string) (string, error) { 
 
 Keep interfaces small. A one- or two-method interface is easier to mock and compose.
 
-- [Go Wiki: CodeReviewComments — Interfaces](https://go.dev/wiki/CodeReviewComments#interfaces)
-- [Go Proverbs: The bigger the interface, the weaker the abstraction](https://go-proverbs.github.io/)
+- [Go Wiki: CodeReviewComments — Interfaces][code-review-interfaces]
+- [Go Proverbs: The bigger the interface, the weaker the abstraction][go-proverbs]
 
 ## 3. Error Handling
 
@@ -53,8 +53,8 @@ func Load(path string) (*Config, error) {
 
 Never discard errors silently. If a function returns an error, handle it or propagate it.
 
-- [Go Blog: Working with Errors in Go 1.13](https://go.dev/blog/go1.13-errors)
-- [Effective Go: Errors](https://go.dev/doc/effective_go#errors)
+- [Go Blog: Working with Errors in Go 1.13][go-errors-1.13]
+- [Effective Go: Errors][effective-go-errors]
 
 ## 4. Testing
 
@@ -94,8 +94,8 @@ Guard slow tests with `testing.Short()` so pre-commit hooks stay fast:
   Use `if testing.Short() { t.Skip("...") }`.
 - **Smoke** (build-tag gated): End-to-end binary tests. Use `//go:build smoke`.
 
-- [Go Wiki: TableDrivenTests](https://go.dev/wiki/TableDrivenTests)
-- [Go Blog: Using Subtests and Sub-benchmarks](https://go.dev/blog/subtests)
+- [Go Wiki: TableDrivenTests][table-driven-tests]
+- [Go Blog: Using Subtests and Sub-benchmarks][go-subtests]
 
 ## 5. Package Naming
 
@@ -107,8 +107,8 @@ prompt      ✓       promptUtils    ✗
 worktree    ✓       helpers        ✗
 ```
 
-- [Go Blog: Package Names](https://go.dev/blog/package-names)
-- [Effective Go: Package names](https://go.dev/doc/effective_go#package-names)
+- [Go Blog: Package Names][go-package-names]
+- [Effective Go: Package names][effective-go-packages]
 
 ## 6. Dependency Injection
 
@@ -135,8 +135,8 @@ func WithLogger(l *slog.Logger) Option {
 }
 ```
 
-- [Dave Cheney: Functional options for friendly APIs](https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis)
-- [Uber Go Style Guide: Dependency Injection](https://github.com/uber-go/guide/blob/master/style.md)
+- [Dave Cheney: Functional options for friendly APIs][functional-options]
+- [Uber Go Style Guide: Dependency Injection][uber-style-di]
 
 ## 7. Code Style
 
@@ -155,12 +155,12 @@ type Provider struct { /* ... */ }
 
 Comments should explain *why*, not *what*. The code already says what.
 
-- [Effective Go: Commentary](https://go.dev/doc/effective_go#commentary)
-- [Go Doc Comments](https://go.dev/doc/comment)
+- [Effective Go: Commentary][effective-go-commentary]
+- [Go Doc Comments][go-doc-comments]
 
 ## 8. CLI (Kong)
 
-Use [Kong](https://github.com/alecthomas/kong) for CLI parsing. Define commands as nested structs with a `Run() error` method on each leaf command. Keep `main()` thin — parse and dispatch.
+Use [Kong][kong] for CLI parsing. Define commands as nested structs with a `Run() error` method on each leaf command. Keep `main()` thin — parse and dispatch.
 
 ### Main Structure
 
@@ -261,8 +261,8 @@ func TestVersionFlag(t *testing.T) {
 | Real deps in testable path | Tests need config files, providers | Split `Run()` / `run()`; pass interfaces to `run()` |
 | `kong.Parse` in tests | Calls `os.Exit` on parse error | Use `kong.New` + `k.Parse()` for testable parsing |
 
-- [Kong README](https://github.com/alecthomas/kong)
-- [Kong examples](https://github.com/alecthomas/kong/tree/master/_examples)
+- [Kong README][kong]
+- [Kong examples][kong-examples]
 
 ## 9. YAML Configuration
 
@@ -336,8 +336,8 @@ func (c *Config) Validate() error {
 | No validation after load | Invalid state at runtime | `Validate()` after full assembly |
 | Secrets in YAML files | Credential leaks in VCS | Env vars or secret refs (`op://...`) |
 
-- [go-yaml KnownFields](https://pkg.go.dev/gopkg.in/yaml.v3#Decoder.KnownFields)
-- [12-Factor Config](https://12factor.net/config)
+- [go-yaml KnownFields][yaml-known-fields]
+- [12-Factor Config][12-factor-config]
 
 ## 10. Subprocess Execution
 
@@ -402,6 +402,49 @@ cmd := exec.CommandContext(ctx, "claude", "-p", prompt)
 | Discarding stderr | Silent failures | Capture with `CombinedOutput()` or `bytes.Buffer` |
 | No timeout on external commands | Hung processes | Use `exec.CommandContext` with deadline |
 
-- [Go Blog: Command PATH Security](https://go.dev/blog/path-security)
-- [Snyk: Go Command Injection](https://snyk.io/blog/understanding-go-command-injection-vulnerabilities/)
-- [Semgrep: Command Injection in Go](https://semgrep.dev/docs/cheat-sheets/go-command-injection)
+- [Go Blog: Command PATH Security][go-path-security]
+- [Snyk: Go Command Injection][snyk-go-injection]
+- [Semgrep: Command Injection in Go][semgrep-go-injection]
+
+## References
+
+<!-- 1. Project Structure -->
+[go-layout]: https://go.dev/doc/modules/layout
+[standard-package-layout]: https://www.gobeyond.dev/standard-package-layout/
+
+<!-- 2. Interface Design -->
+[code-review-interfaces]: https://go.dev/wiki/CodeReviewComments#interfaces
+[go-proverbs]: https://go-proverbs.github.io/
+
+<!-- 3. Error Handling -->
+[go-errors-1.13]: https://go.dev/blog/go1.13-errors
+[effective-go-errors]: https://go.dev/doc/effective_go#errors
+
+<!-- 4. Testing -->
+[table-driven-tests]: https://go.dev/wiki/TableDrivenTests
+[go-subtests]: https://go.dev/blog/subtests
+
+<!-- 5. Package Naming -->
+[go-package-names]: https://go.dev/blog/package-names
+[effective-go-packages]: https://go.dev/doc/effective_go#package-names
+
+<!-- 6. Dependency Injection -->
+[functional-options]: https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
+[uber-style-di]: https://github.com/uber-go/guide/blob/master/style.md
+
+<!-- 7. Code Style -->
+[effective-go-commentary]: https://go.dev/doc/effective_go#commentary
+[go-doc-comments]: https://go.dev/doc/comment
+
+<!-- 8. CLI (Kong) -->
+[kong]: https://github.com/alecthomas/kong
+[kong-examples]: https://github.com/alecthomas/kong/tree/master/_examples
+
+<!-- 9. YAML Configuration -->
+[yaml-known-fields]: https://pkg.go.dev/gopkg.in/yaml.v3#Decoder.KnownFields
+[12-factor-config]: https://12factor.net/config
+
+<!-- 10. Subprocess Execution -->
+[go-path-security]: https://go.dev/blog/path-security
+[snyk-go-injection]: https://snyk.io/blog/understanding-go-command-injection-vulnerabilities/
+[semgrep-go-injection]: https://semgrep.dev/docs/cheat-sheets/go-command-injection
