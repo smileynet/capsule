@@ -354,6 +354,166 @@ func TestPath(t *testing.T) {
 	}
 }
 
+func TestMergeToMain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git worktree test in short mode")
+	}
+
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, repoDir string, m *Manager)
+		id      string
+		wantErr error
+	}{
+		{
+			name: "merges worktree branch to main",
+			id:   "task-1",
+			setup: func(t *testing.T, repoDir string, m *Manager) {
+				t.Helper()
+				if err := m.Create("task-1", "HEAD"); err != nil {
+					t.Fatalf("setup Create: %v", err)
+				}
+				// Make a commit on the worktree branch.
+				wtPath := m.Path("task-1")
+				for _, args := range [][]string{
+					{"commit", "--allow-empty", "-m", "worktree commit"},
+				} {
+					cmd := exec.Command("git", args...)
+					cmd.Dir = wtPath
+					cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+repoDir)
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("git %v: %s\n%s", args, err, out)
+					}
+				}
+			},
+		},
+		{
+			name:    "rejects invalid id",
+			id:      "",
+			wantErr: ErrInvalidID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoDir := t.TempDir()
+			initGitRepo(t, repoDir)
+			m := NewManager(repoDir, ".capsule/worktrees")
+
+			if tt.setup != nil {
+				tt.setup(t, repoDir, m)
+			}
+
+			err := m.MergeToMain(tt.id, "main", "test merge")
+
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("expected error %v, got nil", tt.wantErr)
+				}
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("expected error wrapping %v, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Verify we're on main and the merge commit exists.
+			cmd := exec.Command("git", "log", "--oneline", "-1", "main")
+			cmd.Dir = repoDir
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("git log: %v", err)
+			}
+			if !strings.Contains(string(out), "test merge") {
+				t.Errorf("merge commit not found on main, got: %s", out)
+			}
+		})
+	}
+}
+
+func TestMergeToMain_Conflict(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git worktree test in short mode")
+	}
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	m := NewManager(repoDir, ".capsule/worktrees")
+
+	// Create a file on main.
+	conflictFile := filepath.Join(repoDir, "conflict.txt")
+	if err := os.WriteFile(conflictFile, []byte("main content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+repoDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s\n%s", args, err, out)
+		}
+	}
+	gitCmd("add", "conflict.txt")
+	gitCmd("commit", "-m", "add conflict file on main")
+
+	// Create worktree.
+	if err := m.Create("task-conflict", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Modify the same file on the worktree branch.
+	wtFile := filepath.Join(m.Path("task-conflict"), "conflict.txt")
+	if err := os.WriteFile(wtFile, []byte("worktree content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wtCmd := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = m.Path("task-conflict")
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+repoDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s\n%s", args, err, out)
+		}
+	}
+	wtCmd("add", "conflict.txt")
+	wtCmd("commit", "-m", "modify conflict file on branch")
+
+	// Also modify on main to create a conflict.
+	if err := os.WriteFile(conflictFile, []byte("different main content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd("add", "conflict.txt")
+	gitCmd("commit", "-m", "modify conflict file on main")
+
+	// When merging, expect ErrMergeConflict.
+	err := m.MergeToMain("task-conflict", "main", "should conflict")
+	if !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("expected ErrMergeConflict, got %v", err)
+	}
+}
+
+func TestDetectMainBranch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git worktree test in short mode")
+	}
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+	m := NewManager(repoDir, ".capsule/worktrees")
+
+	// Given a repo with a "main" branch (created by initGitRepo)
+	got, err := m.DetectMainBranch()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "main" {
+		t.Errorf("DetectMainBranch() = %q, want %q", got, "main")
+	}
+}
+
 func TestExists(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping git worktree test in short mode")

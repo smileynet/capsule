@@ -12,40 +12,133 @@ Inspect capsule pipeline state. Two modes based on whether a bead ID is given.
 
 If `$ARGUMENTS` is empty, show an overview:
 
-1. **Binary version**: `capsule --version`
-2. **Active worktrees**: List directories under `.capsule/worktrees/`
-3. **Capsule branches**: `git branch --list 'capsule-*'`
-4. **Orphaned state**: Branches that exist without a matching worktree, or worktrees without a matching branch
-5. **Archived logs**: List directories under `.capsule/logs/`
-6. **Config files**: Check for `.capsule/config.yaml` and `~/.config/capsule/config.yaml`
+~~~
+CAPSULE DASHBOARD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Present as a concise status summary.
+Binary: capsule <version>
+Config: <present/not found> at .capsule/config.yaml
+
+───────────────────────────────────────────
+ACTIVE PIPELINES
+───────────────────────────────────────────
+
+<For each worktree under .capsule/worktrees/, show bead context and last phase:>
+
+  <id> — <title>
+    Branch: capsule-<id> (<N> commits ahead of main)
+    Phase:  <last phase from worklog> — <status>
+    State:  <classification — see below>
+
+<If none:>
+  (no active pipelines)
+
+───────────────────────────────────────────
+ARCHIVED RUNS
+───────────────────────────────────────────
+
+<For each directory under .capsule/logs/:>
+  <id> — merged to main <date>
+
+<If none:>
+  (no archived runs)
+
+───────────────────────────────────────────
+HEALTH
+───────────────────────────────────────────
+
+Orphaned branches: <count>
+  (Branches matching capsule-* with no matching worktree.
+   Clean up with /capsule-cleanup)
+
+Orphaned worktrees: <count>
+  (Worktrees without matching branches — unusual.
+   Inspect with /capsule-inspect <id>)
+~~~
+
+To gather this data:
+1. `capsule --version`
+2. List directories under `.capsule/worktrees/`
+3. `git branch --list 'capsule-*'`
+4. List directories under `.capsule/logs/`
+5. Check for `.capsule/config.yaml`
 
 ## Deep-dive mode (bead-id given)
 
-If `$ARGUMENTS` is provided, investigate that specific bead:
+If `$ARGUMENTS` is provided, investigate that specific bead.
 
-### Active worktree (if `.capsule/worktrees/$ARGUMENTS/` exists)
+Classify the state first, then narrate accordingly:
 
-1. **Worktree path** and **branch**: `git -C .capsule/worktrees/$ARGUMENTS branch --show-current`
-2. **Recent commits**: `git -C .capsule/worktrees/$ARGUMENTS log --oneline -10`
-3. **Worklog**: Read `.capsule/worktrees/$ARGUMENTS/worklog.md` in full
-4. **Phase outputs**: If `.capsule/worktrees/$ARGUMENTS/.capsule/output/` exists, list files and read the most recent log to find the last signal. If not, note that phase output is captured in the worklog instead.
-5. **Diagnosis**: Identify the last phase that ran, its status, and any NEEDS_WORK feedback
+~~~
+CAPSULE INSPECT: $ARGUMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### Archived only (if no worktree but `.capsule/logs/$ARGUMENTS/` exists)
+<Read worklog and phase outputs. Classify state:>
 
-1. Read `.capsule/logs/$ARGUMENTS/worklog.md`
-2. Read `.capsule/logs/$ARGUMENTS/summary.md` if it exists
-3. Summarize the outcome
+───────────────────────────────────────────
+DIAGNOSIS: <state classification>
+───────────────────────────────────────────
+~~~
 
-### Nothing found
+### State classifications
 
-Report that no state exists for this bead ID.
+**COMPLETED** — Pipeline finished, merged to main, bead closed.
+~~~
+DIAGNOSIS: COMPLETED
 
-## Summary
+  Worklog: .capsule/logs/$ARGUMENTS/worklog.md
+  No action needed.
+~~~
 
-End with a diagnosis and suggested next action:
-- If stuck on NEEDS_WORK: quote the feedback, suggest fixing and re-running
-- If completed: confirm it merged successfully
-- If orphaned: suggest `/capsule-cleanup $ARGUMENTS`
+**PASSED BUT UNMERGED** — All phases passed but merge stalled.
+~~~
+DIAGNOSIS: PASSED BUT UNMERGED
+
+  Last phase: merge — PASS
+  Branch: capsule-$ARGUMENTS (<N> commits, not in main)
+
+  The pipeline completed successfully but the code was not
+  merged to main. This can happen if the merge step encountered
+  a conflict or the post-pipeline cleanup was interrupted.
+
+  ACTION: git merge --no-ff capsule-$ARGUMENTS
+          then: /capsule-cleanup $ARGUMENTS
+~~~
+
+**FAILED AT <PHASE>** — Pipeline stopped at a phase.
+~~~
+DIAGNOSIS: FAILED AT <phase>
+
+  Last phase: <phase> — <NEEDS_WORK|ERROR>
+  Attempt: <N>/<max>
+
+  Feedback from last review:
+    "<quoted feedback from signal>"
+
+  The <reviewer> found issues with the <worker> output.
+  After <N> retry attempts, the pipeline gave up.
+
+  ACTION: Inspect the worktree, fix the issue manually, then
+          re-run: /capsule-run $ARGUMENTS
+~~~
+
+**ORPHANED** — Branch exists but no worktree (or vice versa).
+~~~
+DIAGNOSIS: ORPHANED
+
+  This usually happens when a run was interrupted.
+
+  ACTION: /capsule-cleanup $ARGUMENTS
+~~~
+
+### How to classify
+
+1. Check if `.capsule/logs/$ARGUMENTS/worklog.md` exists → COMPLETED candidate
+2. Check if `.capsule/worktrees/$ARGUMENTS/` exists → active pipeline
+3. Read the worklog from whichever location exists
+4. Parse phase entries to find last phase and its status
+5. Check `git branch --list "capsule-$ARGUMENTS"` for branch existence
+6. Check `git merge-base --is-ancestor capsule-$ARGUMENTS main` for merge status
+7. Check `bd show $ARGUMENTS --json` for bead status
+
+After the state block, show the full worklog for reference.

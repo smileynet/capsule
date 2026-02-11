@@ -16,6 +16,7 @@ var (
 	ErrAlreadyExists = errors.New("worktree: already exists")
 	ErrNotFound      = errors.New("worktree: not found")
 	ErrInvalidID     = errors.New("worktree: invalid id")
+	ErrMergeConflict = errors.New("worktree: merge conflict")
 )
 
 // validateID checks that id is safe for use as a path component and git argument.
@@ -185,4 +186,70 @@ func (m *Manager) Exists(id string) bool {
 // worktreePath returns the absolute path for a worktree with the given ID.
 func (m *Manager) worktreePath(id string) string {
 	return filepath.Join(m.repoRoot, m.baseDir, id)
+}
+
+// MergeToMain merges the capsule-<id> branch into mainBranch with --no-ff.
+// Returns ErrMergeConflict if the merge encounters conflicts.
+func (m *Manager) MergeToMain(id, mainBranch, commitMsg string) error {
+	if err := validateID(id); err != nil {
+		return err
+	}
+
+	// Checkout main branch.
+	checkout := exec.Command("git", "checkout", mainBranch, "-q")
+	checkout.Dir = m.repoRoot
+	if out, err := checkout.CombinedOutput(); err != nil {
+		return fmt.Errorf("worktree: git checkout %s: %w\n%s", mainBranch, err, strings.TrimSpace(string(out)))
+	}
+
+	// Merge with --no-ff.
+	branchName := "capsule-" + id
+	merge := exec.Command("git", "merge", "--no-ff", branchName, "-m", commitMsg)
+	merge.Dir = m.repoRoot
+	out, err := merge.CombinedOutput()
+	if err != nil {
+		outStr := string(out)
+		if strings.Contains(outStr, "CONFLICT") {
+			// Abort the failed merge to leave the repo clean.
+			abort := exec.Command("git", "merge", "--abort")
+			abort.Dir = m.repoRoot
+			_ = abort.Run()
+			return fmt.Errorf("%w: merging %s into %s", ErrMergeConflict, branchName, mainBranch)
+		}
+		return fmt.Errorf("worktree: git merge: %w\n%s", err, strings.TrimSpace(outStr))
+	}
+	return nil
+}
+
+// DetectMainBranch determines the main branch name.
+// Checks git symbolic-ref refs/remotes/origin/HEAD first,
+// then falls back to checking if "main" or "master" branches exist.
+func (m *Manager) DetectMainBranch() (string, error) {
+	// Try origin/HEAD.
+	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd.Dir = m.repoRoot
+	if out, err := cmd.Output(); err == nil {
+		ref := strings.TrimSpace(string(out))
+		// refs/remotes/origin/main → main
+		parts := strings.Split(ref, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1], nil
+		}
+	}
+
+	// Fallback: check if "main" branch exists.
+	cmd = exec.Command("git", "rev-parse", "--verify", "refs/heads/main")
+	cmd.Dir = m.repoRoot
+	if err := cmd.Run(); err == nil {
+		return "main", nil
+	}
+
+	// Fallback: check if "master" branch exists.
+	cmd = exec.Command("git", "rev-parse", "--verify", "refs/heads/master")
+	cmd.Dir = m.repoRoot
+	if err := cmd.Run(); err == nil {
+		return "master", nil
+	}
+
+	return "", fmt.Errorf("worktree: cannot detect main branch")
 }

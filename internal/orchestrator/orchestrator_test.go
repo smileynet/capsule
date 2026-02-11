@@ -553,6 +553,19 @@ func TestRunPhasePair_StatusCallbacks(t *testing.T) {
 	if updates[3].Phase != "reviewer" || updates[3].Status != PhasePassed {
 		t.Errorf("update[3] = %s/%s, want reviewer/passed", updates[3].Phase, updates[3].Status)
 	}
+	// Running updates have nil Signal; completion updates have non-nil Signal
+	if updates[0].Signal != nil {
+		t.Error("update[0] (running) should have nil Signal")
+	}
+	if updates[1].Signal == nil {
+		t.Error("update[1] (passed) should have non-nil Signal")
+	}
+	if updates[2].Signal != nil {
+		t.Error("update[2] (running) should have nil Signal")
+	}
+	if updates[3].Signal == nil {
+		t.Error("update[3] (passed) should have non-nil Signal")
+	}
 	// And all updates carry the bead ID
 	for i, u := range updates {
 		if u.BeadID != "cap-42" {
@@ -806,6 +819,18 @@ func TestRunPipeline_StatusCallbacks(t *testing.T) {
 	// And the last update is merge Passed
 	if updates[11].Phase != "merge" || updates[11].Status != PhasePassed {
 		t.Errorf("last update = %s/%s, want merge/passed", updates[11].Phase, updates[11].Status)
+	}
+	// And completion updates carry Signal data
+	for i, u := range updates {
+		if u.Status == PhaseRunning {
+			if u.Signal != nil {
+				t.Errorf("update[%d] (running) should have nil Signal", i)
+			}
+		} else {
+			if u.Signal == nil {
+				t.Errorf("update[%d] (%s) should have non-nil Signal", i, u.Status)
+			}
+		}
 	}
 }
 

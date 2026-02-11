@@ -1,5 +1,7 @@
 package orchestrator
 
+import "github.com/smileynet/capsule/internal/provider"
+
 // PhaseKind distinguishes workers (produce artifacts) from reviewers (evaluate artifacts).
 type PhaseKind int
 
@@ -40,12 +42,13 @@ const (
 
 // StatusUpdate carries progress information for a single phase execution.
 type StatusUpdate struct {
-	BeadID   string      // The bead being processed.
-	Phase    string      // Current phase name.
-	Status   PhaseStatus // Current phase status.
-	Progress string      // Human-readable progress (e.g. "2/6").
-	Attempt  int         // Current attempt number (1-based).
-	MaxRetry int         // Maximum retries configured.
+	BeadID   string           // The bead being processed.
+	Phase    string           // Current phase name.
+	Status   PhaseStatus      // Current phase status.
+	Progress string           // Human-readable progress (e.g. "2/6").
+	Attempt  int              // Current attempt number (1-based).
+	MaxRetry int              // Maximum retries configured.
+	Signal   *provider.Signal // Populated on phase completion (passed/failed/error), nil while running.
 }
 
 // StatusCallback receives phase progress updates.

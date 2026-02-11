@@ -194,6 +194,7 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) err
 				BeadID: beadID, Phase: phase.Name,
 				Status: PhasePassed, Progress: progress,
 				Attempt: 1, MaxRetry: phase.MaxRetries,
+				Signal: &signal,
 			})
 
 		case provider.StatusError:
@@ -201,6 +202,7 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) err
 				BeadID: beadID, Phase: phase.Name,
 				Status: PhaseError, Progress: progress,
 				Attempt: 1, MaxRetry: phase.MaxRetries,
+				Signal: &signal,
 			})
 			return &PipelineError{Phase: phase.Name, Attempt: 1, Signal: signal}
 
@@ -222,6 +224,7 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) err
 				BeadID: beadID, Phase: phase.Name,
 				Status: PhaseFailed, Progress: progress,
 				Attempt: 1, MaxRetry: phase.MaxRetries,
+				Signal: &signal,
 			})
 			_, err := o.runPhasePair(ctx, target, phase, basePCtx, wtPath, progress, signal.Feedback, 2)
 			if err != nil {
@@ -270,6 +273,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 				BeadID: basePCtx.BeadID, Phase: worker.Name,
 				Status: PhaseError, Progress: progress,
 				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Signal: &workerSignal,
 			})
 			return workerSignal, &PipelineError{Phase: worker.Name, Attempt: attempt, Signal: workerSignal}
 		}
@@ -278,6 +282,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			BeadID: basePCtx.BeadID, Phase: worker.Name,
 			Status: PhasePassed, Progress: progress,
 			Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+			Signal: &workerSignal,
 		})
 
 		// Run reviewer.
@@ -299,6 +304,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhasePassed, Progress: progress,
 				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Signal: &reviewerSignal,
 			})
 			return reviewerSignal, nil
 
@@ -307,6 +313,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhaseError, Progress: progress,
 				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Signal: &reviewerSignal,
 			})
 			return reviewerSignal, &PipelineError{Phase: reviewer.Name, Attempt: attempt, Signal: reviewerSignal}
 
@@ -315,6 +322,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhaseFailed, Progress: progress,
 				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Signal: &reviewerSignal,
 			})
 			feedback = reviewerSignal.Feedback
 		}

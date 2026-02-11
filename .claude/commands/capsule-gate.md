@@ -20,18 +20,52 @@ If `$ARGUMENTS` is empty or not one of `feature`/`epic`, ask the user which gate
 
 Run each gate command sequentially. Stop on first failure.
 
-For each gate, report:
-- **PASS** if exit code is 0
-- **FAIL** if exit code is non-zero — show the relevant error output
-
 Use a 300-second timeout for each gate command.
 
-## Results
+## Output format
 
-**All gates pass:**
-Report all green and confirm: "Quality gates passed. Clear to close with `bd close <id>`."
+~~~
+CAPSULE GATE: $ARGUMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Any gate fails:**
-- Show which gate failed and the error output
-- Do not run subsequent gates
-- Suggest fixing the issues and re-running `/capsule-gate $ARGUMENTS`
+Running <feature|epic> quality gates...
+
+  [1/<N>] make lint .............. ✓ (0 issues)
+  [2/<N>] make test-full ........ ✓ (<N> tests, <N> packages)
+  [3/<N>] make smoke ............ ✓ (epic only)
+
+───────────────────────────────────────────
+RESULT
+───────────────────────────────────────────
+
+All <N> gates passed. ✓
+~~~
+
+Then find the relevant bead to close:
+```bash
+bd list --status=in_progress
+```
+
+~~~
+Ready to close:
+  <id> — <title> [<feature|epic>]
+
+NEXT STEP: bd close <id>
+~~~
+
+**On failure:**
+~~~
+  [1/2] make lint .............. ✓
+  [2/2] make test-full ......... ✗
+
+───────────────────────────────────────────
+RESULT
+───────────────────────────────────────────
+
+Gate failed: make test-full ✗
+
+<Show the relevant test failure output — not the full log,
+ just the failing test names and error messages.>
+
+Fix the issues and re-run: /capsule-gate $ARGUMENTS
+~~~

@@ -12,6 +12,8 @@ import (
 
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/provider"
+	"github.com/smileynet/capsule/internal/worklog"
+	"github.com/smileynet/capsule/internal/worktree"
 )
 
 // errExitCalled is a sentinel used to catch kong's os.Exit calls in tests.
@@ -267,6 +269,87 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		}
 	})
 
+	t.Run("plainTextCallback shows signal data on completion", func(t *testing.T) {
+		// Given a buffer and a plain text callback
+		var buf bytes.Buffer
+		cb := plainTextCallback(&buf)
+
+		// When a passed update with signal data is sent
+		cb(orchestrator.StatusUpdate{
+			Phase:    "test-writer",
+			Status:   orchestrator.PhasePassed,
+			Progress: "1/6",
+			Attempt:  1,
+			MaxRetry: 3,
+			Signal: &provider.Signal{
+				Status:       provider.StatusPass,
+				FilesChanged: []string{"src/validate_email_test.go"},
+				Summary:      "Wrote 7 failing tests",
+				Feedback:     "ok",
+			},
+		})
+
+		// Then output includes files and summary
+		output := buf.String()
+		if !strings.Contains(output, "files: src/validate_email_test.go") {
+			t.Errorf("output missing files, got: %q", output)
+		}
+		if !strings.Contains(output, "summary: Wrote 7 failing tests") {
+			t.Errorf("output missing summary, got: %q", output)
+		}
+		// Feedback is only shown for failed phases
+		if strings.Contains(output, "feedback:") {
+			t.Errorf("output should not show feedback for passed phase, got: %q", output)
+		}
+	})
+
+	t.Run("plainTextCallback shows feedback on failure", func(t *testing.T) {
+		// Given a buffer and a plain text callback
+		var buf bytes.Buffer
+		cb := plainTextCallback(&buf)
+
+		// When a failed update with feedback is sent
+		cb(orchestrator.StatusUpdate{
+			Phase:    "test-review",
+			Status:   orchestrator.PhaseFailed,
+			Progress: "2/6",
+			Attempt:  1,
+			MaxRetry: 3,
+			Signal: &provider.Signal{
+				Status:   provider.StatusNeedsWork,
+				Feedback: "Missing edge case tests",
+				Summary:  "needs work",
+			},
+		})
+
+		// Then output includes feedback
+		output := buf.String()
+		if !strings.Contains(output, "feedback: Missing edge case tests") {
+			t.Errorf("output missing feedback, got: %q", output)
+		}
+	})
+
+	t.Run("plainTextCallback omits signal data for running status", func(t *testing.T) {
+		// Given a buffer and a plain text callback
+		var buf bytes.Buffer
+		cb := plainTextCallback(&buf)
+
+		// When a running update is sent (Signal should be nil)
+		cb(orchestrator.StatusUpdate{
+			Phase:    "execute",
+			Status:   orchestrator.PhaseRunning,
+			Progress: "3/6",
+			Attempt:  1,
+			MaxRetry: 3,
+		})
+
+		// Then output is just the status line with no signal data
+		output := buf.String()
+		if strings.Contains(output, "files:") || strings.Contains(output, "summary:") {
+			t.Errorf("output should not contain signal data for running, got: %q", output)
+		}
+	})
+
 	t.Run("exitCode returns 0 for nil error", func(t *testing.T) {
 		// Given no error
 		// When exitCode is called
@@ -311,21 +394,41 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 	})
 
 	t.Run("RunCmd wires pipeline and returns nil on success", func(t *testing.T) {
-		// Given a RunCmd with a mock runner that succeeds
+		// Given a RunCmd with mocks that succeed
 		var buf bytes.Buffer
 		cmd := &RunCmd{BeadID: "cap-test", Provider: "claude", Timeout: 60}
 		runner := &mockPipelineRunner{err: nil}
+		wt := &mockMergeOps{mainBranch: "main"}
+		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-test", TaskTitle: "Test task"}}
 
-		// When run is called with the mock
-		err := cmd.run(&buf, runner)
+		// When run is called with mocks
+		err := cmd.run(&buf, runner, wt, bd)
 
 		// Then no error is returned
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// And the runner was called with the correct bead ID
+		// And the runner was called with bead context
 		if runner.input.BeadID != "cap-test" {
 			t.Errorf("BeadID = %q, want %q", runner.input.BeadID, "cap-test")
+		}
+		if runner.input.Title != "Test task" {
+			t.Errorf("Title = %q, want %q", runner.input.Title, "Test task")
+		}
+		// And post-pipeline ran: merge + close
+		if !wt.merged {
+			t.Error("merge was not called")
+		}
+		if !bd.closed {
+			t.Error("bead close was not called")
+		}
+		// And output shows merge and close messages
+		output := buf.String()
+		if !strings.Contains(output, "Merged capsule-cap-test") {
+			t.Errorf("output missing merge message, got: %q", output)
+		}
+		if !strings.Contains(output, "Closed cap-test") {
+			t.Errorf("output missing close message, got: %q", output)
 		}
 	})
 
@@ -335,14 +438,48 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		pipeErr := &orchestrator.PipelineError{Phase: "execute", Attempt: 1, Err: fmt.Errorf("broken")}
 		cmd := &RunCmd{BeadID: "cap-fail", Provider: "claude", Timeout: 60}
 		runner := &mockPipelineRunner{err: pipeErr}
+		wt := &mockMergeOps{mainBranch: "main"}
+		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-fail"}}
 
 		// When run is called
-		err := cmd.run(&buf, runner)
+		err := cmd.run(&buf, runner, wt, bd)
 
-		// Then the pipeline error is returned (main() handles error printing)
+		// Then the pipeline error is returned
 		var pe *orchestrator.PipelineError
 		if !errors.As(err, &pe) {
 			t.Fatalf("expected PipelineError, got %T: %v", err, err)
+		}
+		// And post-pipeline did NOT run
+		if wt.merged {
+			t.Error("merge should not run after pipeline failure")
+		}
+	})
+
+	t.Run("RunCmd prints merge conflict warning", func(t *testing.T) {
+		// Given merge returns ErrMergeConflict
+		var buf bytes.Buffer
+		cmd := &RunCmd{BeadID: "cap-conflict", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: nil}
+		wt := &mockMergeOps{
+			mainBranch: "main",
+			mergeErr:   worktree.ErrMergeConflict,
+		}
+		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-conflict"}}
+
+		// When run is called
+		err := cmd.run(&buf, runner, wt, bd)
+
+		// Then no error is returned (best-effort)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And the warning is printed
+		output := buf.String()
+		if !strings.Contains(output, "merge conflict") {
+			t.Errorf("output missing merge conflict warning, got: %q", output)
+		}
+		if !strings.Contains(output, "capsule clean cap-conflict") {
+			t.Errorf("output missing cleanup suggestion, got: %q", output)
 		}
 	})
 }
@@ -380,6 +517,53 @@ func (m *mockWorktreeOps) Remove(id string, deleteBranch bool) error {
 func (m *mockWorktreeOps) Prune() error {
 	m.pruned = true
 	return m.pruneErr
+}
+
+// mockMergeOps stubs merge operations for RunCmd testing.
+type mockMergeOps struct {
+	mainBranch string
+	mergeErr   error
+	removeErr  error
+	pruneErr   error
+
+	merged  bool
+	removed bool
+}
+
+func (m *mockMergeOps) MergeToMain(string, string, string) error {
+	m.merged = true
+	if m.mergeErr != nil {
+		return m.mergeErr
+	}
+	return nil
+}
+
+func (m *mockMergeOps) DetectMainBranch() (string, error) {
+	return m.mainBranch, nil
+}
+
+func (m *mockMergeOps) Remove(_ string, _ bool) error {
+	m.removed = true
+	return m.removeErr
+}
+
+func (m *mockMergeOps) Prune() error { return m.pruneErr }
+
+// mockBeadResolver stubs bead resolution for RunCmd testing.
+type mockBeadResolver struct {
+	ctx      worklog.BeadContext
+	closeErr error
+
+	closed bool
+}
+
+func (m *mockBeadResolver) Resolve(string) (worklog.BeadContext, error) {
+	return m.ctx, nil
+}
+
+func (m *mockBeadResolver) Close(string) error {
+	m.closed = true
+	return m.closeErr
 }
 
 func TestFeature_AbortCommand(t *testing.T) {

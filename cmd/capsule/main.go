@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
 
+	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/config"
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/prompt"
@@ -44,6 +46,20 @@ type RunCmd struct {
 // pipelineRunner abstracts orchestrator.RunPipeline for testing.
 type pipelineRunner interface {
 	RunPipeline(ctx context.Context, input orchestrator.PipelineInput) error
+}
+
+// beadResolver abstracts bead context resolution for testing.
+type beadResolver interface {
+	Resolve(id string) (worklog.BeadContext, error)
+	Close(id string) error
+}
+
+// mergeOps abstracts worktree merge operations for testing.
+type mergeOps interface {
+	MergeToMain(id, mainBranch, commitMsg string) error
+	DetectMainBranch() (string, error)
+	Remove(id string, deleteBranch bool) error
+	Prune() error
 }
 
 // loadConfig loads layered config from user and project paths with env overrides.
@@ -91,6 +107,7 @@ func (r *RunCmd) Run() error {
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
 	wlMgr := worklog.NewManager("templates/worklog.md.template", ".capsule/logs")
+	bdClient := bead.NewClient(".")
 
 	orch := orchestrator.New(p,
 		orchestrator.WithPromptLoader(promptLoader),
@@ -99,20 +116,81 @@ func (r *RunCmd) Run() error {
 		orchestrator.WithStatusCallback(plainTextCallback(os.Stdout)),
 	)
 
-	return r.run(os.Stdout, orch)
+	return r.run(os.Stdout, orch, wtMgr, bdClient)
 }
 
 // run executes the pipeline with the given runner, enabling testable wiring.
-func (r *RunCmd) run(_ io.Writer, runner pipelineRunner) error {
+func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadResolver) error {
 	// Set up Ctrl+C handling.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	// Resolve bead context for worklog.
+	beadCtx, _ := bd.Resolve(r.BeadID)
+
 	input := orchestrator.PipelineInput{
 		BeadID: r.BeadID,
+		Title:  beadCtx.TaskTitle,
+		Bead:   beadCtx,
 	}
 
-	return runner.RunPipeline(ctx, input)
+	// Run the pipeline.
+	if err := runner.RunPipeline(ctx, input); err != nil {
+		return err
+	}
+
+	// Post-pipeline lifecycle: merge → cleanup → close bead.
+	// Best-effort: pipeline success is the hard requirement.
+	r.runPostPipeline(w, wt, bd)
+	return nil
+}
+
+// runPostPipeline performs merge, cleanup, and bead closing after a successful pipeline.
+// Failures print warnings but don't affect the exit code.
+func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
+	id := r.BeadID
+
+	// Detect main branch.
+	mainBranch, err := wt.DetectMainBranch()
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "warning: cannot detect main branch: %v\n", err)
+		return
+	}
+
+	// Merge to main.
+	commitMsg := fmt.Sprintf("%s: pipeline complete", id)
+	err = wt.MergeToMain(id, mainBranch, commitMsg)
+	if err != nil {
+		if errors.Is(err, worktree.ErrMergeConflict) {
+			_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", id, mainBranch)
+			_, _ = fmt.Fprintf(w, "  To fix:\n")
+			_, _ = fmt.Fprintf(w, "    git checkout %s\n", mainBranch)
+			_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", id)
+			_, _ = fmt.Fprintf(w, "    # resolve conflicts, then:\n")
+			_, _ = fmt.Fprintf(w, "    capsule clean %s\n", id)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "warning: merge failed: %v\n", err)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", id, mainBranch)
+
+	// Cleanup: remove worktree and branch.
+	if err := wt.Remove(id, true); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: cleanup failed: %v\n", err)
+	}
+	if err := wt.Prune(); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: prune failed: %v\n", err)
+	}
+
+	// Close bead.
+	if err := bd.Close(id); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: bead close failed: %v\n", err)
+	} else {
+		_, _ = fmt.Fprintf(w, "Closed %s\n", id)
+	}
+
+	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", id)
 }
 
 // AbortCmd aborts a running capsule by removing the worktree.
@@ -207,7 +285,8 @@ func exitCode(err error) int {
 	return exitSetup
 }
 
-// plainTextCallback returns a StatusCallback that prints timestamped phase lines.
+// plainTextCallback returns a StatusCallback that prints timestamped phase lines
+// with enriched signal data on phase completion.
 func plainTextCallback(w io.Writer) orchestrator.StatusCallback {
 	return func(su orchestrator.StatusUpdate) {
 		ts := time.Now().Format("15:04:05")
@@ -216,6 +295,19 @@ func plainTextCallback(w io.Writer) orchestrator.StatusCallback {
 			retry = fmt.Sprintf(" (attempt %d/%d)", su.Attempt, su.MaxRetry)
 		}
 		_, _ = fmt.Fprintf(w, "[%s] [%s] %s %s%s\n", ts, su.Progress, su.Phase, su.Status, retry)
+
+		// Phase completion report.
+		if su.Signal != nil && su.Status != orchestrator.PhaseRunning {
+			if len(su.Signal.FilesChanged) > 0 {
+				_, _ = fmt.Fprintf(w, "         files: %s\n", strings.Join(su.Signal.FilesChanged, ", "))
+			}
+			if su.Signal.Summary != "" {
+				_, _ = fmt.Fprintf(w, "         summary: %s\n", su.Signal.Summary)
+			}
+			if su.Signal.Feedback != "" && su.Status == orchestrator.PhaseFailed {
+				_, _ = fmt.Fprintf(w, "         feedback: %s\n", su.Signal.Feedback)
+			}
+		}
 	}
 }
 

@@ -12,35 +12,91 @@ Clean up capsule pipeline artifacts. Two modes based on whether a bead ID is giv
 
 If `$ARGUMENTS` is provided, clean up that specific bead:
 
-1. **Check worktree**: Does `.capsule/worktrees/$ARGUMENTS/` exist?
-2. **Check branch**: Does `capsule-$ARGUMENTS` branch exist? (`git branch --list "capsule-$ARGUMENTS"`)
-3. **Show context**: If the worklog exists, show the last phase status from `.capsule/worktrees/$ARGUMENTS/worklog.md`
+~~~
+CAPSULE CLEANUP: $ARGUMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Checking state...
+
+  Worktree: <exists/not found>
+  Branch:   capsule-$ARGUMENTS <exists/not found>
+  Bead:     <status from bd show>
+~~~
 
 If nothing exists for this bead, report that and stop.
 
-**Ask the user** which action to take:
-- **Abort** — `capsule abort $ARGUMENTS` (remove worktree, preserve branch for inspection)
-- **Clean** — `capsule clean $ARGUMENTS` (remove worktree and delete branch)
-- **Cancel** — do nothing
+### Pre-cleanup safety check
+
+Check if the branch has been merged to main:
+  `git merge-base --is-ancestor capsule-$ARGUMENTS main`
+
+If NOT merged and branch has commits beyond main:
+
+~~~
+───────────────────────────────────────────
+⚠ UNMERGED WORK DETECTED
+───────────────────────────────────────────
+
+Branch capsule-$ARGUMENTS has <N> commits not in main:
+  <commit 1 oneline>
+  <commit 2 oneline>
+
+Cleaning will permanently delete this implementation.
+Consider merging first:
+  git checkout main && git merge --no-ff capsule-$ARGUMENTS
+~~~
+
+### Action prompt
+
+Ask the user with descriptions:
+- **Abort** — Remove worktree, keep branch for manual inspection
+  (you can still: git log capsule-$ARGUMENTS, git diff main..capsule-$ARGUMENTS)
+- **Clean** — Remove worktree AND delete branch permanently
+  (irreversible — the implementation will be gone)
+- **Cancel** — Do nothing
 
 Do NOT proceed without user confirmation.
 
-After executing, verify clean state:
-- Confirm worktree directory is gone
-- Confirm branch is gone (if clean was chosen)
-- Run `git worktree prune` to clean stale metadata
+### Post-cleanup verification
+
+After executing the chosen action, verify and report:
+
+~~~
+───────────────────────────────────────────
+RESULT
+───────────────────────────────────────────
+
+  Worktree: removed ✓
+  Branch:   <deleted ✓ | preserved (abort mode)>
+  Prune:    ✓
+
+State is clean. <If bead still open:> Bead $ARGUMENTS is still open — close with `bd close $ARGUMENTS` if work is complete.
+~~~
 
 ## Bulk mode (no argument)
 
 If `$ARGUMENTS` is empty, clean up all capsule artifacts:
 
-1. **Preview**: Run `scripts/teardown.sh --dry-run` to show what would be cleaned
-2. **Orphaned branches**: List any `capsule-*` branches via `git branch --list 'capsule-*'`
-3. Show the preview results to the user
+~~~
+CAPSULE CLEANUP (bulk)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Ask the user** to confirm before proceeding. Do NOT auto-execute.
+Scanning for capsule artifacts...
+
+Active worktrees: <count>
+<For each, show merge status:>
+  <id>  <merged to main ✓ | ⚠ NOT merged — <N> unmerged commits>
+
+Orphaned branches: <count>
+  capsule-<id> (no matching worktree)
+
+Preview: <count> worktrees + <count> branches to remove.
+~~~
+
+Ask confirmation. Warn prominently if any unmerged work exists.
 
 If confirmed:
-1. Run `scripts/teardown.sh`
-2. Delete any remaining orphaned `capsule-*` branches (teardown handles active worktree branches, but orphaned branches from prior aborted runs may remain)
-3. Verify clean state: no worktrees, no orphaned branches
+1. For each worktree: `capsule clean <id>` or `capsule abort <id>` + branch delete
+2. Delete orphaned `capsule-*` branches: `git branch -D capsule-<id>`
+3. Run `git worktree prune`
+4. Verify clean state: no worktrees, no orphaned branches

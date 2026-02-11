@@ -14,6 +14,7 @@ Concise reference for anyone writing Go code in this project. Covers style, patt
 8. [CLI (Kong)](#8-cli-kong)
 9. [YAML Configuration](#9-yaml-configuration)
 10. [Subprocess Execution](#10-subprocess-execution)
+11. [Beads CLI Integration](#11-beads-cli-integration)
 
 ## 1. Project Structure
 
@@ -418,6 +419,67 @@ cmd := exec.CommandContext(ctx, "claude", "-p", prompt)
 - [Go Blog: Command PATH Security](https://go.dev/blog/path-security)
 - [Snyk: Go Command Injection][snyk-go-injection]
 - [Semgrep: Command Injection in Go][semgrep-go-injection]
+
+## 11. Beads CLI Integration
+
+Patterns for calling the `bd` CLI from Go code.
+
+### Always use --json
+
+Parse `--json` output, never human-readable text. Human format changes without notice.
+
+```go
+cmd := exec.Command("bd", "show", id, "--json")
+cmd.Dir = repoRoot
+out, err := cmd.Output()
+// json.NewDecoder(bytes.NewReader(out)).Decode(&issues)
+```
+
+### Graceful degradation
+
+`bd` may not be installed. Check PATH before calling, return a sentinel error for callers to handle:
+
+```go
+var ErrCLINotFound = errors.New("bead: bd CLI not found on PATH")
+
+func checkBD() error {
+    if _, err := exec.LookPath("bd"); err != nil {
+        return ErrCLINotFound
+    }
+    return nil
+}
+```
+
+### Parent chain resolution
+
+Walk the parent chain from task → feature → epic. Check `.parent` first, fall back to dependency scan:
+
+```go
+// Primary: direct parent field
+if issue.Parent != "" {
+    parent, err := show(issue.Parent)
+}
+
+// Fallback: scan dependencies for parent-child relationship
+for _, dep := range issue.Dependencies {
+    if dep.Type == "parent-child" && dep.DependsOnID != issue.ID {
+        parent, err := show(dep.DependsOnID)
+    }
+}
+```
+
+### Counting issues
+
+Use `--all` with `bd list` to include closed issues in counts. Default `bd list` omits closed.
+
+### Antipatterns
+
+| Antipattern | Risk | Fix |
+|-------------|------|-----|
+| Parsing human-readable `bd` output | Breaks on format changes | Always use `--json` |
+| `bd edit` from agents | Opens $EDITOR, blocks forever | Use `bd update --field=value` |
+| Missing `--all` in counts | Undercounts (closed issues hidden) | `bd list --all` for totals |
+| No PATH check before `bd` | Confusing error on missing CLI | `exec.LookPath("bd")` first |
 
 ## References
 
