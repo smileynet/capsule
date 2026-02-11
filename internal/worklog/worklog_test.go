@@ -9,43 +9,45 @@ import (
 	"time"
 )
 
-func TestCreate(t *testing.T) {
-	// Given a valid template and bead context
-	tmplDir := t.TempDir()
-	tmplPath := filepath.Join(tmplDir, "worklog.md.template")
-	tmplContent := `# Worklog: {{TASK_ID}}
+// goTemplate is a minimal Go template for testing worklog creation.
+const goTemplate = `# Worklog: {{.TaskID}}
 
-Generated: {{TIMESTAMP}}
+Generated: {{.Timestamp}}
 
 ## Mission Briefing
+{{if .EpicID}}
+### Epic: {{.EpicID}}
 
-### Epic: {{EPIC_ID}}
+**{{.EpicTitle}}**
 
-**{{EPIC_TITLE}}**
+{{.EpicGoal}}
+{{end}}{{if .FeatureID}}
+### Feature: {{.FeatureID}}
 
-{{EPIC_GOAL}}
+**{{.FeatureTitle}}**
 
-### Feature: {{FEATURE_ID}}
+{{.FeatureGoal}}
+{{end}}
+### Task: {{.TaskID}}
 
-**{{FEATURE_TITLE}}**
+**{{.TaskTitle}}**
 
-{{FEATURE_GOAL}}
-
-### Task: {{TASK_ID}}
-
-**{{TASK_TITLE}}**
-
-{{TASK_DESCRIPTION}}
+{{.TaskDescription}}
 
 ### Acceptance Criteria
 
-{{ACCEPTANCE_CRITERIA}}
+{{.AcceptanceCriteria}}
 
 ---
 
 ## Phase Log
 `
-	if err := os.WriteFile(tmplPath, []byte(tmplContent), 0o644); err != nil {
+
+func TestCreate(t *testing.T) {
+	// Given a valid Go template and bead context with full hierarchy
+	tmplDir := t.TempDir()
+	tmplPath := filepath.Join(tmplDir, "worklog.md.template")
+	if err := os.WriteFile(tmplPath, []byte(goTemplate), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,10 +98,6 @@ Generated: {{TIMESTAMP}}
 		}
 	}
 
-	// Verify timestamp was substituted with a recognizable date format
-	if strings.Contains(content, "{{TIMESTAMP}}") {
-		t.Error("worklog.md still contains {{TIMESTAMP}} placeholder")
-	}
 	// Positive check: timestamp line should contain a date-like pattern (YYYY-MM-DD)
 	for _, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(line, "Generated:") {
@@ -108,6 +106,52 @@ Generated: {{TIMESTAMP}}
 			}
 			break
 		}
+	}
+}
+
+func TestCreate_MissingBeadContext(t *testing.T) {
+	// Given a Go template and bead context with only TaskID (no epic/feature)
+	tmplDir := t.TempDir()
+	tmplPath := filepath.Join(tmplDir, "worklog.md.template")
+	if err := os.WriteFile(tmplPath, []byte(goTemplate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bead := BeadContext{
+		TaskID:    "task-orphan",
+		TaskTitle: "Standalone task",
+	}
+
+	worktreeDir := t.TempDir()
+
+	// When Create is called
+	err := Create(tmplPath, worktreeDir, bead)
+
+	// Then worklog.md is created successfully
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(worktreeDir, "worklog.md"))
+	if err != nil {
+		t.Fatalf("reading worklog.md: %v", err)
+	}
+	content := string(data)
+
+	// Task section is present
+	if !strings.Contains(content, "### Task: task-orphan") {
+		t.Error("worklog.md missing task section")
+	}
+	if !strings.Contains(content, "**Standalone task**") {
+		t.Error("worklog.md missing task title")
+	}
+
+	// Epic and Feature sections are omitted
+	if strings.Contains(content, "### Epic:") {
+		t.Error("worklog.md should not contain Epic section when EpicID is empty")
+	}
+	if strings.Contains(content, "### Feature:") {
+		t.Error("worklog.md should not contain Feature section when FeatureID is empty")
 	}
 }
 
@@ -132,7 +176,7 @@ func TestCreate_ExistingWorklog(t *testing.T) {
 	// Given a worktree that already has a worklog.md
 	tmplDir := t.TempDir()
 	tmplPath := filepath.Join(tmplDir, "worklog.md.template")
-	if err := os.WriteFile(tmplPath, []byte("# {{TASK_ID}}"), 0o644); err != nil {
+	if err := os.WriteFile(tmplPath, []byte("# {{.TaskID}}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -327,7 +371,7 @@ func TestManager_Create(t *testing.T) {
 	// Given a manager with a valid template
 	tmplDir := t.TempDir()
 	tmplPath := filepath.Join(tmplDir, "worklog.md.template")
-	if err := os.WriteFile(tmplPath, []byte("# {{TASK_ID}}"), 0o644); err != nil {
+	if err := os.WriteFile(tmplPath, []byte("# {{.TaskID}}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	archiveDir := t.TempDir()

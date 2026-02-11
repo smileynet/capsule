@@ -2,11 +2,13 @@
 package worklog
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -80,10 +82,16 @@ type PhaseEntry struct {
 	Timestamp time.Time
 }
 
+// templateData holds all fields available to the worklog Go template.
+type templateData struct {
+	BeadContext
+	Timestamp string
+}
+
 // Create instantiates a worklog from templatePath into worktreePath/worklog.md,
-// substituting placeholders with values from bead.
+// executing the Go template with values from bead.
 func Create(templatePath, worktreePath string, bead BeadContext) error {
-	tmpl, err := os.ReadFile(templatePath)
+	tmplBytes, err := os.ReadFile(templatePath)
 	if err != nil {
 		return fmt.Errorf("worklog: reading template: %w", err)
 	}
@@ -93,28 +101,22 @@ func Create(templatePath, worktreePath string, bead BeadContext) error {
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, outPath)
 	}
 
-	content := string(tmpl)
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-
-	replacements := map[string]string{
-		"{{EPIC_ID}}":             bead.EpicID,
-		"{{EPIC_TITLE}}":          bead.EpicTitle,
-		"{{EPIC_GOAL}}":           bead.EpicGoal,
-		"{{FEATURE_ID}}":          bead.FeatureID,
-		"{{FEATURE_TITLE}}":       bead.FeatureTitle,
-		"{{FEATURE_GOAL}}":        bead.FeatureGoal,
-		"{{TASK_ID}}":             bead.TaskID,
-		"{{TASK_TITLE}}":          bead.TaskTitle,
-		"{{TASK_DESCRIPTION}}":    bead.TaskDescription,
-		"{{ACCEPTANCE_CRITERIA}}": bead.AcceptanceCriteria,
-		"{{TIMESTAMP}}":           timestamp,
+	tmpl, err := template.New("worklog").Parse(string(tmplBytes))
+	if err != nil {
+		return fmt.Errorf("worklog: parsing template: %w", err)
 	}
 
-	for placeholder, value := range replacements {
-		content = strings.ReplaceAll(content, placeholder, value)
+	data := templateData{
+		BeadContext: bead,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 	}
 
-	if err := os.WriteFile(outPath, []byte(content), 0o644); err != nil {
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return fmt.Errorf("worklog: executing template: %w", err)
+	}
+
+	if err := os.WriteFile(outPath, buf.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("worklog: writing %s: %w", outPath, err)
 	}
 	return nil

@@ -10,6 +10,7 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/provider"
 	"github.com/smileynet/capsule/internal/worklog"
@@ -110,7 +111,6 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 			"run", "bead-123",
 			"--provider", "claude",
 			"--timeout", "120",
-			"--debug",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -122,9 +122,6 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 		}
 		if cli.Run.Timeout != 120 {
 			t.Errorf("timeout = %d, want %d", cli.Run.Timeout, 120)
-		}
-		if !cli.Run.Debug {
-			t.Error("debug = false, want true")
 		}
 	})
 
@@ -148,9 +145,6 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 		}
 		if cli.Run.Timeout != 300 {
 			t.Errorf("default timeout = %d, want %d", cli.Run.Timeout, 300)
-		}
-		if cli.Run.Debug {
-			t.Error("default debug = true, want false")
 		}
 	})
 
@@ -455,32 +449,57 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		}
 	})
 
-	t.Run("RunCmd warns on bead resolve failure but still runs pipeline", func(t *testing.T) {
-		// Given resolve returns an error (bd available but bead not found)
+	t.Run("RunCmd warns on bead not found with actionable message", func(t *testing.T) {
+		// Given resolve returns a not-found error (bd available but bead not found)
 		var buf bytes.Buffer
 		cmd := &RunCmd{BeadID: "cap-bad", Provider: "claude", Timeout: 60}
 		runner := &mockPipelineRunner{err: nil}
 		wt := &mockMergeOps{mainBranch: "main"}
-		bd := &mockBeadResolver{
+		bdMock := &mockBeadResolver{
 			ctx:        worklog.BeadContext{TaskID: "cap-bad"},
-			resolveErr: fmt.Errorf("bead: issue not found: cap-bad"),
+			resolveErr: fmt.Errorf("%w: cap-bad", bead.ErrNotFound),
 		}
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bd)
+		err := cmd.run(&buf, runner, wt, bdMock)
 
 		// Then no error is returned (pipeline still runs)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// And a warning was printed
+		// And an actionable warning was printed
 		output := buf.String()
-		if !strings.Contains(output, "warning: bead resolve failed") {
-			t.Errorf("output missing resolve warning, got: %q", output)
+		if !strings.Contains(output, `warning: bead "cap-bad" not found (try: bd ready)`) {
+			t.Errorf("output missing actionable warning, got: %q", output)
 		}
 		// And pipeline was called with fallback context
 		if runner.input.BeadID != "cap-bad" {
 			t.Errorf("BeadID = %q, want %q", runner.input.BeadID, "cap-bad")
+		}
+	})
+
+	t.Run("RunCmd warns generically on other bead resolve failures", func(t *testing.T) {
+		// Given resolve returns a non-not-found error
+		var buf bytes.Buffer
+		cmd := &RunCmd{BeadID: "cap-err", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: nil}
+		wt := &mockMergeOps{mainBranch: "main"}
+		bdMock := &mockBeadResolver{
+			ctx:        worklog.BeadContext{TaskID: "cap-err"},
+			resolveErr: fmt.Errorf("bead: parsing show output for cap-err: unexpected EOF"),
+		}
+
+		// When run is called
+		err := cmd.run(&buf, runner, wt, bdMock)
+
+		// Then no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And a generic warning was printed
+		output := buf.String()
+		if !strings.Contains(output, "warning: bead resolve failed") {
+			t.Errorf("output missing generic warning, got: %q", output)
 		}
 	})
 

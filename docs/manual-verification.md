@@ -25,7 +25,7 @@ scripts/setup-template.sh --template=demo-brownfield /tmp/capsule-demo
 ```
 
 The Go CLI resolves `prompts/` and `templates/worklog.md.template` relative to CWD
-([cmd/capsule/main.go:91-93][main-paths]). The demo template doesn't include these,
+([cmd/capsule/main.go:106-108][main-paths]). The demo template doesn't include these,
 so copy them into the demo project:
 
 ```bash
@@ -87,7 +87,7 @@ Run from the capsule repo root (no demo project needed). The binary path assumes
 ### 3.5 Flag parsing
 
 ```bash
-./capsule run some-bead --timeout=60 --debug 2>&1; echo "exit: $?"
+./capsule run some-bead --timeout=60 2>&1; echo "exit: $?"
 ```
 
 **Expected:** Fails at provider execution (not at flag parsing). The error message
@@ -136,15 +136,24 @@ cat .capsule/worktrees/demo-1.1.1/worklog.md
 
 **Expected:** Worklog with template structure:
 
-- `# Worklog: ` header (task ID will be empty — see note below)
-- `## Mission Briefing` with Epic/Feature/Task sections
+- `# Worklog: demo-1.1.1` header with task ID
+- `## Mission Briefing` with Epic/Feature/Task sections populated from bead hierarchy
 - `## Phase Log` with phases listed as `_Status: pending_`
 
-**Note:** The epic/feature/task fields will be empty because the Go CLI passes only
-`BeadID` in `PipelineInput` and does not yet populate `Title`/`Description` from
-bead metadata. This is a known limitation.
+The worklog resolves the full bead hierarchy: task → feature → epic. When `bd` is
+available and the bead exists, all three levels are populated with titles, goals,
+and descriptions.
 
-### 4.4 Verify git branch
+### 4.4 Verify bead context populated
+
+```bash
+head -20 .capsule/worktrees/demo-1.1.1/worklog.md
+```
+
+**Expected:** Epic, Feature, and Task sections all populated with titles and descriptions
+from the bead hierarchy (not empty).
+
+### 4.5 Verify git branch
 
 ```bash
 git branch | grep capsule-demo-1.1.1
@@ -252,7 +261,7 @@ runtime:
 EOF
 ```
 
-Run with `--debug` and verify no config errors:
+Run and verify no config errors:
 
 ```bash
 $CAPSULE_BIN run demo-1.1.1 2>&1 | head -5
@@ -293,6 +302,21 @@ $CAPSULE_BIN run demo-1.1.1 --provider=fake
 ```
 
 **Expected:** Exit code 2, error: `run: unknown provider "fake" (available: claude)`.
+
+### 7.5 Bead resolve warning
+
+```bash
+$CAPSULE_BIN run nonexistent-bead 2>&1 | head -2
+```
+
+**Expected:** Warning line followed by pipeline progress:
+```
+warning: bead "nonexistent-bead" not found (try: bd ready)
+[HH:MM:SS] [1/6] test-writer running
+```
+
+The pipeline continues despite the missing bead — the worklog is created with only
+the task ID, and Epic/Feature sections are omitted.
 
 ## 8. Full Pipeline (requires `claude` CLI)
 
@@ -344,18 +368,18 @@ rm -rf /tmp/capsule-demo
 
 | Reference | Location |
 |-----------|----------|
-| Relative path hardcodes | [cmd/capsule/main.go:91-93][main-paths] |
-| Plain text callback format | [cmd/capsule/main.go:211-219][callback] |
-| Exit code mapping | [cmd/capsule/main.go:198-208][exitcode] |
-| Branch naming (`capsule-<id>`) | [internal/worktree/worktree.go:66][branch] |
-| Default phases (6-phase pipeline) | [internal/orchestrator/phases.go:56-64][phases] |
+| Relative path hardcodes | [cmd/capsule/main.go:106-108][main-paths] |
+| Plain text callback format | [cmd/capsule/main.go:297-319][callback] |
+| Exit code mapping | [cmd/capsule/main.go:284-293][exitcode] |
+| Branch naming (`capsule-<id>`) | [internal/worktree/worktree.go:67][branch] |
+| Default phases (6-phase pipeline) | [internal/orchestrator/phases.go:57-65][phases] |
 | Worklog template | [templates/worklog.md.template][template] |
 | Demo template setup | [scripts/setup-template.sh][setup] |
 
-[main-paths]: ../cmd/capsule/main.go#L91-L93
-[callback]: ../cmd/capsule/main.go#L211-L219
-[exitcode]: ../cmd/capsule/main.go#L198-L208
-[branch]: ../internal/worktree/worktree.go#L66
-[phases]: ../internal/orchestrator/phases.go#L56-L64
+[main-paths]: ../cmd/capsule/main.go#L106-L108
+[callback]: ../cmd/capsule/main.go#L297-L319
+[exitcode]: ../cmd/capsule/main.go#L284-L293
+[branch]: ../internal/worktree/worktree.go#L67
+[phases]: ../internal/orchestrator/phases.go#L57-L65
 [template]: ../templates/worklog.md.template
 [setup]: ../scripts/setup-template.sh

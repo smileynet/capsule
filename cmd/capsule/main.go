@@ -40,7 +40,6 @@ type RunCmd struct {
 	BeadID   string `arg:"" help:"Bead ID to run."`
 	Provider string `help:"Provider to use for completions." default:"claude"`
 	Timeout  int    `help:"Timeout in seconds." default:"300"`
-	Debug    bool   `help:"Enable debug output."`
 }
 
 // pipelineRunner abstracts orchestrator.RunPipeline for testing.
@@ -129,7 +128,11 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 	// Error means bd is available but failed — log it but continue.
 	beadCtx, err := bd.Resolve(r.BeadID)
 	if err != nil {
-		_, _ = fmt.Fprintf(w, "warning: bead resolve failed: %v\n", err)
+		if errors.Is(err, bead.ErrNotFound) {
+			_, _ = fmt.Fprintf(w, "warning: bead %q not found (try: bd ready)\n", r.BeadID)
+		} else {
+			_, _ = fmt.Fprintf(w, "warning: bead resolve failed: %v\n", err)
+		}
 	}
 
 	input := orchestrator.PipelineInput{

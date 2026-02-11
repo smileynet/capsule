@@ -80,7 +80,6 @@ Run the full TDD pipeline for a bead.
 |------|---------|-------------|
 | `--provider` | `claude` | AI provider for completions |
 | `--timeout` | `300` | Timeout in seconds |
-| `--debug` | `false` | Enable debug output |
 
 Exit codes: `0` success, `1` pipeline error, `2` setup error.
 
