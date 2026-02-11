@@ -190,10 +190,20 @@ func (m *Manager) worktreePath(id string) string {
 
 // MergeToMain merges the capsule-<id> branch into mainBranch with --no-ff.
 // Returns ErrMergeConflict if the merge encounters conflicts.
+// On any failure, restores the previously checked-out branch.
 func (m *Manager) MergeToMain(id, mainBranch, commitMsg string) error {
 	if err := validateID(id); err != nil {
 		return err
 	}
+
+	// Remember current branch so we can restore on failure.
+	cur := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cur.Dir = m.repoRoot
+	curOut, err := cur.Output()
+	if err != nil {
+		return fmt.Errorf("worktree: detecting current branch: %w", err)
+	}
+	origBranch := strings.TrimSpace(string(curOut))
 
 	// Checkout main branch.
 	checkout := exec.Command("git", "checkout", mainBranch, "-q")
@@ -206,17 +216,27 @@ func (m *Manager) MergeToMain(id, mainBranch, commitMsg string) error {
 	branchName := "capsule-" + id
 	merge := exec.Command("git", "merge", "--no-ff", branchName, "-m", commitMsg)
 	merge.Dir = m.repoRoot
-	out, err := merge.CombinedOutput()
-	if err != nil {
+	out, mergeErr := merge.CombinedOutput()
+	if mergeErr != nil {
 		outStr := string(out)
-		if strings.Contains(outStr, "CONFLICT") {
-			// Abort the failed merge to leave the repo clean.
+		isConflict := strings.Contains(outStr, "CONFLICT")
+
+		// On conflict, abort the merge to leave the repo clean.
+		if isConflict {
 			abort := exec.Command("git", "merge", "--abort")
 			abort.Dir = m.repoRoot
 			_ = abort.Run()
+		}
+
+		// Restore original branch.
+		restore := exec.Command("git", "checkout", origBranch, "-q")
+		restore.Dir = m.repoRoot
+		_ = restore.Run()
+
+		if isConflict {
 			return fmt.Errorf("%w: merging %s into %s", ErrMergeConflict, branchName, mainBranch)
 		}
-		return fmt.Errorf("worktree: git merge: %w\n%s", err, strings.TrimSpace(outStr))
+		return fmt.Errorf("worktree: git merge: %w\n%s", mergeErr, strings.TrimSpace(outStr))
 	}
 	return nil
 }
@@ -251,5 +271,5 @@ func (m *Manager) DetectMainBranch() (string, error) {
 		return "master", nil
 	}
 
-	return "", fmt.Errorf("worktree: cannot detect main branch")
+	return "", errors.New("worktree: cannot detect main branch")
 }

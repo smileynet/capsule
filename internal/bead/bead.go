@@ -58,15 +58,17 @@ func NewClient(dir string) *Client {
 
 // Resolve fetches bead metadata and walks the parent chain to build
 // a full BeadContext for worklog instantiation.
-// Returns a context with just TaskID set if bd is unavailable.
+// Returns a context with just TaskID set if bd is not on PATH (graceful fallback).
+// Returns an error if bd is available but fails (e.g. invalid ID, parse error).
 func (c *Client) Resolve(id string) (worklog.BeadContext, error) {
 	if err := c.checkBD(); err != nil {
+		// bd not installed — graceful fallback.
 		return worklog.BeadContext{TaskID: id}, nil
 	}
 
 	task, err := c.show(id)
 	if err != nil {
-		return worklog.BeadContext{TaskID: id}, nil
+		return worklog.BeadContext{TaskID: id}, err
 	}
 
 	ctx := worklog.BeadContext{

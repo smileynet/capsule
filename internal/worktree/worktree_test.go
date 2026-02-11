@@ -375,15 +375,11 @@ func TestMergeToMain(t *testing.T) {
 				}
 				// Make a commit on the worktree branch.
 				wtPath := m.Path("task-1")
-				for _, args := range [][]string{
-					{"commit", "--allow-empty", "-m", "worktree commit"},
-				} {
-					cmd := exec.Command("git", args...)
-					cmd.Dir = wtPath
-					cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+repoDir)
-					if out, err := cmd.CombinedOutput(); err != nil {
-						t.Fatalf("git %v: %s\n%s", args, err, out)
-					}
+				cmd := exec.Command("git", "commit", "--allow-empty", "-m", "worktree commit")
+				cmd.Dir = wtPath
+				cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+repoDir)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git commit: %s\n%s", err, out)
 				}
 			},
 		},
@@ -492,6 +488,17 @@ func TestMergeToMain_Conflict(t *testing.T) {
 	err := m.MergeToMain("task-conflict", "main", "should conflict")
 	if !errors.Is(err, ErrMergeConflict) {
 		t.Fatalf("expected ErrMergeConflict, got %v", err)
+	}
+
+	// Then the original branch (main) is restored.
+	cur := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	cur.Dir = repoDir
+	curOut, curErr := cur.Output()
+	if curErr != nil {
+		t.Fatalf("git rev-parse: %v", curErr)
+	}
+	if got := strings.TrimSpace(string(curOut)); got != "main" {
+		t.Errorf("expected branch restored to %q, got %q", "main", got)
 	}
 }
 

@@ -455,6 +455,35 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		}
 	})
 
+	t.Run("RunCmd warns on bead resolve failure but still runs pipeline", func(t *testing.T) {
+		// Given resolve returns an error (bd available but bead not found)
+		var buf bytes.Buffer
+		cmd := &RunCmd{BeadID: "cap-bad", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: nil}
+		wt := &mockMergeOps{mainBranch: "main"}
+		bd := &mockBeadResolver{
+			ctx:        worklog.BeadContext{TaskID: "cap-bad"},
+			resolveErr: fmt.Errorf("bead: issue not found: cap-bad"),
+		}
+
+		// When run is called
+		err := cmd.run(&buf, runner, wt, bd)
+
+		// Then no error is returned (pipeline still runs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And a warning was printed
+		output := buf.String()
+		if !strings.Contains(output, "warning: bead resolve failed") {
+			t.Errorf("output missing resolve warning, got: %q", output)
+		}
+		// And pipeline was called with fallback context
+		if runner.input.BeadID != "cap-bad" {
+			t.Errorf("BeadID = %q, want %q", runner.input.BeadID, "cap-bad")
+		}
+	})
+
 	t.Run("RunCmd prints merge conflict warning", func(t *testing.T) {
 		// Given merge returns ErrMergeConflict
 		var buf bytes.Buffer
@@ -483,6 +512,14 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		}
 	})
 }
+
+// Compile-time interface satisfaction checks.
+var (
+	_ pipelineRunner = (*mockPipelineRunner)(nil)
+	_ worktreeOps    = (*mockWorktreeOps)(nil)
+	_ mergeOps       = (*mockMergeOps)(nil)
+	_ beadResolver   = (*mockBeadResolver)(nil)
+)
 
 // mockPipelineRunner captures RunPipeline calls for testing.
 type mockPipelineRunner struct {
@@ -532,10 +569,7 @@ type mockMergeOps struct {
 
 func (m *mockMergeOps) MergeToMain(string, string, string) error {
 	m.merged = true
-	if m.mergeErr != nil {
-		return m.mergeErr
-	}
-	return nil
+	return m.mergeErr
 }
 
 func (m *mockMergeOps) DetectMainBranch() (string, error) {
@@ -551,14 +585,15 @@ func (m *mockMergeOps) Prune() error { return m.pruneErr }
 
 // mockBeadResolver stubs bead resolution for RunCmd testing.
 type mockBeadResolver struct {
-	ctx      worklog.BeadContext
-	closeErr error
+	ctx        worklog.BeadContext
+	resolveErr error
+	closeErr   error
 
 	closed bool
 }
 
 func (m *mockBeadResolver) Resolve(string) (worklog.BeadContext, error) {
-	return m.ctx, nil
+	return m.ctx, m.resolveErr
 }
 
 func (m *mockBeadResolver) Close(string) error {

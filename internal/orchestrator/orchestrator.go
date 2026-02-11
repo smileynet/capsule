@@ -3,6 +3,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -138,7 +139,7 @@ func WithBaseBranch(branch string) Option {
 // retries on NEEDS_WORK, and archives the worklog on completion.
 func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) error {
 	if o.promptLoader == nil {
-		return &PipelineError{Phase: "setup", Err: fmt.Errorf("promptLoader is required")}
+		return &PipelineError{Phase: "setup", Err: errors.New("promptLoader is required")}
 	}
 
 	beadID := input.BeadID

@@ -126,7 +126,11 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 	defer stop()
 
 	// Resolve bead context for worklog.
-	beadCtx, _ := bd.Resolve(r.BeadID)
+	// Error means bd is available but failed — log it but continue.
+	beadCtx, err := bd.Resolve(r.BeadID)
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "warning: bead resolve failed: %v\n", err)
+	}
 
 	input := orchestrator.PipelineInput{
 		BeadID: r.BeadID,

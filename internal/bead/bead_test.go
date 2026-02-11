@@ -77,15 +77,38 @@ func TestExtractParentID(t *testing.T) {
 	}
 }
 
-func TestResolve_NoBD(t *testing.T) {
-	// Given a client with a nonexistent bd binary
-	// (We test this by using a PATH that doesn't contain bd)
-	// This test verifies the graceful fallback behavior.
+func TestResolve_BDAvailable_InvalidBead(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping bd CLI test in short mode")
+	}
+
+	// Given bd is on PATH but the bead doesn't exist
 	c := &Client{Dir: t.TempDir()}
 
-	// The actual graceful fallback depends on bd being on PATH.
-	// We test the interface: Resolve should always return a context
-	// with at least TaskID set, even if it can't resolve further.
+	ctx, err := c.Resolve("nonexistent-bead")
+
+	// Then an error is returned (bd available but bead not found)
+	if err == nil {
+		t.Fatal("expected error for nonexistent bead, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+	// And context still has TaskID as fallback
+	if ctx.TaskID != "nonexistent-bead" {
+		t.Errorf("TaskID = %q, want %q", ctx.TaskID, "nonexistent-bead")
+	}
+}
+
+func TestResolve_NoBD(t *testing.T) {
+	// Given bd is not on PATH — graceful fallback returns context with just TaskID
+	c := &Client{Dir: t.TempDir()}
+
+	// If bd is actually on PATH, skip — this test is for missing-bd fallback
+	if err := c.checkBD(); err == nil {
+		t.Skip("bd is on PATH; cannot test missing-bd fallback in this environment")
+	}
+
 	ctx, err := c.Resolve("test-123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
