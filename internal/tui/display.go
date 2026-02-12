@@ -32,9 +32,10 @@ type Display interface {
 
 // DisplayOptions configures display creation.
 type DisplayOptions struct {
-	Writer     io.Writer // Output destination (default: os.Stdout).
-	ForcePlain bool      // Force plain text even if TTY.
-	Phases     []string  // Phase names for TUI initialization.
+	Writer     io.Writer          // Output destination (default: os.Stdout).
+	ForcePlain bool               // Force plain text even if TTY.
+	Phases     []string           // Phase names for TUI initialization.
+	CancelFunc context.CancelFunc // Called by TUI on abort keypress (ignored by PlainDisplay).
 }
 
 // NewDisplay returns a TUI display when stdout is a TTY, or a plain text
@@ -48,7 +49,7 @@ func NewDisplay(opts DisplayOptions) Display {
 		return &PlainDisplay{w: opts.Writer}
 	}
 
-	return &TUIDisplay{phases: opts.Phases, w: opts.Writer}
+	return &TUIDisplay{phases: opts.Phases, w: opts.Writer, cancelFunc: opts.CancelFunc}
 }
 
 // isTTY reports whether w is connected to a terminal.
@@ -148,14 +149,19 @@ func (d *PlainDisplay) renderUpdate(su StatusUpdateMsg) {
 // TUIDisplay renders status updates using a Bubble Tea terminal UI.
 // Falls back to PlainDisplay if the TUI program fails to start.
 type TUIDisplay struct {
-	phases []string
-	w      io.Writer
+	phases     []string
+	w          io.Writer
+	cancelFunc context.CancelFunc
 }
 
 // Run starts the Bubble Tea program and feeds events from the channel.
 // If the TUI fails to initialize, it falls back to plain text output.
 func (d *TUIDisplay) Run(ctx context.Context, events <-chan DisplayEvent) error {
-	model := NewModel(d.phases)
+	var opts []ModelOption
+	if d.cancelFunc != nil {
+		opts = append(opts, WithCancelFunc(d.cancelFunc))
+	}
+	model := NewModel(d.phases, opts...)
 	p := tea.NewProgram(model, tea.WithOutput(d.w))
 
 	// Forward events through an intermediate channel so we can stop

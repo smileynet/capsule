@@ -265,6 +265,42 @@ func TestPlainDisplay_ReturnsErrorFromPipelineError(t *testing.T) {
 
 // --- NewDisplay factory ---
 
+func TestNewDisplay_PassesCancelFuncToTUI(t *testing.T) {
+	// When a CancelFunc is provided and output is a TTY (simulated via direct struct),
+	// the TUIDisplay should store it.
+	cancelled := false
+	d := &TUIDisplay{
+		phases:     []string{"phase1"},
+		w:          os.Stdout,
+		cancelFunc: func() { cancelled = true },
+	}
+
+	// Verify the struct stores the cancel func.
+	if d.cancelFunc == nil {
+		t.Error("TUIDisplay should store cancelFunc")
+	}
+	d.cancelFunc()
+	if !cancelled {
+		t.Error("cancelFunc should be callable")
+	}
+}
+
+func TestNewDisplay_CancelFuncWiredToDisplayOptions(t *testing.T) {
+	cancel := func() {}
+	d := NewDisplay(DisplayOptions{
+		Writer:     os.Stdout, // Will produce TUIDisplay on a TTY, PlainDisplay otherwise.
+		ForcePlain: true,      // Force plain so we don't need a real TTY.
+		Phases:     []string{"phase1"},
+		CancelFunc: cancel,
+	})
+
+	// PlainDisplay ignores CancelFunc (it uses context cancellation directly).
+	// This test verifies the option is accepted without error.
+	if d == nil {
+		t.Fatal("NewDisplay should return non-nil display")
+	}
+}
+
 func TestNewDisplay_ForcePlainReturnsPlainDisplay(t *testing.T) {
 	d := NewDisplay(DisplayOptions{
 		Writer:     os.Stdout,

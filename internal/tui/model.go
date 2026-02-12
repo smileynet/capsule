@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -49,9 +50,23 @@ type Model struct {
 	spinner    spinner.Model
 	currentIdx int // Tracks active phase index for future scroll/focus support.
 	done       bool
+	aborting   bool
 	err        error
-	startTime  time.Time // Records model creation for future elapsed-time display.
-	width      int       // Terminal width from WindowSizeMsg; 0 means not yet received.
+	cancelFunc context.CancelFunc // Called on first abort keypress; nil means immediate quit.
+	startTime  time.Time          // Records model creation for future elapsed-time display.
+	width      int                // Terminal width from WindowSizeMsg; 0 means not yet received.
+}
+
+// ModelOption configures the Model.
+type ModelOption func(*Model)
+
+// WithCancelFunc sets a function called on the first abort keypress (q or Ctrl+C).
+// When set, the first press triggers graceful abort; a second press forces immediate exit.
+// When nil (default), any abort keypress immediately quits the program.
+func WithCancelFunc(fn context.CancelFunc) ModelOption {
+	return func(m *Model) {
+		m.cancelFunc = fn
+	}
 }
 
 // StatusUpdateMsg bridges orchestrator status updates to the TUI.
@@ -82,7 +97,7 @@ type PipelineErrorMsg struct {
 func (PipelineErrorMsg) isDisplayEvent() {}
 
 // NewModel creates a Model initialized with the given phase names.
-func NewModel(phaseNames []string) Model {
+func NewModel(phaseNames []string, opts ...ModelOption) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 
@@ -91,11 +106,15 @@ func NewModel(phaseNames []string) Model {
 		phases[i] = PhaseState{Name: name, Status: StatusPending}
 	}
 
-	return Model{
+	m := Model{
 		phases:    phases,
 		spinner:   s,
 		startTime: time.Now(),
 	}
+	for _, opt := range opts {
+		opt(&m)
+	}
+	return m
 }
 
 // Init starts the spinner tick.
@@ -129,6 +148,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PipelineDoneMsg:
 		m.done = true
+		m.aborting = false
 		return m, tea.Quit
 
 	case PipelineErrorMsg:
@@ -139,8 +159,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
-			m.done = true
-			return m, tea.Quit
+			if m.done {
+				return m, nil
+			}
+			// Immediate quit: second press or no cancel function
+			if m.aborting || m.cancelFunc == nil {
+				m.done = true
+				return m, tea.Quit
+			}
+			// First press: trigger graceful abort
+			m.aborting = true
+			m.cancelFunc()
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -174,6 +204,10 @@ func (m Model) View() string {
 		}
 
 		s += line + "\n"
+	}
+
+	if m.aborting && !m.done {
+		s += "\n" + failedStyle.Render("  Aborting...") + " (press again to force quit)\n"
 	}
 
 	if m.done {

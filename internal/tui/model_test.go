@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -383,6 +384,156 @@ func TestModel_View_SummaryFooter_TotalDuration(t *testing.T) {
 	// Total: 4.5s - unique to footer (phase lines show 1.5s, 2.5s, 0.5s)
 	if !strings.Contains(view, "in 4.5s") {
 		t.Errorf("footer should show total duration 'in 4.5s', got:\n%s", view)
+	}
+}
+
+// --- Abort tests ---
+
+func TestModel_Update_KeyMsg_Q_WithCancel_SetsAborting(t *testing.T) {
+	cancelled := false
+	m := NewModel([]string{"test-writer"}, WithCancelFunc(func() { cancelled = true }))
+
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	updated := newModel.(Model)
+
+	if !updated.aborting {
+		t.Error("first q with cancelFunc should set aborting")
+	}
+	if updated.done {
+		t.Error("first q with cancelFunc should not set done")
+	}
+	if !cancelled {
+		t.Error("first q should call cancelFunc")
+	}
+	if cmd != nil {
+		t.Error("first q should not produce quit Cmd")
+	}
+}
+
+func TestModel_Update_KeyMsg_CtrlC_WithCancel_SetsAborting(t *testing.T) {
+	cancelled := false
+	m := NewModel([]string{"test-writer"}, WithCancelFunc(func() { cancelled = true }))
+
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated := newModel.(Model)
+
+	if !updated.aborting {
+		t.Error("first ctrl+c with cancelFunc should set aborting")
+	}
+	if !cancelled {
+		t.Error("first ctrl+c should call cancelFunc")
+	}
+	if cmd != nil {
+		t.Error("first ctrl+c should not produce quit Cmd")
+	}
+}
+
+func TestModel_Update_KeyMsg_DoublePress_ForcesQuit(t *testing.T) {
+	m := NewModel([]string{"test-writer"}, WithCancelFunc(func() {}))
+	m.aborting = true
+
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	updated := newModel.(Model)
+
+	if !updated.done {
+		t.Error("double-press should set done")
+	}
+	if cmd == nil {
+		t.Error("double-press should produce quit Cmd")
+	}
+}
+
+func TestModel_Update_KeyMsg_CtrlC_DoublePress_ForcesQuit(t *testing.T) {
+	m := NewModel([]string{"test-writer"}, WithCancelFunc(func() {}))
+	m.aborting = true
+
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated := newModel.(Model)
+
+	if !updated.done {
+		t.Error("double-press ctrl+c should set done")
+	}
+	if cmd == nil {
+		t.Error("double-press ctrl+c should produce quit Cmd")
+	}
+}
+
+func TestModel_Update_KeyMsg_WhenDone_Ignored(t *testing.T) {
+	m := NewModel([]string{"test-writer"}, WithCancelFunc(func() {}))
+	m.done = true
+
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	updated := newModel.(Model)
+
+	if updated.aborting {
+		t.Error("pressing q when done should not set aborting")
+	}
+	if cmd != nil {
+		t.Error("pressing q when done should not produce cmd")
+	}
+}
+
+func TestModel_View_AbortingState(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.aborting = true
+	m.phases[0].Status = StatusRunning
+
+	view := m.View()
+
+	if !strings.Contains(view, "Aborting") {
+		t.Errorf("view should show 'Aborting' when aborting, got:\n%s", view)
+	}
+}
+
+func TestModel_Update_KeyMsg_Q_WithoutCancel_ImmediateQuit(t *testing.T) {
+	// Without a cancelFunc, q should still do immediate quit (backward compat).
+	m := NewModel([]string{"test-writer"})
+
+	newModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	updated := newModel.(Model)
+
+	if !updated.done {
+		t.Error("q without cancelFunc should set done")
+	}
+	if cmd == nil {
+		t.Error("q without cancelFunc should produce quit Cmd")
+	}
+}
+
+func TestModel_Update_PipelineDoneMsg_ClearsAborting(t *testing.T) {
+	m := NewModel([]string{"test-writer"}, WithCancelFunc(func() {}))
+	m.aborting = true
+
+	newModel, cmd := m.Update(PipelineDoneMsg{})
+	updated := newModel.(Model)
+
+	if !updated.done {
+		t.Error("PipelineDoneMsg should set done even when aborting")
+	}
+	if updated.aborting {
+		t.Error("PipelineDoneMsg should clear aborting")
+	}
+	if cmd == nil {
+		t.Error("PipelineDoneMsg should produce quit Cmd")
+	}
+	view := updated.View()
+	if strings.Contains(view, "Aborting") {
+		t.Error("View should not show Aborting when done")
+	}
+}
+
+func TestModel_Update_PipelineErrorMsg_ClearsAborting(t *testing.T) {
+	m := NewModel([]string{"test-writer"}, WithCancelFunc(func() {}))
+	m.aborting = true
+
+	newModel, cmd := m.Update(PipelineErrorMsg{Err: context.Canceled})
+	updated := newModel.(Model)
+
+	if !updated.done {
+		t.Error("PipelineErrorMsg should set done even when aborting")
+	}
+	if cmd == nil {
+		t.Error("PipelineErrorMsg should produce quit Cmd")
 	}
 }
 

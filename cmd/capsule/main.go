@@ -187,12 +187,18 @@ func (r *RunCmd) Run() error {
 		return fmt.Errorf("run: loading phases: %w", err)
 	}
 
+	// Create a cancellable context for the pipeline. The cancel func is passed
+	// to the TUI so keyboard abort (q / Ctrl+C) can cancel the pipeline gracefully.
+	pipelineCtx, pipelineCancel := context.WithCancel(context.Background())
+	defer pipelineCancel()
+
 	// Build display bridge and display.
 	bridge := tui.NewBridge()
 	display := tui.NewDisplay(tui.DisplayOptions{
 		Writer:     os.Stdout,
 		ForcePlain: r.NoTUI,
 		Phases:     phaseNames(phases),
+		CancelFunc: pipelineCancel,
 	})
 
 	// Build orchestrator.
@@ -211,11 +217,11 @@ func (r *RunCmd) Run() error {
 		orchestrator.WithStatusCallback(bridgeStatusCallback(bridge)),
 	)
 
-	return r.run(os.Stdout, orch, wtMgr, bdClient, display, bridge)
+	return r.run(os.Stdout, orch, wtMgr, bdClient, display, bridge, pipelineCtx)
 }
 
 // run executes the pipeline with display lifecycle management, enabling testable wiring.
-func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadResolver, display tui.Display, bridge *tui.Bridge) error {
+func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadResolver, display tui.Display, bridge *tui.Bridge, pipelineCtx context.Context) error {
 	// Start display goroutine.
 	displayDone := make(chan error, 1)
 	go func() {
@@ -223,7 +229,7 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 	}()
 
 	// Run the pipeline.
-	pipelineErr := r.runPipeline(w, runner, bd)
+	pipelineErr := r.runPipeline(pipelineCtx, w, runner, bd)
 
 	// Signal display completion.
 	if pipelineErr != nil {
@@ -246,21 +252,13 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 }
 
 // runPipeline resolves the bead and runs the pipeline, returning any pipeline error.
-func (r *RunCmd) runPipeline(w io.Writer, runner pipelineRunner, bd beadResolver) error {
-	// Set up Ctrl+C handling.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+func (r *RunCmd) runPipeline(parentCtx context.Context, w io.Writer, runner pipelineRunner, bd beadResolver) error {
+	// Wrap with OS signal handling so Ctrl+C in non-TUI mode still works.
+	ctx, stop := signal.NotifyContext(parentCtx, os.Interrupt)
 	defer stop()
 
-	// Resolve bead context for worklog.
-	// Error means bd is available but failed — log it but continue.
-	beadCtx, err := bd.Resolve(r.BeadID)
-	if err != nil {
-		if errors.Is(err, bead.ErrNotFound) {
-			_, _ = fmt.Fprintf(w, "warning: bead %q not found (try: bd ready)\n", r.BeadID)
-		} else {
-			_, _ = fmt.Fprintf(w, "warning: bead resolve failed: %v\n", err)
-		}
-	}
+	// Resolve bead context for worklog (best-effort; warnings only).
+	beadCtx := r.resolveBeadContext(w, bd)
 
 	input := orchestrator.PipelineInput{
 		BeadID: r.BeadID,
@@ -270,6 +268,19 @@ func (r *RunCmd) runPipeline(w io.Writer, runner pipelineRunner, bd beadResolver
 
 	_, pipelineErr := runner.RunPipeline(ctx, input)
 	return pipelineErr
+}
+
+// resolveBeadContext attempts to resolve bead context, logging warnings on failure.
+func (r *RunCmd) resolveBeadContext(w io.Writer, bd beadResolver) worklog.BeadContext {
+	beadCtx, err := bd.Resolve(r.BeadID)
+	if err != nil {
+		if errors.Is(err, bead.ErrNotFound) {
+			_, _ = fmt.Fprintf(w, "warning: bead %q not found (try: bd ready)\n", r.BeadID)
+		} else {
+			_, _ = fmt.Fprintf(w, "warning: bead resolve failed: %v\n", err)
+		}
+	}
+	return beadCtx
 }
 
 // runPostPipeline performs merge, cleanup, and bead closing after a successful pipeline.

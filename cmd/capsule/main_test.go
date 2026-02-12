@@ -439,7 +439,7 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called with mocks
-		err := cmd.run(&buf, runner, wt, bd, display, bridge)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge, context.Background())
 
 		// Then no error is returned
 		if err != nil {
@@ -481,7 +481,7 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bd, display, bridge)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge, context.Background())
 
 		// Then the pipeline error is returned
 		var pe *orchestrator.PipelineError
@@ -508,7 +508,7 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bdMock, display, bridge)
+		err := cmd.run(&buf, runner, wt, bdMock, display, bridge, context.Background())
 
 		// Then no error is returned (pipeline still runs)
 		if err != nil {
@@ -539,7 +539,7 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bdMock, display, bridge)
+		err := cmd.run(&buf, runner, wt, bdMock, display, bridge, context.Background())
 
 		// Then no error is returned
 		if err != nil {
@@ -566,7 +566,7 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bd, display, bridge)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge, context.Background())
 
 		// Then no error is returned (best-effort)
 		if err != nil {
@@ -767,7 +767,7 @@ func TestFeature_DisplayWiring(t *testing.T) {
 		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called with display and bridge
-		err := cmd.run(&buf, runner, wt, bd, display, bridge)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge, context.Background())
 
 		// Then no error is returned and post-pipeline ran
 		if err != nil {
@@ -793,7 +793,7 @@ func TestFeature_DisplayWiring(t *testing.T) {
 		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bd, display, bridge)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge, context.Background())
 
 		// Then pipeline error is returned
 		var pe *orchestrator.PipelineError
