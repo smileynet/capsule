@@ -194,6 +194,34 @@ func TestSmoke_OrchestratorWiring(t *testing.T) {
 		}
 	})
 
+	t.Run("capsule run with --no-tui flag is accepted", func(t *testing.T) {
+		// Given the binary
+		// When run is invoked with --no-tui and an unknown provider (to trigger a clean setup error)
+		cmd := exec.Command(binary, "run", "test-bead", "--no-tui", "--provider", "nonexistent")
+		cmd.Dir = projectRoot
+		out, err := cmd.CombinedOutput()
+
+		// Then it exits non-zero
+		if err == nil {
+			t.Fatal("expected non-zero exit code for unknown provider")
+		}
+		// And --no-tui is accepted (no parse error about the flag)
+		output := string(out)
+		if strings.Contains(output, "unknown flag") || strings.Contains(output, "--no-tui") {
+			t.Errorf("--no-tui should be accepted, but got parse error: %q", output)
+		}
+		// And the error mentions the unknown provider
+		if !strings.Contains(output, "unknown provider") && !strings.Contains(output, "nonexistent") {
+			t.Errorf("expected error about unknown provider, got: %q", output)
+		}
+		// And exit code is 2 (setup error, not parse error)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() != 2 {
+				t.Errorf("exit code = %d, want 2 (setup error)", exitErr.ExitCode())
+			}
+		}
+	})
+
 	t.Run("capsule clean with nonexistent worktree exits with setup error", func(t *testing.T) {
 		// Given the binary
 		// When clean is invoked for a nonexistent worktree
