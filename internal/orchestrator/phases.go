@@ -1,13 +1,19 @@
 package orchestrator
 
-import "github.com/smileynet/capsule/internal/provider"
+import (
+	"time"
 
-// PhaseKind distinguishes workers (produce artifacts) from reviewers (evaluate artifacts).
+	"github.com/smileynet/capsule/internal/provider"
+)
+
+// PhaseKind distinguishes workers (produce artifacts) from reviewers (evaluate artifacts)
+// and gates (shell commands).
 type PhaseKind int
 
 const (
 	Worker   PhaseKind = iota // Worker phases produce or modify code.
 	Reviewer                  // Reviewer phases evaluate worker output.
+	Gate                      // Gate phases execute shell commands.
 )
 
 func (k PhaseKind) String() string {
@@ -16,6 +22,8 @@ func (k PhaseKind) String() string {
 		return "worker"
 	case Reviewer:
 		return "reviewer"
+	case Gate:
+		return "gate"
 	default:
 		return "unknown"
 	}
@@ -23,10 +31,25 @@ func (k PhaseKind) String() string {
 
 // PhaseDefinition describes a single pipeline phase.
 type PhaseDefinition struct {
-	Name        string    // Prompt template name (e.g. "test-writer").
-	Kind        PhaseKind // Worker or Reviewer.
-	MaxRetries  int       // Maximum retry attempts for this phase's pair.
-	RetryTarget string    // Phase to re-run on NEEDS_WORK (empty for workers).
+	Name        string        // Phase name (also used as prompt template name for Worker/Reviewer).
+	Kind        PhaseKind     // Worker, Reviewer, or Gate.
+	Prompt      string        // Template name override (defaults to Name for Worker/Reviewer).
+	Command     string        // Shell command (required for Gate, ignored otherwise).
+	MaxRetries  int           // Maximum retry attempts for this phase's pair.
+	RetryTarget string        // Phase to re-run on NEEDS_WORK (empty for workers).
+	Optional    bool          // If true, SKIP/ERROR → continue pipeline.
+	Condition   string        // "files_match:<glob>" or empty (always run).
+	Provider    string        // Override default provider for this phase.
+	Timeout     time.Duration // Override default timeout for this phase.
+}
+
+// PromptName returns the prompt template name for this phase.
+// Uses the explicit Prompt field if set, otherwise falls back to Name.
+func (pd PhaseDefinition) PromptName() string {
+	if pd.Prompt != "" {
+		return pd.Prompt
+	}
+	return pd.Name
 }
 
 // PhaseStatus represents the current state of a phase execution.
@@ -38,6 +61,7 @@ const (
 	PhasePassed  PhaseStatus = "passed"
 	PhaseFailed  PhaseStatus = "failed"
 	PhaseError   PhaseStatus = "error"
+	PhaseSkipped PhaseStatus = "skipped"
 )
 
 // StatusUpdate carries progress information for a single phase execution.
@@ -63,5 +87,42 @@ func DefaultPhases() []PhaseDefinition {
 		{Name: "execute-review", Kind: Reviewer, MaxRetries: 3, RetryTarget: "execute"},
 		{Name: "sign-off", Kind: Reviewer, MaxRetries: 3, RetryTarget: "execute"},
 		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+}
+
+// MinimalPhases returns a simplified 3-phase pipeline.
+func MinimalPhases() []PhaseDefinition {
+	return []PhaseDefinition{
+		{Name: "test-writer", Kind: Worker, MaxRetries: 3},
+		{Name: "execute", Kind: Worker, MaxRetries: 3},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+}
+
+// ThoroughPhases returns an extended pipeline with test quality review, lint gate, and security scan.
+func ThoroughPhases() []PhaseDefinition {
+	return []PhaseDefinition{
+		{Name: "test-writer", Kind: Worker, MaxRetries: 3},
+		{Name: "test-quality", Kind: Reviewer, MaxRetries: 2, RetryTarget: "test-writer", Prompt: "test-quality"},
+		{Name: "execute", Kind: Worker, MaxRetries: 3},
+		{Name: "lint", Kind: Gate, Command: "make lint", Optional: true},
+		{Name: "execute-review", Kind: Reviewer, MaxRetries: 3, RetryTarget: "execute"},
+		{Name: "sign-off", Kind: Reviewer, MaxRetries: 3, RetryTarget: "execute"},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+}
+
+// PresetPhases returns phases for a named preset ("default", "minimal", "thorough").
+// Returns nil if the preset name is not recognized.
+func PresetPhases(name string) []PhaseDefinition {
+	switch name {
+	case "default", "":
+		return DefaultPhases()
+	case "minimal":
+		return MinimalPhases()
+	case "thorough":
+		return ThoroughPhases()
+	default:
+		return nil
 	}
 }

@@ -14,12 +14,21 @@ import (
 // ErrEmpty indicates a prompt file exists but contains no content.
 var ErrEmpty = errors.New("prompt: empty prompt file")
 
+// SiblingContext holds a summary of a completed sibling task for cross-run context.
+type SiblingContext struct {
+	BeadID       string
+	Title        string
+	Summary      string
+	FilesChanged []string
+}
+
 // Context holds the values interpolated into prompt templates.
 type Context struct {
-	BeadID      string
-	Title       string
-	Description string
-	Feedback    string
+	BeadID         string
+	Title          string
+	Description    string
+	Feedback       string
+	SiblingContext []SiblingContext
 }
 
 // Loader reads prompt templates from a directory.

@@ -16,15 +16,24 @@ const (
 	StatusPass      Status = "PASS"
 	StatusNeedsWork Status = "NEEDS_WORK"
 	StatusError     Status = "ERROR"
+	StatusSkip      Status = "SKIP"
 )
+
+// Finding represents a discovery surfaced during a pipeline phase.
+type Finding struct {
+	Title       string `json:"title"`
+	Severity    string `json:"severity"` // "critical" | "major" | "minor" | "nit"
+	Description string `json:"description"`
+}
 
 // Signal is the structured output produced by a pipeline phase.
 type Signal struct {
-	Status       Status   `json:"status"`
-	Feedback     string   `json:"feedback"`
-	FilesChanged []string `json:"files_changed"`
-	Summary      string   `json:"summary"`
-	CommitHash   string   `json:"commit_hash,omitempty"`
+	Status       Status    `json:"status"`
+	Feedback     string    `json:"feedback"`
+	FilesChanged []string  `json:"files_changed"`
+	Summary      string    `json:"summary"`
+	CommitHash   string    `json:"commit_hash,omitempty"`
+	Findings     []Finding `json:"findings,omitempty"`
 }
 
 // Result holds the raw output from a provider execution.
@@ -94,15 +103,18 @@ func ParseSignal(output string) (Signal, error) {
 
 	// Validate status value.
 	switch lastSignal.Status {
-	case StatusPass, StatusNeedsWork, StatusError:
+	case StatusPass, StatusNeedsWork, StatusError, StatusSkip:
 		// valid
 	default:
 		return Signal{}, &SignalParseError{Reason: fmt.Sprintf("invalid status value: %q", lastSignal.Status)}
 	}
 
-	// Ensure files_changed is never nil (normalize to empty slice).
+	// Ensure slices are never nil (normalize to empty slices).
 	if lastSignal.FilesChanged == nil {
 		lastSignal.FilesChanged = []string{}
+	}
+	if lastSignal.Findings == nil {
+		lastSignal.Findings = []Finding{}
 	}
 
 	return *lastSignal, nil

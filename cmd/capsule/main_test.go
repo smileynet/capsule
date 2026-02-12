@@ -546,9 +546,9 @@ type mockPipelineRunner struct {
 	err   error
 }
 
-func (m *mockPipelineRunner) RunPipeline(_ context.Context, input orchestrator.PipelineInput) error {
+func (m *mockPipelineRunner) RunPipeline(_ context.Context, input orchestrator.PipelineInput) (orchestrator.PipelineOutput, error) {
 	m.input = input
-	return m.err
+	return orchestrator.PipelineOutput{Completed: m.err == nil}, m.err
 }
 
 // mockWorktreeOps stubs worktree operations for abort/clean testing.

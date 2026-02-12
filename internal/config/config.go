@@ -16,6 +16,8 @@ import (
 type Config struct {
 	Runtime  Runtime  `yaml:"runtime"`
 	Worktree Worktree `yaml:"worktree"`
+	Pipeline Pipeline `yaml:"pipeline"`
+	Campaign Campaign `yaml:"campaign"`
 }
 
 // Runtime holds provider and execution settings.
@@ -29,6 +31,30 @@ type Worktree struct {
 	BaseDir string `yaml:"base_dir"`
 }
 
+// Pipeline holds pipeline execution settings.
+type Pipeline struct {
+	Phases     string      `yaml:"phases"`     // "default" | "minimal" | path to YAML
+	Checkpoint bool        `yaml:"checkpoint"` // Enable state checkpointing
+	Retry      RetryConfig `yaml:"retry"`      // Pipeline-wide retry defaults
+}
+
+// RetryConfig holds retry strategy settings.
+type RetryConfig struct {
+	MaxAttempts      int     `yaml:"max_attempts"`
+	BackoffFactor    float64 `yaml:"backoff_factor"`
+	EscalateProvider string  `yaml:"escalate_provider"`
+	EscalateAfter    int     `yaml:"escalate_after"`
+}
+
+// Campaign holds campaign orchestration settings.
+type Campaign struct {
+	FailureMode      string `yaml:"failure_mode"`      // "abort" | "continue"
+	CircuitBreaker   int    `yaml:"circuit_breaker"`   // Consecutive failures before stopping
+	DiscoveryFiling  bool   `yaml:"discovery_filing"`  // File findings as new beads
+	CrossRunContext  bool   `yaml:"cross_run_context"` // Include sibling context in prompts
+	ValidationPhases string `yaml:"validation_phases"` // Phase set for feature validation
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
@@ -38,6 +64,18 @@ func DefaultConfig() Config {
 		},
 		Worktree: Worktree{
 			BaseDir: ".capsule/worktrees",
+		},
+		Pipeline: Pipeline{
+			Phases:     "default",
+			Checkpoint: false,
+			Retry: RetryConfig{
+				MaxAttempts:   3,
+				BackoffFactor: 1.0,
+			},
+		},
+		Campaign: Campaign{
+			FailureMode:    "abort",
+			CircuitBreaker: 3,
 		},
 	}
 }
@@ -104,6 +142,21 @@ func (c *Config) Validate() error {
 	if c.Worktree.BaseDir == "" {
 		return errors.New("config: worktree.base_dir cannot be empty")
 	}
+	if c.Pipeline.Retry.MaxAttempts < 0 {
+		return fmt.Errorf("config: pipeline.retry.max_attempts must be non-negative, got %d", c.Pipeline.Retry.MaxAttempts)
+	}
+	if c.Pipeline.Retry.BackoffFactor < 0 {
+		return fmt.Errorf("config: pipeline.retry.backoff_factor must be non-negative, got %v", c.Pipeline.Retry.BackoffFactor)
+	}
+	switch c.Campaign.FailureMode {
+	case "", "abort", "continue":
+		// valid
+	default:
+		return fmt.Errorf("config: campaign.failure_mode must be \"abort\" or \"continue\", got %q", c.Campaign.FailureMode)
+	}
+	if c.Campaign.CircuitBreaker < 0 {
+		return fmt.Errorf("config: campaign.circuit_breaker must be non-negative, got %d", c.Campaign.CircuitBreaker)
+	}
 	return nil
 }
 
@@ -130,6 +183,8 @@ func (c *Config) ApplyEnv() error {
 type rawConfig struct {
 	Runtime  *rawRuntime  `yaml:"runtime"`
 	Worktree *rawWorktree `yaml:"worktree"`
+	Pipeline *rawPipeline `yaml:"pipeline"`
+	Campaign *rawCampaign `yaml:"campaign"`
 }
 
 type rawRuntime struct {
@@ -139,6 +194,27 @@ type rawRuntime struct {
 
 type rawWorktree struct {
 	BaseDir *string `yaml:"base_dir"`
+}
+
+type rawPipeline struct {
+	Phases     *string         `yaml:"phases"`
+	Checkpoint *bool           `yaml:"checkpoint"`
+	Retry      *rawRetryConfig `yaml:"retry"`
+}
+
+type rawRetryConfig struct {
+	MaxAttempts      *int     `yaml:"max_attempts"`
+	BackoffFactor    *float64 `yaml:"backoff_factor"`
+	EscalateProvider *string  `yaml:"escalate_provider"`
+	EscalateAfter    *int     `yaml:"escalate_after"`
+}
+
+type rawCampaign struct {
+	FailureMode      *string `yaml:"failure_mode"`
+	CircuitBreaker   *int    `yaml:"circuit_breaker"`
+	DiscoveryFiling  *bool   `yaml:"discovery_filing"`
+	CrossRunContext  *bool   `yaml:"cross_run_context"`
+	ValidationPhases *string `yaml:"validation_phases"`
 }
 
 // loadLayer reads a single config file into a rawConfig for selective merging.
@@ -182,6 +258,45 @@ func (c *Config) merge(layer *rawConfig) {
 	if layer.Worktree != nil {
 		if layer.Worktree.BaseDir != nil {
 			c.Worktree.BaseDir = *layer.Worktree.BaseDir
+		}
+	}
+	if layer.Pipeline != nil {
+		if layer.Pipeline.Phases != nil {
+			c.Pipeline.Phases = *layer.Pipeline.Phases
+		}
+		if layer.Pipeline.Checkpoint != nil {
+			c.Pipeline.Checkpoint = *layer.Pipeline.Checkpoint
+		}
+		if layer.Pipeline.Retry != nil {
+			if layer.Pipeline.Retry.MaxAttempts != nil {
+				c.Pipeline.Retry.MaxAttempts = *layer.Pipeline.Retry.MaxAttempts
+			}
+			if layer.Pipeline.Retry.BackoffFactor != nil {
+				c.Pipeline.Retry.BackoffFactor = *layer.Pipeline.Retry.BackoffFactor
+			}
+			if layer.Pipeline.Retry.EscalateProvider != nil {
+				c.Pipeline.Retry.EscalateProvider = *layer.Pipeline.Retry.EscalateProvider
+			}
+			if layer.Pipeline.Retry.EscalateAfter != nil {
+				c.Pipeline.Retry.EscalateAfter = *layer.Pipeline.Retry.EscalateAfter
+			}
+		}
+	}
+	if layer.Campaign != nil {
+		if layer.Campaign.FailureMode != nil {
+			c.Campaign.FailureMode = *layer.Campaign.FailureMode
+		}
+		if layer.Campaign.CircuitBreaker != nil {
+			c.Campaign.CircuitBreaker = *layer.Campaign.CircuitBreaker
+		}
+		if layer.Campaign.DiscoveryFiling != nil {
+			c.Campaign.DiscoveryFiling = *layer.Campaign.DiscoveryFiling
+		}
+		if layer.Campaign.CrossRunContext != nil {
+			c.Campaign.CrossRunContext = *layer.Campaign.CrossRunContext
+		}
+		if layer.Campaign.ValidationPhases != nil {
+			c.Campaign.ValidationPhases = *layer.Campaign.ValidationPhases
 		}
 	}
 }

@@ -95,6 +95,38 @@ Found 3 acceptance criteria.
 			wantErr: true,
 		},
 		{
+			name:   "valid SKIP status",
+			output: `{"status":"SKIP","feedback":"not applicable","files_changed":[],"summary":"phase skipped"}`,
+			want: Signal{
+				Status:       StatusSkip,
+				Feedback:     "not applicable",
+				FilesChanged: []string{},
+				Summary:      "phase skipped",
+			},
+		},
+		{
+			name:   "signal with findings",
+			output: `{"status":"PASS","feedback":"ok","files_changed":["a.go"],"summary":"done","findings":[{"title":"Missing nil check","severity":"minor","description":"line 47"}]}`,
+			want: Signal{
+				Status:       StatusPass,
+				Feedback:     "ok",
+				FilesChanged: []string{"a.go"},
+				Summary:      "done",
+				Findings:     []Finding{{Title: "Missing nil check", Severity: "minor", Description: "line 47"}},
+			},
+		},
+		{
+			name:   "signal without findings normalizes to empty slice",
+			output: `{"status":"PASS","feedback":"ok","files_changed":[],"summary":"done"}`,
+			want: Signal{
+				Status:       StatusPass,
+				Feedback:     "ok",
+				FilesChanged: []string{},
+				Summary:      "done",
+				Findings:     []Finding{},
+			},
+		},
+		{
 			name: "multiple JSON objects picks last",
 			output: `{"status":"ERROR","feedback":"first","files_changed":[],"summary":"first"}
 some log output
@@ -145,6 +177,16 @@ some log output
 			for i, f := range got.FilesChanged {
 				if f != tt.want.FilesChanged[i] {
 					t.Errorf("FilesChanged[%d] = %q, want %q", i, f, tt.want.FilesChanged[i])
+				}
+			}
+			if tt.want.Findings != nil {
+				if len(got.Findings) != len(tt.want.Findings) {
+					t.Fatalf("Findings len = %d, want %d", len(got.Findings), len(tt.want.Findings))
+				}
+				for i, f := range got.Findings {
+					if f != tt.want.Findings[i] {
+						t.Errorf("Findings[%d] = %+v, want %+v", i, f, tt.want.Findings[i])
+					}
 				}
 			}
 		})

@@ -329,6 +329,215 @@ func TestLoadLayered_AllMissing(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_PipelineDefaults(t *testing.T) {
+	// Given no configuration loaded
+	// When DefaultConfig is called
+	cfg := DefaultConfig()
+
+	// Then pipeline defaults are set
+	if cfg.Pipeline.Phases != "default" {
+		t.Errorf("pipeline.phases = %q, want %q", cfg.Pipeline.Phases, "default")
+	}
+	if cfg.Pipeline.Checkpoint {
+		t.Error("pipeline.checkpoint should default to false")
+	}
+	if cfg.Pipeline.Retry.MaxAttempts != 3 {
+		t.Errorf("pipeline.retry.max_attempts = %d, want 3", cfg.Pipeline.Retry.MaxAttempts)
+	}
+	if cfg.Pipeline.Retry.BackoffFactor != 1.0 {
+		t.Errorf("pipeline.retry.backoff_factor = %v, want 1.0", cfg.Pipeline.Retry.BackoffFactor)
+	}
+}
+
+func TestDefaultConfig_CampaignDefaults(t *testing.T) {
+	// Given no configuration loaded
+	// When DefaultConfig is called
+	cfg := DefaultConfig()
+
+	// Then campaign defaults are set
+	if cfg.Campaign.FailureMode != "abort" {
+		t.Errorf("campaign.failure_mode = %q, want %q", cfg.Campaign.FailureMode, "abort")
+	}
+	if cfg.Campaign.CircuitBreaker != 3 {
+		t.Errorf("campaign.circuit_breaker = %d, want 3", cfg.Campaign.CircuitBreaker)
+	}
+	if cfg.Campaign.DiscoveryFiling {
+		t.Error("campaign.discovery_filing should default to false")
+	}
+	if cfg.Campaign.CrossRunContext {
+		t.Error("campaign.cross_run_context should default to false")
+	}
+}
+
+func TestLoad_PipelineConfig(t *testing.T) {
+	// Given a config file with pipeline settings
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "capsule.yaml")
+	if err := os.WriteFile(cfgPath, []byte(`
+pipeline:
+  phases: minimal
+  checkpoint: true
+  retry:
+    max_attempts: 5
+    backoff_factor: 1.5
+    escalate_provider: openai
+    escalate_after: 3
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When config is loaded
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Then pipeline settings are applied
+	if cfg.Pipeline.Phases != "minimal" {
+		t.Errorf("phases = %q, want %q", cfg.Pipeline.Phases, "minimal")
+	}
+	if !cfg.Pipeline.Checkpoint {
+		t.Error("checkpoint should be true")
+	}
+	if cfg.Pipeline.Retry.MaxAttempts != 5 {
+		t.Errorf("max_attempts = %d, want 5", cfg.Pipeline.Retry.MaxAttempts)
+	}
+	if cfg.Pipeline.Retry.BackoffFactor != 1.5 {
+		t.Errorf("backoff_factor = %v, want 1.5", cfg.Pipeline.Retry.BackoffFactor)
+	}
+	if cfg.Pipeline.Retry.EscalateProvider != "openai" {
+		t.Errorf("escalate_provider = %q, want %q", cfg.Pipeline.Retry.EscalateProvider, "openai")
+	}
+	if cfg.Pipeline.Retry.EscalateAfter != 3 {
+		t.Errorf("escalate_after = %d, want 3", cfg.Pipeline.Retry.EscalateAfter)
+	}
+}
+
+func TestLoad_CampaignConfig(t *testing.T) {
+	// Given a config file with campaign settings
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "capsule.yaml")
+	if err := os.WriteFile(cfgPath, []byte(`
+campaign:
+  failure_mode: continue
+  circuit_breaker: 5
+  discovery_filing: true
+  cross_run_context: true
+  validation_phases: thorough
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When config is loaded
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Then campaign settings are applied
+	if cfg.Campaign.FailureMode != "continue" {
+		t.Errorf("failure_mode = %q, want %q", cfg.Campaign.FailureMode, "continue")
+	}
+	if cfg.Campaign.CircuitBreaker != 5 {
+		t.Errorf("circuit_breaker = %d, want 5", cfg.Campaign.CircuitBreaker)
+	}
+	if !cfg.Campaign.DiscoveryFiling {
+		t.Error("discovery_filing should be true")
+	}
+	if !cfg.Campaign.CrossRunContext {
+		t.Error("cross_run_context should be true")
+	}
+	if cfg.Campaign.ValidationPhases != "thorough" {
+		t.Errorf("validation_phases = %q, want %q", cfg.Campaign.ValidationPhases, "thorough")
+	}
+}
+
+func TestLoadLayered_PipelineMerge(t *testing.T) {
+	// Given user config sets pipeline phases, project overrides retry
+	userDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	userCfg := filepath.Join(userDir, "capsule.yaml")
+	if err := os.WriteFile(userCfg, []byte(`
+pipeline:
+  phases: minimal
+  retry:
+    max_attempts: 2
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	projectCfg := filepath.Join(projectDir, "capsule.yaml")
+	if err := os.WriteFile(projectCfg, []byte(`
+pipeline:
+  retry:
+    max_attempts: 5
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When configs are loaded with layered priority
+	cfg, err := LoadLayered(userCfg, projectCfg)
+	if err != nil {
+		t.Fatalf("LoadLayered() error = %v", err)
+	}
+
+	// Then project overrides user for retry, phases falls through from user
+	if cfg.Pipeline.Phases != "minimal" {
+		t.Errorf("phases = %q, want %q", cfg.Pipeline.Phases, "minimal")
+	}
+	if cfg.Pipeline.Retry.MaxAttempts != 5 {
+		t.Errorf("max_attempts = %d, want 5", cfg.Pipeline.Retry.MaxAttempts)
+	}
+}
+
+func TestValidate_PipelineFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr bool
+	}{
+		{
+			name:    "negative max_attempts",
+			modify:  func(c *Config) { c.Pipeline.Retry.MaxAttempts = -1 },
+			wantErr: true,
+		},
+		{
+			name:    "negative backoff_factor",
+			modify:  func(c *Config) { c.Pipeline.Retry.BackoffFactor = -1.0 },
+			wantErr: true,
+		},
+		{
+			name:    "invalid failure_mode",
+			modify:  func(c *Config) { c.Campaign.FailureMode = "invalid" },
+			wantErr: true,
+		},
+		{
+			name:    "negative circuit_breaker",
+			modify:  func(c *Config) { c.Campaign.CircuitBreaker = -1 },
+			wantErr: true,
+		},
+		{
+			name:   "continue failure_mode is valid",
+			modify: func(c *Config) { c.Campaign.FailureMode = "continue" },
+		},
+		{
+			name:   "zero max_attempts is valid",
+			modify: func(c *Config) { c.Pipeline.Retry.MaxAttempts = 0 },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tt.modify(&cfg)
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoad_EmptyFile(t *testing.T) {
 	// Given an empty config file
 	dir := t.TempDir()

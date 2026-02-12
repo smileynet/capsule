@@ -276,7 +276,7 @@ func TestRunPipeline_NilPromptLoader(t *testing.T) {
 	o := New(&provider.MockProvider{NameVal: "test"})
 
 	// When RunPipeline is called
-	err := o.RunPipeline(context.Background(), PipelineInput{BeadID: "cap-1"})
+	_, err := o.RunPipeline(context.Background(), PipelineInput{BeadID: "cap-1"})
 
 	// Then it returns a setup PipelineError
 	var pe *PipelineError
@@ -598,7 +598,7 @@ func TestRunPipeline_AllPhasesPass(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1", Title: "Test task"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 
 	// Then it completes without error
 	if err != nil {
@@ -637,7 +637,7 @@ func TestRunPipeline_PhaseErrorAborts(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 
 	// Then it returns a PipelineError for execute-review
 	var pe *PipelineError
@@ -673,7 +673,7 @@ func TestRunPipeline_ReviewerRetryFlow(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 
 	// Then it completes successfully after retry
 	if err != nil {
@@ -705,7 +705,7 @@ func TestRunPipeline_StandaloneReviewerRetry(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 
 	// Then it completes successfully
 	if err != nil {
@@ -728,7 +728,7 @@ func TestRunPipeline_WorktreeCreationFailure(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 
 	// Then it returns a setup PipelineError
 	var pe *PipelineError
@@ -751,7 +751,7 @@ func TestRunPipeline_WorklogCreationFailure(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 
 	// Then it returns a setup PipelineError
 	var pe *PipelineError
@@ -776,7 +776,7 @@ func TestRunPipeline_ArchiveFailure(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 
 	// Then it returns a teardown PipelineError
 	var pe *PipelineError
@@ -803,7 +803,7 @@ func TestRunPipeline_StatusCallbacks(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -851,7 +851,7 @@ func TestRunPipeline_ContextCancelled(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes with cancelled context
-	err := o.RunPipeline(ctx, input)
+	_, err := o.RunPipeline(ctx, input)
 
 	// Then it returns a PipelineError
 	var pe *PipelineError
@@ -878,7 +878,7 @@ func TestRunPipeline_BaseBranchFromInput(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1", BaseBranch: "develop"}
 
 	// When RunPipeline executes with a custom base branch
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -929,7 +929,7 @@ func TestRunPipeline_PromptContextCarriesMetadata(t *testing.T) {
 	}
 
 	// When RunPipeline executes
-	err := o.RunPipeline(context.Background(), input)
+	_, err := o.RunPipeline(context.Background(), input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -995,6 +995,234 @@ func TestExecutePhase_ParseSignalError(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "parsing signal for worker") {
 		t.Errorf("error = %q, want mention of parsing signal", got)
+	}
+}
+
+// --- Gate and optional phase tests ---
+
+type mockGateRunner struct {
+	calls   []gateCall
+	signals []provider.Signal
+	errs    []error
+	idx     int
+}
+
+type gateCall struct {
+	command string
+	workDir string
+}
+
+func (m *mockGateRunner) Run(_ context.Context, command, workDir string) (provider.Signal, error) {
+	m.calls = append(m.calls, gateCall{command: command, workDir: workDir})
+	if m.idx >= len(m.signals) {
+		return provider.Signal{}, fmt.Errorf("unexpected gate call %d", m.idx+1)
+	}
+	sig := m.signals[m.idx]
+	var err error
+	if m.idx < len(m.errs) {
+		err = m.errs[m.idx]
+	}
+	m.idx++
+	return sig, err
+}
+
+func TestRunPipeline_GatePhasePass(t *testing.T) {
+	// Given a pipeline with a gate phase
+	gr := &mockGateRunner{
+		signals: []provider.Signal{{
+			Status: provider.StatusPass, Feedback: "ok", Summary: "lint passed",
+			FilesChanged: []string{}, Findings: []provider.Finding{},
+		}},
+	}
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+		passResponse(), // reviewer
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 3},
+		{Name: "lint", Kind: Gate, Command: "make lint"},
+		{Name: "reviewer", Kind: Reviewer, MaxRetries: 3, RetryTarget: "worker"},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithGateRunner(gr),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the gate was called
+	if len(gr.calls) != 1 {
+		t.Errorf("gate called %d times, want 1", len(gr.calls))
+	}
+	if gr.calls[0].command != "make lint" {
+		t.Errorf("gate command = %q, want %q", gr.calls[0].command, "make lint")
+	}
+}
+
+func TestRunPipeline_GatePhaseError_Optional(t *testing.T) {
+	// Given a pipeline with an optional gate that fails
+	gr := &mockGateRunner{
+		signals: []provider.Signal{{
+			Status: provider.StatusError, Feedback: "lint error", Summary: "exit 1",
+			FilesChanged: []string{}, Findings: []provider.Finding{},
+		}},
+	}
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+		passResponse(), // merge
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "lint", Kind: Gate, Command: "make lint", Optional: true},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithGateRunner(gr),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes (optional failure doesn't abort)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the merge phase still ran
+	if len(sp.calls) != 2 {
+		t.Errorf("provider called %d times, want 2", len(sp.calls))
+	}
+}
+
+func TestRunPipeline_GatePhaseError_Required(t *testing.T) {
+	// Given a pipeline with a required gate that fails
+	gr := &mockGateRunner{
+		signals: []provider.Signal{{
+			Status: provider.StatusError, Feedback: "lint error", Summary: "exit 1",
+			FilesChanged: []string{}, Findings: []provider.Finding{},
+		}},
+	}
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "lint", Kind: Gate, Command: "make lint"}, // not optional
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithGateRunner(gr),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it fails with a PipelineError for the gate phase
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if pe.Phase != "lint" {
+		t.Errorf("Phase = %q, want %q", pe.Phase, "lint")
+	}
+}
+
+func TestRunPipeline_GateNoRunner(t *testing.T) {
+	// Given a pipeline with a gate but no GateRunner
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "lint", Kind: Gate, Command: "make lint"},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		// No WithGateRunner
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns a PipelineError
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if !strings.Contains(pe.Err.Error(), "GateRunner") {
+		t.Errorf("error should mention GateRunner, got %q", pe.Err.Error())
+	}
+}
+
+func TestRunPipeline_SkipStatus(t *testing.T) {
+	// Given a phase that returns SKIP
+	sp := &sequenceProvider{responses: []mockResponse{
+		{result: provider.Result{Output: makeSignalJSON(provider.StatusPass, "ok", "passed")}},
+		{result: provider.Result{
+			Output: `{"status":"SKIP","feedback":"not applicable","files_changed":[],"summary":"skipped"}`,
+		}},
+		{result: provider.Result{Output: makeSignalJSON(provider.StatusPass, "ok", "passed")}},
+	}}
+
+	var updates []StatusUpdate
+	cb := func(su StatusUpdate) { updates = append(updates, su) }
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "reviewer", Kind: Worker, MaxRetries: 1}, // returns SKIP
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithStatusCallback(cb),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes (SKIP doesn't abort)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the skipped phase got a PhaseSkipped callback
+	var foundSkipped bool
+	for _, u := range updates {
+		if u.Phase == "reviewer" && u.Status == PhaseSkipped {
+			foundSkipped = true
+		}
+	}
+	if !foundSkipped {
+		t.Error("expected PhaseSkipped callback for reviewer")
 	}
 }
 
