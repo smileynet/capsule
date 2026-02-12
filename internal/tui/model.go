@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // PhaseStatus represents the current state of a phase in the TUI.
@@ -20,6 +21,17 @@ const (
 	StatusFailed  PhaseStatus = "failed"
 	StatusError   PhaseStatus = "error"
 	StatusSkipped PhaseStatus = "skipped"
+)
+
+// Lipgloss styles for phase status display.
+var (
+	passedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	failedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	runningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	pendingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	skippedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	durationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	retryStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 )
 
 // PhaseState tracks the display state of a single pipeline phase.
@@ -39,6 +51,7 @@ type Model struct {
 	done       bool
 	err        error
 	startTime  time.Time // Records model creation for future elapsed-time display.
+	width      int       // Terminal width from WindowSizeMsg; 0 means not yet received.
 }
 
 // StatusUpdateMsg bridges orchestrator status updates to the TUI.
@@ -120,6 +133,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -134,41 +151,99 @@ func (m Model) View() string {
 	var s string
 
 	for _, phase := range m.phases {
-		indicator := statusIndicator(phase.Status, m.spinner.View())
-		line := fmt.Sprintf("  %s %s", indicator, phase.Name)
+		indicator := styledIndicator(phase.Status, m.spinner.View())
+		name := styledPhaseName(phase.Status, phase.Name)
+		line := fmt.Sprintf("  %s %s", indicator, name)
 
 		if phase.Attempt > 1 {
-			line += fmt.Sprintf(" (%d/%d)", phase.Attempt, phase.MaxRetry)
+			line += retryStyle.Render(fmt.Sprintf(" (%d/%d)", phase.Attempt, phase.MaxRetry))
 		}
 
 		if phase.Duration > 0 {
-			line += fmt.Sprintf(" %.1fs", phase.Duration.Seconds())
+			line += durationStyle.Render(fmt.Sprintf(" %.1fs", phase.Duration.Seconds()))
 		}
 
 		s += line + "\n"
 	}
 
-	if m.done && m.err != nil {
-		s += fmt.Sprintf("\n  Error: %s\n", m.err)
+	if m.done {
+		s += m.renderFooter()
 	}
 
 	return s
 }
 
-// statusIndicator returns the Unicode indicator for a phase status.
-func statusIndicator(status PhaseStatus, spinnerView string) string {
+// renderFooter returns the summary footer for a completed pipeline.
+func (m Model) renderFooter() string {
+	passed, total := m.phaseCounts()
+	totalDur := m.totalDuration()
+
+	var footer string
+	if m.err != nil {
+		footer = fmt.Sprintf("\n  %s %d/%d passed",
+			failedStyle.Render("✗"), passed, total)
+		if totalDur > 0 {
+			footer += durationStyle.Render(fmt.Sprintf(" in %.1fs", totalDur.Seconds()))
+		}
+		footer += fmt.Sprintf("\n  Error: %s\n", m.err)
+	} else {
+		footer = fmt.Sprintf("\n  %s %d/%d passed",
+			passedStyle.Render("✓"), passed, total)
+		if totalDur > 0 {
+			footer += durationStyle.Render(fmt.Sprintf(" in %.1fs", totalDur.Seconds()))
+		}
+		footer += "\n"
+	}
+
+	return footer
+}
+
+// phaseCounts returns the number of passed phases and total phases.
+func (m Model) phaseCounts() (passed, total int) {
+	total = len(m.phases)
+	for _, p := range m.phases {
+		if p.Status == StatusPassed {
+			passed++
+		}
+	}
+	return
+}
+
+// totalDuration sums reported phase durations.
+func (m Model) totalDuration() time.Duration {
+	var total time.Duration
+	for _, p := range m.phases {
+		total += p.Duration
+	}
+	return total
+}
+
+// styledIndicator returns the styled Unicode indicator for a phase status.
+func styledIndicator(status PhaseStatus, spinnerView string) string {
 	switch status {
 	case StatusPending:
-		return "○"
+		return pendingStyle.Render("○")
 	case StatusRunning:
-		return spinnerView
+		return spinnerView // Already styled by spinner.
 	case StatusPassed:
-		return "✓"
+		return passedStyle.Render("✓")
 	case StatusFailed, StatusError:
-		return "✗"
+		return failedStyle.Render("✗")
 	case StatusSkipped:
-		return "–"
+		return skippedStyle.Render("–")
 	default:
 		return "?"
+	}
+}
+
+// styledPhaseName applies the appropriate style to a phase name.
+func styledPhaseName(status PhaseStatus, name string) string {
+	switch status {
+	case StatusPending:
+		return pendingStyle.Render(name)
+	case StatusRunning:
+		return runningStyle.Render(name)
+	default:
+		return name
 	}
 }

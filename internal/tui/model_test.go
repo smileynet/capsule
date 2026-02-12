@@ -319,7 +319,85 @@ func TestModel_View_WithDuration(t *testing.T) {
 	}
 }
 
-// teatest integration: verify the model processes messages in sequence
+func TestModel_View_SummaryFooter_AllPassed(t *testing.T) {
+	m := NewModel([]string{"test-writer", "test-review"})
+	m.phases[0].Status = StatusPassed
+	m.phases[0].Duration = 2 * time.Second
+	m.phases[1].Status = StatusPassed
+	m.phases[1].Duration = 3 * time.Second
+	m.done = true
+
+	view := m.View()
+
+	if !strings.Contains(view, "2/2 passed") {
+		t.Errorf("summary should show pass count, got:\n%s", view)
+	}
+	if !strings.Contains(view, "in 5.0s") {
+		t.Errorf("summary should show total duration, got:\n%s", view)
+	}
+	if strings.Contains(view, "Error") {
+		t.Error("all-passed summary should not contain error text")
+	}
+}
+
+func TestModel_View_SummaryFooter_WithError(t *testing.T) {
+	m := NewModel([]string{"test-writer", "test-review"})
+	m.phases[0].Status = StatusPassed
+	m.phases[1].Status = StatusFailed
+	m.done = true
+	m.err = errors.New("test-review failed")
+
+	view := m.View()
+
+	if !strings.Contains(view, "1/2 passed") {
+		t.Errorf("summary should show pass count, got:\n%s", view)
+	}
+	if !strings.Contains(view, "test-review failed") {
+		t.Errorf("summary should show error message, got:\n%s", view)
+	}
+}
+
+func TestModel_View_SummaryFooter_NotShownWhenRunning(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.phases[0].Status = StatusRunning
+
+	view := m.View()
+
+	if strings.Contains(view, "passed") {
+		t.Error("summary footer should not appear while pipeline is running")
+	}
+}
+
+func TestModel_View_SummaryFooter_TotalDuration(t *testing.T) {
+	m := NewModel([]string{"phase1", "phase2", "phase3"})
+	m.phases[0].Status = StatusPassed
+	m.phases[0].Duration = 1500 * time.Millisecond
+	m.phases[1].Status = StatusPassed
+	m.phases[1].Duration = 2500 * time.Millisecond
+	m.phases[2].Status = StatusPassed
+	m.phases[2].Duration = 500 * time.Millisecond
+	m.done = true
+
+	view := m.View()
+
+	// Total: 4.5s - unique to footer (phase lines show 1.5s, 2.5s, 0.5s)
+	if !strings.Contains(view, "in 4.5s") {
+		t.Errorf("footer should show total duration 'in 4.5s', got:\n%s", view)
+	}
+}
+
+func TestModel_Update_WindowSizeMsg(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	newModel, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	updated := newModel.(Model)
+
+	if updated.width != 120 {
+		t.Errorf("width = %d, want 120", updated.width)
+	}
+}
+
+// TestModel_Teatest_FullPipeline verifies the model processes messages in sequence via teatest.
 func TestModel_Teatest_FullPipeline(t *testing.T) {
 	phases := []string{"test-writer", "test-review", "execute"}
 	m := NewModel(phases)
