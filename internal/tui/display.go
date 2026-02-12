@@ -23,6 +23,7 @@ var (
 	_ DisplayEvent = StatusUpdateMsg{}
 	_ DisplayEvent = PipelineDoneMsg{}
 	_ DisplayEvent = PipelineErrorMsg{}
+	_ DisplayEvent = OutputMsg{}
 )
 
 // Display renders pipeline status updates.
@@ -113,6 +114,8 @@ func (d *PlainDisplay) Run(ctx context.Context, events <-chan DisplayEvent) erro
 			switch msg := ev.(type) {
 			case StatusUpdateMsg:
 				d.renderUpdate(msg)
+			case OutputMsg:
+				// Detail output is TUI-only; ignored in plain text mode.
 			case PipelineDoneMsg:
 				return nil
 			case PipelineErrorMsg:

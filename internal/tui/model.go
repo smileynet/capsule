@@ -6,9 +6,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// detailHeaderHeight is the number of lines reserved for the phase list and
+// chrome above the detail viewport. The viewport gets the remaining height.
+const detailHeaderHeight = 6
 
 // PhaseStatus represents the current state of a phase in the TUI.
 // Values intentionally mirror orchestrator.PhaseStatus for straightforward bridging
@@ -33,6 +38,7 @@ var (
 	skippedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	durationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	retryStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	detailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 )
 
 // PhaseState tracks the display state of a single pipeline phase.
@@ -46,15 +52,19 @@ type PhaseState struct {
 
 // Model is the Bubble Tea model for pipeline phase status display.
 type Model struct {
-	phases     []PhaseState
-	spinner    spinner.Model
-	currentIdx int // Tracks active phase index for future scroll/focus support.
-	done       bool
-	aborting   bool
-	err        error
-	cancelFunc context.CancelFunc // Called on first abort keypress; nil means immediate quit.
-	startTime  time.Time          // Records model creation for future elapsed-time display.
-	width      int                // Terminal width from WindowSizeMsg; 0 means not yet received.
+	phases        []PhaseState
+	spinner       spinner.Model
+	currentIdx    int // Tracks active phase index for future scroll/focus support.
+	done          bool
+	aborting      bool
+	err           error
+	cancelFunc    context.CancelFunc // Called on first abort keypress; nil means immediate quit.
+	startTime     time.Time          // Records model creation for future elapsed-time display.
+	width         int                // Terminal width from WindowSizeMsg; 0 means not yet received.
+	height        int                // Terminal height from WindowSizeMsg; 0 means not yet received.
+	detailVisible bool               // Whether the detail panel is shown.
+	detailContent string             // Raw output content for the detail panel.
+	viewport      viewport.Model     // Scrollable viewport for the detail panel.
 }
 
 // ModelOption configures the Model.
@@ -96,6 +106,13 @@ type PipelineErrorMsg struct {
 
 func (PipelineErrorMsg) isDisplayEvent() {}
 
+// OutputMsg delivers phase output content for the detail view.
+type OutputMsg struct {
+	Content string
+}
+
+func (OutputMsg) isDisplayEvent() {}
+
 // NewModel creates a Model initialized with the given phase names.
 func NewModel(phaseNames []string, opts ...ModelOption) Model {
 	s := spinner.New()
@@ -110,6 +127,7 @@ func NewModel(phaseNames []string, opts ...ModelOption) Model {
 		phases:    phases,
 		spinner:   s,
 		startTime: time.Now(),
+		viewport:  viewport.New(0, 0),
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -146,6 +164,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case OutputMsg:
+		m.detailContent = msg.Content
+		m.viewport.SetContent(msg.Content)
+		m.viewport.GotoBottom()
+		return m, nil
+
 	case PipelineDoneMsg:
 		m.done = true
 		m.aborting = false
@@ -162,19 +186,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.done {
 				return m, nil
 			}
-			// Immediate quit: second press or no cancel function
 			if m.aborting || m.cancelFunc == nil {
 				m.done = true
 				return m, tea.Quit
 			}
-			// First press: trigger graceful abort
 			m.aborting = true
 			m.cancelFunc()
 			return m, nil
+		case "d":
+			if !m.done {
+				m.detailVisible = !m.detailVisible
+			}
+			return m, nil
+		}
+		// Forward remaining keys to viewport when detail is visible.
+		if m.detailVisible {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
+		m.viewport.Width = msg.Width
+		m.viewport.Height = max(msg.Height-detailHeaderHeight, 1)
 		return m, nil
 
 	case spinner.TickMsg:
@@ -210,11 +246,24 @@ func (m Model) View() string {
 		s += "\n" + failedStyle.Render("  Aborting...") + " (press again to force quit)\n"
 	}
 
+	if m.detailVisible && !m.done {
+		s += m.renderDetail()
+	}
+
 	if m.done {
 		s += m.renderFooter()
 	}
 
 	return s
+}
+
+// renderDetail returns the detail panel with viewport content.
+func (m Model) renderDetail() string {
+	header := detailStyle.Render("\n  ── Detail (d to close) ──") + "\n"
+	if m.detailContent == "" {
+		return header + detailStyle.Render("  No output yet") + "\n"
+	}
+	return header + m.viewport.View() + "\n"
 }
 
 // renderFooter returns the summary footer for a completed pipeline.

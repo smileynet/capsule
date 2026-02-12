@@ -548,6 +548,134 @@ func TestModel_Update_WindowSizeMsg(t *testing.T) {
 	}
 }
 
+// --- Detail view tests ---
+
+func TestModel_Update_KeyMsg_D_TogglesDetailOn(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	updated := newModel.(Model)
+
+	if !updated.detailVisible {
+		t.Error("pressing d should toggle detail view on")
+	}
+}
+
+func TestModel_Update_KeyMsg_D_TogglesDetailOff(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.detailVisible = true
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	updated := newModel.(Model)
+
+	if updated.detailVisible {
+		t.Error("pressing d again should toggle detail view off")
+	}
+}
+
+func TestModel_Update_KeyMsg_D_IgnoredWhenDone(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.done = true
+
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	updated := newModel.(Model)
+
+	if updated.detailVisible {
+		t.Error("d should be ignored when pipeline is done")
+	}
+}
+
+func TestModel_Update_OutputMsg_StoresContent(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	newModel, _ := m.Update(OutputMsg{Content: "line 1\nline 2\nline 3"})
+	updated := newModel.(Model)
+
+	if updated.detailContent != "line 1\nline 2\nline 3" {
+		t.Errorf("detailContent = %q, want %q", updated.detailContent, "line 1\nline 2\nline 3")
+	}
+}
+
+func TestModel_Update_OutputMsg_UpdatesViewport(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+
+	newModel, _ := m.Update(OutputMsg{Content: "line 1\nline 2"})
+	updated := newModel.(Model)
+
+	view := updated.viewport.View()
+	if !strings.Contains(view, "line 1") {
+		t.Errorf("viewport should contain output content, got: %q", view)
+	}
+}
+
+func TestModel_View_DetailVisible_ShowsViewport(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.detailVisible = true
+	m.detailContent = "some output"
+	m.viewport.Width = 80
+	m.viewport.Height = 10
+	m.viewport.SetContent("some output")
+
+	view := m.View()
+
+	if !strings.Contains(view, "some output") {
+		t.Errorf("view with detail visible should show output content, got:\n%s", view)
+	}
+}
+
+func TestModel_View_DetailHidden_NoViewportContent(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.detailVisible = false
+	m.detailContent = "some output"
+
+	view := m.View()
+
+	if strings.Contains(view, "some output") {
+		t.Error("view with detail hidden should not show output content")
+	}
+}
+
+func TestModel_View_DetailVisible_EmptyContent_ShowsPlaceholder(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.detailVisible = true
+	m.width = 80
+	m.height = 24
+
+	view := m.View()
+
+	if !strings.Contains(view, "No output yet") {
+		t.Errorf("detail view with no content should show placeholder, got:\n%s", view)
+	}
+}
+
+func TestModel_Update_OutputMsg_ReplacesContent(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	first, _ := m.Update(OutputMsg{Content: "first"})
+	second, _ := first.Update(OutputMsg{Content: "second"})
+	updated := second.(Model)
+
+	if updated.detailContent != "second" {
+		t.Errorf("detailContent = %q, want %q", updated.detailContent, "second")
+	}
+}
+
+func TestModel_Update_WindowSizeMsg_ResizesViewport(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	newModel, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	updated := newModel.(Model)
+
+	if updated.viewport.Width != 120 {
+		t.Errorf("viewport width = %d, want 120", updated.viewport.Width)
+	}
+	if updated.viewport.Height == 0 {
+		t.Error("viewport height should be set after WindowSizeMsg")
+	}
+}
+
 // TestModel_Teatest_FullPipeline verifies the model processes messages in sequence via teatest.
 func TestModel_Teatest_FullPipeline(t *testing.T) {
 	phases := []string{"test-writer", "test-review", "execute"}
