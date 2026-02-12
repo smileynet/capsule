@@ -15,6 +15,7 @@ Concise reference for anyone writing Go code in this project. Covers style, patt
 9. [YAML Configuration](#9-yaml-configuration)
 10. [Subprocess Execution](#10-subprocess-execution)
 11. [Beads CLI Integration](#11-beads-cli-integration)
+12. [Display Patterns (TUI / Plain Text)](#12-display-patterns-tui--plain-text)
 
 ## 1. Project Structure
 
@@ -480,6 +481,98 @@ Use `--all` with `bd list` to include closed issues in counts. Default `bd list`
 | `bd edit` from agents | Opens $EDITOR, blocks forever | Use `bd update --field=value` |
 | Missing `--all` in counts | Undercounts (closed issues hidden) | `bd list --all` for totals |
 | No PATH check before `bd` | Confusing error on missing CLI | `exec.LookPath("bd")` first |
+
+## 12. Display Patterns (TUI / Plain Text)
+
+The `internal/tui` package provides dual-mode output: a Bubble Tea TUI for interactive terminals and plain text for pipes, CI, and non-TTY contexts.
+
+### Display Interface
+
+The `Display` interface decouples rendering from pipeline orchestration. The orchestrator produces status updates; the display consumes them through a channel:
+
+```go
+// Sealed interface — only StatusUpdateMsg, PipelineDoneMsg, PipelineErrorMsg implement it.
+type DisplayEvent interface {
+    isDisplayEvent()
+}
+
+type Display interface {
+    Run(ctx context.Context, events <-chan DisplayEvent) error
+}
+```
+
+Two implementations: `PlainDisplay` (timestamped text lines) and `TUIDisplay` (Bubble Tea with spinners and lipgloss styling). `NewDisplay(opts)` selects automatically based on TTY detection.
+
+### TTY Detection
+
+Use `go-isatty` to check the output writer's file descriptor. Check both `IsTerminal` and `IsCygwinTerminal` for cross-platform support:
+
+```go
+func isTTY(w io.Writer) bool {
+    f, ok := w.(*os.File)
+    if !ok {
+        return false
+    }
+    return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
+}
+```
+
+**What to check:** Always check the fd you're rendering to (stdout for display output), not stdin. A program can have stdin piped but stdout connected to a terminal, or vice versa.
+
+**NO_COLOR convention:** The `NO_COLOR` environment variable disables ANSI color output. Lipgloss and termenv respect this automatically — no custom handling needed. See [no-color.org](https://no-color.org/).
+
+### Bridge Pattern
+
+`Bridge` converts callback-style status updates into a channel for `Display.Run()`:
+
+```go
+bridge := tui.NewBridge()
+
+// Producer side (in orchestrator callback):
+bridge.Send(tui.StatusUpdateMsg{Phase: "execute", Status: tui.StatusRunning})
+
+// Consumer side (in display goroutine):
+display.Run(ctx, bridge.Events())
+
+// Completion:
+bridge.Done()  // or bridge.Error(err)
+```
+
+The CLI layer converts `orchestrator.StatusUpdate` → `tui.StatusUpdateMsg`, keeping the tui package decoupled from orchestrator types.
+
+### Testing Display Code
+
+Use buffered channels with pre-loaded events for synchronous testing. Drive the `Run` loop without goroutines:
+
+```go
+ch := make(chan tui.DisplayEvent, 3)
+ch <- tui.StatusUpdateMsg{Phase: "test-writer", Status: tui.StatusRunning}
+ch <- tui.StatusUpdateMsg{Phase: "test-writer", Status: tui.StatusPassed}
+ch <- tui.PipelineDoneMsg{}
+close(ch)
+
+var buf bytes.Buffer
+d := &tui.PlainDisplay{W: &buf}
+err := d.Run(ctx, ch)
+// Assert on buf.String()
+```
+
+For Bubble Tea model testing, use `teatest.NewTestModel` with `WithInitialTermSize`. Send messages via `tm.Send()` and assert on `tm.FinalModel()`.
+
+### Antipatterns
+
+| Antipattern | Risk | Fix |
+|-------------|------|-----|
+| Importing orchestrator from tui | Circular dependency | Bridge converts types at wiring layer |
+| Checking stdin fd for display mode | Wrong signal (stdin may be piped but stdout is a TTY) | Check the output writer's fd |
+| Blocking in Bubble Tea `Update()` / `View()` | UI lag, frozen spinner | Offload to `tea.Cmd` goroutines |
+| Sharing channel between goroutine and fallback | Race condition, lost events | Stop goroutine before fallback |
+| Hardcoded layout dimensions in TUI | Breaks on resize | Use `tea.WindowSizeMsg` and lipgloss `Width()` / `Height()` |
+| Ignoring `p.Run()` error | Terminal left in raw mode | Handle error, fall back to plain text |
+
+- [Bubble Tea Tips](https://leg100.github.io/en/posts/building-bubbletea-programs/)
+- [NO_COLOR Standard](https://no-color.org/)
+- [go-isatty](https://github.com/mattn/go-isatty)
 
 ## References
 

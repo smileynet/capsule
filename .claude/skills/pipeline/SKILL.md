@@ -38,13 +38,20 @@ Capsule is a deterministic TDD pipeline with 6 phases orchestrated by structured
 
 ## StatusUpdate with Signal Data
 
-`StatusUpdate` carries a `Signal *provider.Signal` field populated on phase completion. The `plainTextCallback` in `cmd/capsule/main.go` uses this to print enriched phase reports:
+`StatusUpdate` carries a `Signal *provider.Signal` field populated on phase completion. The Display interface (`internal/tui`) renders these updates in two modes:
+
+- **TUI mode** (TTY detected): Bubble Tea with spinners, lipgloss styling, live phase list
+- **Plain text mode** (piped/CI/`--no-tui`): Timestamped text lines via `PlainDisplay`
 
 ```
 [20:10:20] [1/6] test-writer passed
          files: src/validate_email_test.go
          summary: Wrote 7 failing tests covering all acceptance criteria
 ```
+
+**Event flow:** Orchestrator → `StatusCallback` → `Bridge.Send()` → channel → `Display.Run()`
+
+The Bridge converts `orchestrator.StatusUpdate` to `tui.StatusUpdateMsg` (keeping tui decoupled from orchestrator). See `docs/go-conventions.md` §12 for patterns.
 
 - `Signal` is nil for `PhaseRunning` updates
 - `Signal` is populated for `PhasePassed`, `PhaseFailed`, `PhaseError` updates
@@ -72,7 +79,8 @@ All post-pipeline steps are **best-effort**: pipeline success is the hard requir
 3. **Selective merge**: Only implementation and test files reach main
 4. **External prompts**: Prompt templates live in files, not compiled into the binary
 5. **Structured signals**: Machine-readable JSON output from every phase
-6. **Progressive layers**: Scripts (Epic 1) → CLI (Epic 2) → TUI (Epic 3)
+6. **Progressive layers**: Scripts (Epic 1) → CLI (Epic 2) → TUI (Epic 3, in progress)
+7. **Dual-mode display**: Auto-selects TUI (TTY) or plain text (pipe/CI) via `tui.NewDisplay`
 
 ## Reference
 

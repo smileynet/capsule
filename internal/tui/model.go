@@ -56,20 +56,30 @@ type Model struct {
 
 // StatusUpdateMsg bridges orchestrator status updates to the TUI.
 type StatusUpdateMsg struct {
-	Phase    string
-	Status   PhaseStatus
-	Attempt  int
-	MaxRetry int
-	Duration time.Duration
+	Phase        string
+	Status       PhaseStatus
+	Attempt      int
+	MaxRetry     int
+	Duration     time.Duration
+	Progress     string   // Human-readable progress (e.g. "2/6").
+	Summary      string   // Phase summary text.
+	FilesChanged []string // Files modified in this phase.
+	Feedback     string   // Feedback for retries (shown on failure).
 }
+
+func (StatusUpdateMsg) isDisplayEvent() {}
 
 // PipelineDoneMsg signals that the pipeline completed successfully.
 type PipelineDoneMsg struct{}
+
+func (PipelineDoneMsg) isDisplayEvent() {}
 
 // PipelineErrorMsg signals that the pipeline failed with an error.
 type PipelineErrorMsg struct {
 	Err error
 }
+
+func (PipelineErrorMsg) isDisplayEvent() {}
 
 // NewModel creates a Model initialized with the given phase names.
 func NewModel(phaseNames []string) Model {
