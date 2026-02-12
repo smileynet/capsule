@@ -23,6 +23,11 @@ func NewFileStore(baseDir string) *FileStore {
 
 // Save writes the campaign state to a JSON file named by the campaign's ParentBeadID.
 func (s *FileStore) Save(state campaign.State) error {
+	p, err := s.path(state.ParentBeadID)
+	if err != nil {
+		return err
+	}
+
 	if err := os.MkdirAll(s.baseDir, 0o755); err != nil {
 		return fmt.Errorf("state: creating directory: %w", err)
 	}
@@ -32,9 +37,8 @@ func (s *FileStore) Save(state campaign.State) error {
 		return fmt.Errorf("state: marshaling: %w", err)
 	}
 
-	path := s.path(state.ParentBeadID)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("state: writing %s: %w", path, err)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		return fmt.Errorf("state: writing %s: %w", p, err)
 	}
 	return nil
 }
@@ -42,32 +46,46 @@ func (s *FileStore) Save(state campaign.State) error {
 // Load reads campaign state for the given parent bead ID.
 // Returns (state, true, nil) if found, (zero, false, nil) if not found.
 func (s *FileStore) Load(id string) (campaign.State, bool, error) {
-	path := s.path(id)
-	data, err := os.ReadFile(path)
+	p, err := s.path(id)
+	if err != nil {
+		return campaign.State{}, false, err
+	}
+
+	data, err := os.ReadFile(p)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return campaign.State{}, false, nil
 		}
-		return campaign.State{}, false, fmt.Errorf("state: reading %s: %w", path, err)
+		return campaign.State{}, false, fmt.Errorf("state: reading %s: %w", p, err)
 	}
 
 	var state campaign.State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return campaign.State{}, false, fmt.Errorf("state: parsing %s: %w", path, err)
+		return campaign.State{}, false, fmt.Errorf("state: parsing %s: %w", p, err)
 	}
 	return state, true, nil
 }
 
 // Remove deletes the campaign state file for the given ID.
 func (s *FileStore) Remove(id string) error {
-	path := s.path(id)
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("state: removing %s: %w", path, err)
+	p, err := s.path(id)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("state: removing %s: %w", p, err)
 	}
 	return nil
 }
 
+// ErrInvalidID indicates a campaign ID is empty or contains path traversal components.
+var ErrInvalidID = errors.New("state: invalid campaign ID")
+
 // path returns the filesystem path for a campaign state file.
-func (s *FileStore) path(id string) string {
-	return filepath.Join(s.baseDir, id+".json")
+// It rejects IDs that are empty, dot-segments, or contain path separators.
+func (s *FileStore) path(id string) (string, error) {
+	if id == "" || id == "." || id == ".." || id != filepath.Base(id) {
+		return "", fmt.Errorf("%w: %q", ErrInvalidID, id)
+	}
+	return filepath.Join(s.baseDir, id+".json"), nil
 }

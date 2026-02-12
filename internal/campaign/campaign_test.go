@@ -167,8 +167,8 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 	// And final state is completed
 	last := store.saved[len(store.saved)-1]
-	if last.Status != "completed" {
-		t.Errorf("final state = %q, want %q", last.Status, "completed")
+	if last.Status != CampaignCompleted {
+		t.Errorf("final state = %q, want %q", last.Status, CampaignCompleted)
 	}
 }
 
@@ -422,11 +422,11 @@ func TestRun_Resume(t *testing.T) {
 			"cap-feature": {
 				ID:             "cap-feature",
 				ParentBeadID:   "cap-feature",
-				Status:         "running",
+				Status:         CampaignRunning,
 				CurrentTaskIdx: 1,
 				Tasks: []TaskResult{
-					{BeadID: "cap-1", Status: "completed"},
-					{BeadID: "cap-2", Status: "pending"},
+					{BeadID: "cap-1", Status: TaskCompleted},
+					{BeadID: "cap-2", Status: TaskPending},
 				},
 			},
 		},

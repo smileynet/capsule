@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/smileynet/capsule/internal/orchestrator"
@@ -67,6 +68,27 @@ type Callback interface {
 	OnCampaignComplete(state State)
 }
 
+// CampaignStatus represents the state of a campaign.
+type CampaignStatus string
+
+const (
+	CampaignRunning   CampaignStatus = "running"
+	CampaignCompleted CampaignStatus = "completed"
+	CampaignFailed    CampaignStatus = "failed"
+	CampaignPaused    CampaignStatus = "paused"
+)
+
+// TaskStatus represents the state of a task within a campaign.
+type TaskStatus string
+
+const (
+	TaskPending   TaskStatus = "pending"
+	TaskRunning   TaskStatus = "running"
+	TaskCompleted TaskStatus = "completed"
+	TaskFailed    TaskStatus = "failed"
+	TaskSkipped   TaskStatus = "skipped"
+)
+
 // Config holds campaign-specific settings.
 type Config struct {
 	FailureMode      string // "abort" | "continue"
@@ -78,19 +100,19 @@ type Config struct {
 
 // State holds the complete campaign state for persistence.
 type State struct {
-	ID             string       `json:"id"`
-	ParentBeadID   string       `json:"parent_bead_id"`
-	Tasks          []TaskResult `json:"tasks"`
-	CurrentTaskIdx int          `json:"current_task_idx"`
-	ConsecFailures int          `json:"consecutive_failures"`
-	StartedAt      time.Time    `json:"started_at"`
-	Status         string       `json:"status"` // "running" | "completed" | "failed" | "paused"
+	ID             string         `json:"id"`
+	ParentBeadID   string         `json:"parent_bead_id"`
+	Tasks          []TaskResult   `json:"tasks"`
+	CurrentTaskIdx int            `json:"current_task_idx"`
+	ConsecFailures int            `json:"consecutive_failures"`
+	StartedAt      time.Time      `json:"started_at"`
+	Status         CampaignStatus `json:"status"`
 }
 
 // TaskResult records the outcome of a single task within a campaign.
 type TaskResult struct {
 	BeadID       string                     `json:"bead_id"`
-	Status       string                     `json:"status"` // "pending" | "completed" | "failed" | "skipped"
+	Status       TaskStatus                 `json:"status"`
 	PhaseResults []orchestrator.PhaseResult `json:"phase_results"`
 	Error        string                     `json:"error,omitempty"`
 }
@@ -131,43 +153,43 @@ func (r *Runner) Run(ctx context.Context, parentID string) error {
 	r.callback.OnCampaignStart(parentID, children)
 
 	state := r.initOrResumeState(parentID, children)
-	state.Status = "running"
+	state.Status = CampaignRunning
 
 	for i := state.CurrentTaskIdx; i < len(state.Tasks); i++ {
 		task := &state.Tasks[i]
-		if task.Status == "completed" || task.Status == "skipped" {
+		if task.Status == TaskCompleted || task.Status == TaskSkipped {
 			continue
 		}
 
 		if r.config.CircuitBreaker > 0 && state.ConsecFailures >= r.config.CircuitBreaker {
-			state.Status = "failed"
+			state.Status = CampaignFailed
 			_ = r.store.Save(state)
 			return ErrCircuitBroken
 		}
 
 		r.callback.OnTaskStart(task.BeadID)
-		task.Status = "running"
+		task.Status = TaskRunning
 
 		input := r.buildPipelineInput(task.BeadID, state)
 		output, err := r.pipeline.RunPipeline(ctx, input)
 
 		if err != nil {
-			task.Status = "failed"
+			task.Status = TaskFailed
 			task.Error = err.Error()
 			state.ConsecFailures++
 			r.callback.OnTaskFail(task.BeadID, err)
 
 			if r.config.FailureMode == "abort" {
-				state.Status = "failed"
+				state.Status = CampaignFailed
 				_ = r.store.Save(state)
 				return fmt.Errorf("campaign: task %s failed: %w", task.BeadID, err)
 			}
 			state.CurrentTaskIdx = i + 1
 			_ = r.store.Save(state)
-			continue // "continue" mode
+			continue
 		}
 
-		task.Status = "completed"
+		task.Status = TaskCompleted
 		task.PhaseResults = output.PhaseResults
 		state.ConsecFailures = 0
 		r.callback.OnTaskComplete(*task)
@@ -186,7 +208,7 @@ func (r *Runner) Run(ctx context.Context, parentID string) error {
 		r.callback.OnValidationComplete(valResult)
 	}
 
-	state.Status = "completed"
+	state.Status = CampaignCompleted
 	_ = r.store.Save(state)
 	r.callback.OnCampaignComplete(state)
 	return nil
@@ -195,13 +217,13 @@ func (r *Runner) Run(ctx context.Context, parentID string) error {
 // initOrResumeState loads existing state or creates a new one.
 func (r *Runner) initOrResumeState(parentID string, children []BeadInfo) State {
 	existing, found, err := r.store.Load(parentID)
-	if err == nil && found && existing.Status != "completed" {
+	if err == nil && found && existing.Status != CampaignCompleted {
 		return existing
 	}
 
 	tasks := make([]TaskResult, len(children))
 	for i, c := range children {
-		tasks[i] = TaskResult{BeadID: c.ID, Status: "pending"}
+		tasks[i] = TaskResult{BeadID: c.ID, Status: TaskPending}
 	}
 
 	return State{
@@ -209,7 +231,7 @@ func (r *Runner) initOrResumeState(parentID string, children []BeadInfo) State {
 		ParentBeadID: parentID,
 		Tasks:        tasks,
 		StartedAt:    time.Now(),
-		Status:       "running",
+		Status:       CampaignRunning,
 	}
 }
 
@@ -236,7 +258,7 @@ func (r *Runner) buildPipelineInput(beadID string, state State) orchestrator.Pip
 func (r *Runner) buildSiblingContext(state State) []prompt.SiblingContext {
 	var siblings []prompt.SiblingContext
 	for _, task := range state.Tasks {
-		if task.Status != "completed" {
+		if task.Status != TaskCompleted {
 			continue
 		}
 		sc := prompt.SiblingContext{BeadID: task.BeadID}
@@ -274,6 +296,8 @@ func (r *Runner) fileDiscoveries(output orchestrator.PipelineOutput, parentID st
 				Priority: severityToPriority(f.Severity),
 			})
 			if err != nil {
+				// Log discovery filing failures so users know their findings aren't being persisted.
+				fmt.Fprintf(os.Stderr, "campaign: warning: filing discovery %q: %v\n", f.Title, err)
 				continue
 			}
 			r.callback.OnDiscoveryFiled(f, newID)
@@ -281,15 +305,15 @@ func (r *Runner) fileDiscoveries(output orchestrator.PipelineOutput, parentID st
 	}
 }
 
-// runPostPipeline closes the bead after successful pipeline completion.
+// runPostPipeline closes the bead after successful pipeline completion (best-effort).
 func (r *Runner) runPostPipeline(beadID string) {
 	_ = r.beads.Close(beadID)
 }
 
-// allComplete checks if all tasks are completed.
+// allComplete returns true when every task has finished (completed or skipped).
 func (r *Runner) allComplete(state State) bool {
 	for _, task := range state.Tasks {
-		if task.Status != "completed" && task.Status != "skipped" {
+		if task.Status != TaskCompleted && task.Status != TaskSkipped {
 			return false
 		}
 	}
@@ -306,13 +330,13 @@ func (r *Runner) runValidation(ctx context.Context, parentID string, _ State) Ta
 	if err != nil {
 		return TaskResult{
 			BeadID: parentID,
-			Status: "failed",
+			Status: TaskFailed,
 			Error:  err.Error(),
 		}
 	}
 	return TaskResult{
 		BeadID:       parentID,
-		Status:       "completed",
+		Status:       TaskCompleted,
 		PhaseResults: output.PhaseResults,
 	}
 }

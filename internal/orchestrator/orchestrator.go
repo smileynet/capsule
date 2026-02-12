@@ -99,10 +99,11 @@ func (e *PipelineError) Unwrap() error {
 }
 
 // RetryStrategy holds resolved retry settings for a phase.
+// TODO(cap-6vp): Wire into runPhasePair to replace direct MaxRetries usage.
 type RetryStrategy struct {
 	MaxAttempts      int
-	BackoffFactor    float64
-	EscalateProvider string
+	BackoffFactor    float64 // TODO(cap-6vp): apply as timeout multiplier per retry attempt.
+	EscalateProvider string  // TODO(cap-6vp): switch provider after EscalateAfter attempts.
 	EscalateAfter    int
 }
 
@@ -481,8 +482,6 @@ func (o *Orchestrator) notify(su StatusUpdate) {
 // Phase-level MaxRetries override pipeline-level defaults.
 func (o *Orchestrator) ResolveRetryStrategy(phase PhaseDefinition) RetryStrategy {
 	rs := o.retryDefaults
-
-	// Phase-level MaxRetries takes precedence if set.
 	if phase.MaxRetries > 0 {
 		rs.MaxAttempts = phase.MaxRetries
 	}
