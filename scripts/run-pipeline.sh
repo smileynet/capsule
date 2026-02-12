@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # run-pipeline.sh — Orchestrate the full capsule pipeline for a bead.
 #
-# Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]
+# Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH] [--clean]
 #   bead-id:        The bead to run the pipeline for
 #   --project-dir:  Project root directory (default: current directory)
 #   --max-retries:  Maximum retries per phase pair (default: 3)
 #   --main-branch:  Main branch name (default: auto-detect)
+#   --clean:        Remove stale worktree before prep (if one exists)
 #
 # Pipeline stages:
 #   1. Prep: create worktree and worklog
@@ -30,6 +31,7 @@ BEAD_ID=""
 PROJECT_DIR="."
 MAX_RETRIES=3
 MAIN_BRANCH_ARG=""
+CLEAN=false
 
 for arg in "$@"; do
     case "$arg" in
@@ -42,9 +44,12 @@ for arg in "$@"; do
         --main-branch=*)
             MAIN_BRANCH_ARG="${arg#--main-branch=}"
             ;;
+        --clean)
+            CLEAN=true
+            ;;
         -*)
             echo "ERROR: Unknown option: $arg" >&2
-            echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]" >&2
+            echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH] [--clean]" >&2
             exit 2
             ;;
         *)
@@ -52,7 +57,7 @@ for arg in "$@"; do
                 BEAD_ID="$arg"
             else
                 echo "ERROR: Unexpected argument: $arg" >&2
-                echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]" >&2
+                echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH] [--clean]" >&2
                 exit 2
             fi
             ;;
@@ -61,7 +66,7 @@ done
 
 if [ -z "$BEAD_ID" ]; then
     echo "ERROR: bead-id is required" >&2
-    echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH]" >&2
+    echo "Usage: run-pipeline.sh <bead-id> [--project-dir=DIR] [--max-retries=N] [--main-branch=BRANCH] [--clean]" >&2
     exit 2
 fi
 
@@ -264,6 +269,19 @@ run_summary() {
 echo "=== Capsule Pipeline: $BEAD_ID ==="
 echo ""
 
+# --- Clean stale worktree if requested ---
+if $CLEAN; then
+    CLEAN_TARGET="$PROJECT_DIR/.capsule/worktrees/$BEAD_ID"
+    if [ -d "$CLEAN_TARGET" ]; then
+        echo "  --clean: Removing existing worktree at $CLEAN_TARGET"
+        if ! (cd "$PROJECT_DIR" && git worktree remove "$CLEAN_TARGET" --force 2>/dev/null); then
+            rm -rf "$CLEAN_TARGET"
+        fi
+        (cd "$PROJECT_DIR" && git worktree prune 2>/dev/null) || true
+        (cd "$PROJECT_DIR" && git branch -D "capsule-$BEAD_ID" 2>/dev/null) || true
+    fi
+fi
+
 # --- Stage 1: Prep ---
 STAGE_START=$(date +%s)
 echo "[1/5] Prep"
@@ -273,6 +291,11 @@ PREP_OUTPUT=$("$PREP_SCRIPT" "$BEAD_ID" --project-dir="$PROJECT_DIR" 2>&1) || PR
 if [ "$PREP_EXIT" -ne 0 ]; then
     echo "ERROR: Prep failed" >&2
     printf '%s\n' "$PREP_OUTPUT" >&2
+    if printf '%s\n' "$PREP_OUTPUT" | grep -q "Worktree already exists"; then
+        echo "" >&2
+        echo "To fix: Re-run with --clean to auto-remove the stale worktree:" >&2
+        echo "  run-pipeline.sh $BEAD_ID --clean --project-dir=$PROJECT_DIR" >&2
+    fi
     run_summary "ERROR" "prep"
     exit 2
 fi
@@ -344,7 +367,12 @@ MERGE_OUTPUT=$("$MERGE_SCRIPT" "${MERGE_ARGS[@]}" 2>&1) || MERGE_EXIT=$?
 if [ "$MERGE_EXIT" -ne 0 ]; then
     echo "ERROR: Merge failed" >&2
     printf '%s\n' "$MERGE_OUTPUT" >&2
+    echo "" >&2
     echo "Worktree preserved: $WORKTREE_DIR" >&2
+    echo "To fix: Inspect the worktree and merge manually:" >&2
+    echo "  cd $PROJECT_DIR" >&2
+    echo "  git checkout main" >&2
+    echo "  git merge --no-ff capsule-$BEAD_ID" >&2
     run_summary "FAILED" "merge"
     exit "$MERGE_EXIT"
 fi

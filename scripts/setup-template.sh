@@ -71,9 +71,13 @@ cp "$TEMPLATE_DIR/AGENTS.md" "$TARGET_DIR/AGENTS.md"
 (
     cd "$TARGET_DIR"
 
-    bd init --prefix=demo >/dev/null 2>&1
+    BD_INIT_OUT=$(bd init --prefix=demo 2>&1) || {
+        echo "WARNING: bd init failed (non-fatal): $BD_INIT_OUT" >&2
+    }
 
-    bd import -i "$TEMPLATE_DIR/issues.jsonl" >/dev/null 2>&1
+    BD_IMPORT_OUT=$(bd import -i "$TEMPLATE_DIR/issues.jsonl" 2>&1) || {
+        echo "WARNING: bd import failed (non-fatal): $BD_IMPORT_OUT" >&2
+    }
 
     # Commit everything
     git add -A

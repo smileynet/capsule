@@ -2,6 +2,9 @@
 
 This document is the specification for the Epic 2 Go rewrite. Every script, prompt invocation, signal contract, retry rule, and lifecycle is documented here.
 
+> **CLI commands** (`capsule run`, `capsule abort`, `capsule clean`) are implemented in `cmd/capsule/main.go`.
+> **Claude Code commands** (`/capsule-setup`, `/capsule-run`, `/capsule-inspect`, `/capsule-cleanup`, `/capsule-gate`) provide narrative output around the CLI. Their specifications live in `.claude/commands/capsule-*.md` — those files are the authoritative spec for command output formats.
+
 ---
 
 ## Directory Structure

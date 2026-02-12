@@ -84,6 +84,10 @@ BRANCH_NAME="capsule-$BEAD_ID"
 
 if [ ! -d "$WORKTREE_DIR" ]; then
     echo "ERROR: Worktree does not exist: $WORKTREE_DIR" >&2
+    echo "" >&2
+    echo "To fix: Run prep first, or use the full pipeline:" >&2
+    echo "  scripts/prep.sh $BEAD_ID --project-dir=$PROJECT_DIR" >&2
+    echo "  scripts/run-pipeline.sh $BEAD_ID --project-dir=$PROJECT_DIR" >&2
     exit 1
 fi
 
@@ -96,6 +100,10 @@ fi
 
 if ! grep -q 'Verdict: PASS' "$WORKLOG"; then
     echo "ERROR: Sign-off PASS not found in worklog.md. Cannot merge without sign-off." >&2
+    echo "" >&2
+    echo "To fix: Run the pipeline to get sign-off, or inspect the worklog:" >&2
+    echo "  scripts/run-pipeline.sh $BEAD_ID --project-dir=$PROJECT_DIR" >&2
+    echo "  cat $WORKLOG | grep -A2 'Sign-off'" >&2
     exit 1
 fi
 
@@ -153,8 +161,15 @@ fi
 
     # Merge with --no-ff to preserve branch history
     git merge --no-ff "$BRANCH_NAME" -m "Merge $COMMIT_MSG" -q || {
-        echo "ERROR: Merge conflict. Resolve manually." >&2
+        echo "ERROR: Merge conflict merging $BRANCH_NAME into $MAIN_BRANCH." >&2
         git merge --abort 2>/dev/null || true
+        echo "" >&2
+        echo "To fix: Resolve the conflict manually:" >&2
+        echo "  cd $PROJECT_DIR" >&2
+        echo "  git checkout $MAIN_BRANCH" >&2
+        echo "  git merge --no-ff $BRANCH_NAME" >&2
+        echo "  # resolve conflicts, then:" >&2
+        echo "  git add . && git commit" >&2
         exit 1
     }
 

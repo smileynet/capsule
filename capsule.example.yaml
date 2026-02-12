@@ -1,0 +1,23 @@
+# Capsule configuration
+# Copy to ~/.config/capsule/config.yaml (user) or .capsule/config.yaml (project).
+# All fields are optional — missing fields use defaults shown below.
+# Unknown fields are rejected (catches typos).
+#
+# Precedence (highest wins):
+#   CLI flags > env vars > project config > user config > defaults
+#
+# See docs/config-schema.md for full reference.
+
+runtime:
+  # AI provider name. Must match a registered provider.
+  # Env: CAPSULE_PROVIDER
+  provider: claude    # default: claude
+
+  # Maximum execution time per phase. Go duration format (e.g. 30s, 5m, 1h).
+  # Env: CAPSULE_TIMEOUT
+  timeout: 5m         # default: 5m
+
+worktree:
+  # Base directory for git worktrees, relative to project root.
+  # Env: CAPSULE_WORKTREE_BASE_DIR
+  base_dir: .capsule/worktrees   # default: .capsule/worktrees

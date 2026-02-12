@@ -1,0 +1,18 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - errorlint      # error wrapping best practices (Go 1.13+)
+    - gocritic       # opinionated but useful code criticism
+
+formatters:
+  enable:
+    - goimports      # import ordering + formatting
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/smileynet/capsule
+
+run:
+  timeout: 5m
