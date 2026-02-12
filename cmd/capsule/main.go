@@ -20,6 +20,7 @@ import (
 	"github.com/smileynet/capsule/internal/prompt"
 	"github.com/smileynet/capsule/internal/provider"
 	"github.com/smileynet/capsule/internal/state"
+	"github.com/smileynet/capsule/internal/tui"
 	"github.com/smileynet/capsule/internal/worklog"
 	"github.com/smileynet/capsule/internal/worktree"
 )
@@ -44,6 +45,7 @@ type RunCmd struct {
 	BeadID   string `arg:"" help:"Bead ID to run."`
 	Provider string `help:"Provider to use for completions." default:"claude"`
 	Timeout  int    `help:"Timeout in seconds." default:"300"`
+	NoTUI    bool   `help:"Force plain text output even if stdout is a TTY." default:"false"`
 }
 
 // CampaignCmd runs a campaign for a feature or epic bead.
@@ -185,6 +187,14 @@ func (r *RunCmd) Run() error {
 		return fmt.Errorf("run: loading phases: %w", err)
 	}
 
+	// Build display bridge and display.
+	bridge := tui.NewBridge()
+	display := tui.NewDisplay(tui.DisplayOptions{
+		Writer:     os.Stdout,
+		ForcePlain: r.NoTUI,
+		Phases:     phaseNames(phases),
+	})
+
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
@@ -198,14 +208,45 @@ func (r *RunCmd) Run() error {
 		orchestrator.WithWorklogManager(wlMgr),
 		orchestrator.WithGateRunner(gateRunner),
 		orchestrator.WithPhases(phases),
-		orchestrator.WithStatusCallback(plainTextCallback(os.Stdout)),
+		orchestrator.WithStatusCallback(bridgeStatusCallback(bridge)),
 	)
 
-	return r.run(os.Stdout, orch, wtMgr, bdClient)
+	return r.run(os.Stdout, orch, wtMgr, bdClient, display, bridge)
 }
 
-// run executes the pipeline with the given runner, enabling testable wiring.
-func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadResolver) error {
+// run executes the pipeline with display lifecycle management, enabling testable wiring.
+func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadResolver, display tui.Display, bridge *tui.Bridge) error {
+	// Start display goroutine.
+	displayDone := make(chan error, 1)
+	go func() {
+		displayDone <- display.Run(context.Background(), bridge.Events())
+	}()
+
+	// Run the pipeline.
+	pipelineErr := r.runPipeline(w, runner, bd)
+
+	// Signal display completion.
+	if pipelineErr != nil {
+		bridge.Error(pipelineErr)
+	} else {
+		bridge.Done()
+	}
+
+	// Wait for display to finish (so it releases the terminal).
+	<-displayDone
+
+	if pipelineErr != nil {
+		return pipelineErr
+	}
+
+	// Post-pipeline lifecycle: merge → cleanup → close bead.
+	// Best-effort: pipeline success is the hard requirement.
+	r.runPostPipeline(w, wt, bd)
+	return nil
+}
+
+// runPipeline resolves the bead and runs the pipeline, returning any pipeline error.
+func (r *RunCmd) runPipeline(w io.Writer, runner pipelineRunner, bd beadResolver) error {
 	// Set up Ctrl+C handling.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -227,15 +268,8 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 		Bead:   beadCtx,
 	}
 
-	// Run the pipeline.
-	if _, err := runner.RunPipeline(ctx, input); err != nil {
-		return err
-	}
-
-	// Post-pipeline lifecycle: merge → cleanup → close bead.
-	// Best-effort: pipeline success is the hard requirement.
-	r.runPostPipeline(w, wt, bd)
-	return nil
+	_, pipelineErr := runner.RunPipeline(ctx, input)
+	return pipelineErr
 }
 
 // runPostPipeline performs merge, cleanup, and bead closing after a successful pipeline.
@@ -486,6 +520,35 @@ func exitCode(err error) int {
 		return exitPipeline
 	}
 	return exitSetup
+}
+
+// bridgeStatusCallback returns a StatusCallback that converts orchestrator
+// StatusUpdates to tui.StatusUpdateMsg and sends them through the bridge.
+func bridgeStatusCallback(bridge *tui.Bridge) orchestrator.StatusCallback {
+	return func(su orchestrator.StatusUpdate) {
+		msg := tui.StatusUpdateMsg{
+			Phase:    su.Phase,
+			Status:   tui.PhaseStatus(su.Status),
+			Progress: su.Progress,
+			Attempt:  su.Attempt,
+			MaxRetry: su.MaxRetry,
+		}
+		if su.Signal != nil {
+			msg.Summary = su.Signal.Summary
+			msg.FilesChanged = su.Signal.FilesChanged
+			msg.Feedback = su.Signal.Feedback
+		}
+		bridge.Send(msg)
+	}
+}
+
+// phaseNames extracts phase names from a slice of PhaseDefinitions.
+func phaseNames(phases []orchestrator.PhaseDefinition) []string {
+	names := make([]string, len(phases))
+	for i, p := range phases {
+		names[i] = p.Name
+	}
+	return names
 }
 
 // plainTextCallback returns a StatusCallback that prints timestamped phase lines

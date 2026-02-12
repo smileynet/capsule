@@ -13,6 +13,7 @@ import (
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/provider"
+	"github.com/smileynet/capsule/internal/tui"
 	"github.com/smileynet/capsule/internal/worklog"
 	"github.com/smileynet/capsule/internal/worktree"
 )
@@ -122,6 +123,46 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 		}
 		if cli.Run.Timeout != 120 {
 			t.Errorf("timeout = %d, want %d", cli.Run.Timeout, 120)
+		}
+	})
+
+	t.Run("run command accepts --no-tui flag", func(t *testing.T) {
+		// Given: a CLI parser
+		var cli CLI
+		k, err := kong.New(&cli, kong.Vars{"version": "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// When: run command is invoked with --no-tui
+		_, err = k.Parse([]string{"run", "bead-123", "--no-tui"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Then: NoTUI flag is set
+		if !cli.Run.NoTUI {
+			t.Error("NoTUI = false, want true")
+		}
+	})
+
+	t.Run("run command defaults no-tui to false", func(t *testing.T) {
+		// Given: a CLI parser
+		var cli CLI
+		k, err := kong.New(&cli, kong.Vars{"version": "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// When: run command is invoked without --no-tui
+		_, err = k.Parse([]string{"run", "bead-123"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Then: NoTUI defaults to false
+		if cli.Run.NoTUI {
+			t.Error("NoTUI = true, want false (default)")
 		}
 	})
 
@@ -394,9 +435,11 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		runner := &mockPipelineRunner{err: nil}
 		wt := &mockMergeOps{mainBranch: "main"}
 		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-test", TaskTitle: "Test task"}}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called with mocks
-		err := cmd.run(&buf, runner, wt, bd)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge)
 
 		// Then no error is returned
 		if err != nil {
@@ -434,9 +477,11 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		runner := &mockPipelineRunner{err: pipeErr}
 		wt := &mockMergeOps{mainBranch: "main"}
 		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-fail"}}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bd)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge)
 
 		// Then the pipeline error is returned
 		var pe *orchestrator.PipelineError
@@ -459,9 +504,11 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 			ctx:        worklog.BeadContext{TaskID: "cap-bad"},
 			resolveErr: fmt.Errorf("%w: cap-bad", bead.ErrNotFound),
 		}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bdMock)
+		err := cmd.run(&buf, runner, wt, bdMock, display, bridge)
 
 		// Then no error is returned (pipeline still runs)
 		if err != nil {
@@ -488,9 +535,11 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 			ctx:        worklog.BeadContext{TaskID: "cap-err"},
 			resolveErr: fmt.Errorf("bead: parsing show output for cap-err: unexpected EOF"),
 		}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bdMock)
+		err := cmd.run(&buf, runner, wt, bdMock, display, bridge)
 
 		// Then no error is returned
 		if err != nil {
@@ -513,9 +562,11 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 			mergeErr:   worktree.ErrMergeConflict,
 		}
 		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-conflict"}}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
 
 		// When run is called
-		err := cmd.run(&buf, runner, wt, bd)
+		err := cmd.run(&buf, runner, wt, bd, display, bridge)
 
 		// Then no error is returned (best-effort)
 		if err != nil {
@@ -618,6 +669,162 @@ func (m *mockBeadResolver) Resolve(string) (worklog.BeadContext, error) {
 func (m *mockBeadResolver) Close(string) error {
 	m.closed = true
 	return m.closeErr
+}
+
+func TestFeature_DisplayWiring(t *testing.T) {
+	t.Run("bridgeStatusCallback converts StatusUpdate to StatusUpdateMsg", func(t *testing.T) {
+		// Given a bridge and a bridge status callback
+		bridge := tui.NewBridge()
+		cb := bridgeStatusCallback(bridge)
+
+		// When a status update with signal data is sent
+		cb(orchestrator.StatusUpdate{
+			BeadID:   "cap-42",
+			Phase:    "test-writer",
+			Status:   orchestrator.PhasePassed,
+			Progress: "1/6",
+			Attempt:  2,
+			MaxRetry: 3,
+			Signal: &provider.Signal{
+				Status:       provider.StatusPass,
+				FilesChanged: []string{"foo.go", "bar.go"},
+				Summary:      "All tests pass",
+				Feedback:     "ok",
+			},
+		})
+
+		// Then the bridge delivers a converted StatusUpdateMsg
+		ev := <-bridge.Events()
+		msg, ok := ev.(tui.StatusUpdateMsg)
+		if !ok {
+			t.Fatalf("expected StatusUpdateMsg, got %T", ev)
+		}
+		if msg.Phase != "test-writer" {
+			t.Errorf("Phase = %q, want %q", msg.Phase, "test-writer")
+		}
+		if msg.Status != tui.StatusPassed {
+			t.Errorf("Status = %q, want %q", msg.Status, tui.StatusPassed)
+		}
+		if msg.Progress != "1/6" {
+			t.Errorf("Progress = %q, want %q", msg.Progress, "1/6")
+		}
+		if msg.Attempt != 2 {
+			t.Errorf("Attempt = %d, want %d", msg.Attempt, 2)
+		}
+		if msg.MaxRetry != 3 {
+			t.Errorf("MaxRetry = %d, want %d", msg.MaxRetry, 3)
+		}
+		if msg.Summary != "All tests pass" {
+			t.Errorf("Summary = %q, want %q", msg.Summary, "All tests pass")
+		}
+		if len(msg.FilesChanged) != 2 || msg.FilesChanged[0] != "foo.go" {
+			t.Errorf("FilesChanged = %v, want [foo.go bar.go]", msg.FilesChanged)
+		}
+		if msg.Feedback != "ok" {
+			t.Errorf("Feedback = %q, want %q", msg.Feedback, "ok")
+		}
+	})
+
+	t.Run("bridgeStatusCallback handles running status with nil signal", func(t *testing.T) {
+		// Given a bridge and callback
+		bridge := tui.NewBridge()
+		cb := bridgeStatusCallback(bridge)
+
+		// When a running status update (no signal) is sent
+		cb(orchestrator.StatusUpdate{
+			Phase:    "execute",
+			Status:   orchestrator.PhaseRunning,
+			Progress: "3/6",
+			Attempt:  1,
+			MaxRetry: 3,
+		})
+
+		// Then the bridge delivers a StatusUpdateMsg with empty signal fields
+		ev := <-bridge.Events()
+		msg, ok := ev.(tui.StatusUpdateMsg)
+		if !ok {
+			t.Fatalf("expected StatusUpdateMsg, got %T", ev)
+		}
+		if msg.Phase != "execute" {
+			t.Errorf("Phase = %q, want %q", msg.Phase, "execute")
+		}
+		if msg.Summary != "" {
+			t.Errorf("Summary = %q, want empty", msg.Summary)
+		}
+		if msg.FilesChanged != nil {
+			t.Errorf("FilesChanged = %v, want nil", msg.FilesChanged)
+		}
+	})
+
+	t.Run("run wires display lifecycle around pipeline", func(t *testing.T) {
+		// Given a RunCmd with mocks and a plain display
+		var buf bytes.Buffer
+		cmd := &RunCmd{BeadID: "cap-display", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: nil}
+		wt := &mockMergeOps{mainBranch: "main"}
+		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-display", TaskTitle: "Test display"}}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
+
+		// When run is called with display and bridge
+		err := cmd.run(&buf, runner, wt, bd, display, bridge)
+
+		// Then no error is returned and post-pipeline ran
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !wt.merged {
+			t.Error("merge was not called")
+		}
+		if !bd.closed {
+			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("run signals bridge error on pipeline failure", func(t *testing.T) {
+		// Given a RunCmd where pipeline fails
+		var buf bytes.Buffer
+		pipeErr := &orchestrator.PipelineError{Phase: "execute", Attempt: 1, Err: fmt.Errorf("broken")}
+		cmd := &RunCmd{BeadID: "cap-fail", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: pipeErr}
+		wt := &mockMergeOps{mainBranch: "main"}
+		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-fail"}}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
+
+		// When run is called
+		err := cmd.run(&buf, runner, wt, bd, display, bridge)
+
+		// Then pipeline error is returned
+		var pe *orchestrator.PipelineError
+		if !errors.As(err, &pe) {
+			t.Fatalf("expected PipelineError, got %T: %v", err, err)
+		}
+		// And post-pipeline did NOT run
+		if wt.merged {
+			t.Error("merge should not run after pipeline failure")
+		}
+	})
+
+	t.Run("phaseNames extracts names from PhaseDefinitions", func(t *testing.T) {
+		// Given a set of phase definitions
+		phases := []orchestrator.PhaseDefinition{
+			{Name: "test-writer"},
+			{Name: "test-review"},
+			{Name: "execute"},
+		}
+
+		// When phaseNames is called
+		names := phaseNames(phases)
+
+		// Then the names are extracted in order
+		if len(names) != 3 {
+			t.Fatalf("got %d names, want 3", len(names))
+		}
+		if names[0] != "test-writer" || names[1] != "test-review" || names[2] != "execute" {
+			t.Errorf("names = %v, want [test-writer test-review execute]", names)
+		}
+	})
 }
 
 func TestFeature_AbortCommand(t *testing.T) {
