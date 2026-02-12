@@ -676,6 +676,37 @@ func TestModel_Update_WindowSizeMsg_ResizesViewport(t *testing.T) {
 	}
 }
 
+// TestModel_Teatest_AbortFlow verifies the abort lifecycle through the full Bubble Tea program.
+func TestModel_Teatest_AbortFlow(t *testing.T) {
+	cancelled := false
+	m := NewModel([]string{"test-writer", "test-review"}, WithCancelFunc(func() { cancelled = true }))
+
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+
+	// Pipeline starts running.
+	tm.Send(StatusUpdateMsg{Phase: "test-writer", Status: StatusRunning, Attempt: 1, MaxRetry: 3})
+
+	// User presses q to abort.
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	// Pipeline completes after graceful shutdown.
+	tm.Send(StatusUpdateMsg{Phase: "test-writer", Status: StatusPassed})
+	tm.Send(PipelineDoneMsg{})
+
+	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
+
+	final := tm.FinalModel(t).(Model)
+	if !cancelled {
+		t.Error("cancel function should have been called")
+	}
+	if !final.done {
+		t.Error("final model should be done")
+	}
+	if final.aborting {
+		t.Error("aborting should be cleared after PipelineDoneMsg")
+	}
+}
+
 // TestModel_Teatest_FullPipeline verifies the model processes messages in sequence via teatest.
 func TestModel_Teatest_FullPipeline(t *testing.T) {
 	phases := []string{"test-writer", "test-review", "execute"}
