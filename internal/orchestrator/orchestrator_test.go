@@ -102,6 +102,23 @@ func (m *mockWorklogMgr) Archive(string, string) error {
 	return m.archiveErr
 }
 
+// deadlineCapturingProvider wraps a Provider and records context deadlines.
+type deadlineCapturingProvider struct {
+	inner    Provider
+	timeouts []time.Duration // Approximate timeout remaining at each call (0 = no deadline).
+}
+
+func (d *deadlineCapturingProvider) Name() string { return d.inner.Name() }
+
+func (d *deadlineCapturingProvider) Execute(ctx context.Context, p, workDir string) (provider.Result, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		d.timeouts = append(d.timeouts, time.Until(deadline))
+	} else {
+		d.timeouts = append(d.timeouts, 0)
+	}
+	return d.inner.Execute(ctx, p, workDir)
+}
+
 // --- Signal helpers ---
 
 func makeSignalJSON(status provider.Status, feedback, summary string) string {
@@ -657,6 +674,111 @@ func TestRunPhasePair_StatusCallbacks(t *testing.T) {
 	for i, u := range updates {
 		if u.BeadID != "cap-42" {
 			t.Errorf("update[%d].BeadID = %q, want %q", i, u.BeadID, "cap-42")
+		}
+	}
+}
+
+func TestRunPhasePair_BackoffMultipliesTimeout(t *testing.T) {
+	// Given phases with Timeout=30s and BackoffFactor=2.0,
+	// the effective timeout should double on each retry attempt.
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+		passResponse(),                      // attempt 2: worker (retry)
+		passResponse(),                      // attempt 2: reviewer
+	}}
+	dc := &deadlineCapturingProvider{inner: sp}
+
+	baseTimeout := 30 * time.Second
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, Timeout: baseTimeout},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker", Timeout: baseTimeout},
+	}
+	o := New(dc,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 3, BackoffFactor: 2.0}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes with 2 attempts
+	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+
+	// Then 4 provider calls were made
+	if len(dc.timeouts) != 4 {
+		t.Fatalf("got %d captured timeouts, want 4", len(dc.timeouts))
+	}
+
+	// Attempt 1: worker and reviewer get base timeout (30s * 2^0 = 30s)
+	// Attempt 2: worker and reviewer get doubled timeout (30s * 2^1 = 60s)
+	tolerance := 2 * time.Second
+	wantTimeouts := []time.Duration{
+		30 * time.Second, // attempt 1: worker
+		30 * time.Second, // attempt 1: reviewer
+		60 * time.Second, // attempt 2: worker
+		60 * time.Second, // attempt 2: reviewer
+	}
+	for i, want := range wantTimeouts {
+		got := dc.timeouts[i]
+		diff := got - want
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tolerance {
+			t.Errorf("timeout[%d] = %v, want ~%v (diff %v)", i, got, want, diff)
+		}
+	}
+}
+
+func TestRunPhasePair_BackoffNoEffectWhenNoTimeout(t *testing.T) {
+	// Given phases without Timeout and BackoffFactor=2.0,
+	// the provider should receive contexts without deadlines.
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+		passResponse(),                      // attempt 2: worker (retry)
+		passResponse(),                      // attempt 2: reviewer
+	}}
+	dc := &deadlineCapturingProvider{inner: sp}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(dc,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 3, BackoffFactor: 2.0}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then 4 provider calls were made
+	if len(dc.timeouts) != 4 {
+		t.Fatalf("got %d captured timeouts, want 4", len(dc.timeouts))
+	}
+
+	// And all timeouts should be 0 (no deadline set)
+	for i, timeout := range dc.timeouts {
+		if timeout != 0 {
+			t.Errorf("timeout[%d] = %v, want 0 (no deadline)", i, timeout)
 		}
 	}
 }

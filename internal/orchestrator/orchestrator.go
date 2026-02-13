@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"time"
@@ -120,7 +121,7 @@ func (e *PipelineError) Unwrap() error {
 // RetryStrategy holds resolved retry settings for a phase.
 type RetryStrategy struct {
 	MaxAttempts      int
-	BackoffFactor    float64 // TODO(cap-6vp): apply as timeout multiplier per retry attempt.
+	BackoffFactor    float64 // Timeout multiplier per retry: timeout * BackoffFactor^(attempt-1).
 	EscalateProvider string  // TODO(cap-6vp): switch provider after EscalateAfter attempts.
 	EscalateAfter    int
 }
@@ -425,9 +426,22 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseDefinition,
 	basePCtx prompt.Context, wtPath, progress, feedback string, startAttempt int) (provider.Signal, error) {
 
-	maxAttempts := o.ResolveRetryStrategy(reviewer).MaxAttempts
+	rs := o.ResolveRetryStrategy(reviewer)
+	maxAttempts := rs.MaxAttempts
 
 	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
+		// Apply backoff to phase timeouts for this attempt.
+		w, r := worker, reviewer
+		if rs.BackoffFactor > 1.0 {
+			multiplier := math.Pow(rs.BackoffFactor, float64(attempt-1))
+			if w.Timeout > 0 {
+				w.Timeout = time.Duration(float64(w.Timeout) * multiplier)
+			}
+			if r.Timeout > 0 {
+				r.Timeout = time.Duration(float64(r.Timeout) * multiplier)
+			}
+		}
+
 		// Run worker with feedback.
 		workerCtx := basePCtx
 		workerCtx.Feedback = feedback
@@ -438,7 +452,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			Attempt: attempt, MaxRetry: maxAttempts,
 		})
 
-		workerSignal, err := o.executePhase(ctx, worker, workerCtx, wtPath)
+		workerSignal, err := o.executePhase(ctx, w, workerCtx, wtPath)
 		if err != nil {
 			return provider.Signal{}, &PipelineError{Phase: worker.Name, Attempt: attempt, Err: err}
 		}
@@ -470,7 +484,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			Attempt: attempt, MaxRetry: maxAttempts,
 		})
 
-		reviewerSignal, err := o.executePhase(ctx, reviewer, basePCtx, wtPath)
+		reviewerSignal, err := o.executePhase(ctx, r, basePCtx, wtPath)
 		if err != nil {
 			return provider.Signal{}, &PipelineError{Phase: reviewer.Name, Attempt: attempt, Err: err}
 		}
