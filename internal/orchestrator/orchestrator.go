@@ -87,6 +87,9 @@ type PipelineOutput struct {
 	Completed    bool
 }
 
+// ErrPipelinePaused indicates the pipeline was gracefully paused between phases.
+var ErrPipelinePaused = errors.New("pipeline paused")
+
 // PipelineError indicates a pipeline failure with phase context.
 type PipelineError struct {
 	Phase   string          // Phase that failed.
@@ -134,6 +137,7 @@ type Orchestrator struct {
 	checkpointStore CheckpointStore
 	phases          []PhaseDefinition
 	statusCallback  StatusCallback
+	pauseRequested  func() bool // Returns true when a pause has been requested.
 	baseBranch      string
 	retryDefaults   RetryStrategy
 }
@@ -212,6 +216,13 @@ func WithCheckpointStore(s CheckpointStore) Option {
 	return func(o *Orchestrator) { o.checkpointStore = s }
 }
 
+// WithPauseRequested sets a function that signals graceful pause.
+// When the function returns true, the pipeline stops between phases,
+// saves a checkpoint, and returns ErrPipelinePaused.
+func WithPauseRequested(fn func() bool) Option {
+	return func(o *Orchestrator) { o.pauseRequested = fn }
+}
+
 // RunPipeline executes all pipeline phases for the given bead.
 // It creates a worktree and worklog, executes phases sequentially,
 // retries on NEEDS_WORK, and archives the worklog on completion.
@@ -272,6 +283,12 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 
 	// Execute phases sequentially.
 	for i, phase := range o.phases {
+		// Check for pause before starting a new phase.
+		if o.isPauseRequested() {
+			o.saveCheckpoint(beadID, output)
+			return output, ErrPipelinePaused
+		}
+
 		// Skip phases for resume.
 		if skipSet[phase.Name] {
 			continue
@@ -565,6 +582,15 @@ func (o *Orchestrator) findPhase(name string) (PhaseDefinition, bool) {
 		}
 	}
 	return PhaseDefinition{}, false
+}
+
+// isPauseRequested returns true if a pause has been requested.
+// Safe to call when no pause function is configured (returns false).
+func (o *Orchestrator) isPauseRequested() bool {
+	if o.pauseRequested == nil {
+		return false
+	}
+	return o.pauseRequested()
 }
 
 // notify fires the status callback.

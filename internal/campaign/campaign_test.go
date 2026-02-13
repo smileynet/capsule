@@ -584,3 +584,103 @@ func TestRun_ReadyChildrenError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestRun_PipelinePausedSetsCampaignPaused(t *testing.T) {
+	// Given task 1 passes and task 2 returns ErrPipelinePaused
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput(), {}},
+		errs:    []error{nil, orchestrator.ErrPipelinePaused},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+			{ID: "cap-3", Title: "Task 3"},
+		},
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+	config := Config{FailureMode: "abort", CircuitBreaker: 3}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+
+	// When Run is called
+	err := r.Run(context.Background(), "cap-feature")
+
+	// Then it returns ErrCampaignPaused
+	if !errors.Is(err, ErrCampaignPaused) {
+		t.Fatalf("expected ErrCampaignPaused, got %v", err)
+	}
+	// And state was saved as paused
+	if len(store.saved) == 0 {
+		t.Fatal("expected state to be saved")
+	}
+	last := store.saved[len(store.saved)-1]
+	if last.Status != CampaignPaused {
+		t.Errorf("saved state = %q, want %q", last.Status, CampaignPaused)
+	}
+	// And the paused task is set back to pending (not failed)
+	for _, task := range last.Tasks {
+		if task.BeadID == "cap-2" {
+			if task.Status != TaskPending {
+				t.Errorf("paused task status = %q, want %q", task.Status, TaskPending)
+			}
+		}
+	}
+	// And no tasks were reported as failed
+	if len(cb.tasksFailed) != 0 {
+		t.Errorf("tasks failed = %d, want 0 (pause is not a failure)", len(cb.tasksFailed))
+	}
+}
+
+func TestRun_ResumeFromPausedState(t *testing.T) {
+	// Given a saved paused state with task 1 completed, task 2 pending
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput(), passOutput()},
+		errs:    []error{nil, nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+			{ID: "cap-3", Title: "Task 3"},
+		},
+	}
+	store := &mockStateStore{
+		loaded: map[string]State{
+			"cap-feature": {
+				ID:             "cap-feature",
+				ParentBeadID:   "cap-feature",
+				Status:         CampaignPaused,
+				CurrentTaskIdx: 1,
+				Tasks: []TaskResult{
+					{BeadID: "cap-1", Status: TaskCompleted},
+					{BeadID: "cap-2", Status: TaskPending},
+					{BeadID: "cap-3", Status: TaskPending},
+				},
+			},
+		},
+	}
+	cb := &mockCallback{}
+	config := Config{FailureMode: "abort", CircuitBreaker: 3}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+
+	// When Run resumes from paused state
+	err := r.Run(context.Background(), "cap-feature")
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And only tasks 2 and 3 were started
+	if len(cb.tasksStarted) != 2 {
+		t.Errorf("tasks started = %d, want 2", len(cb.tasksStarted))
+	}
+	if cb.tasksStarted[0] != "cap-2" {
+		t.Errorf("first started task = %q, want %q", cb.tasksStarted[0], "cap-2")
+	}
+	if cb.tasksStarted[1] != "cap-3" {
+		t.Errorf("second started task = %q, want %q", cb.tasksStarted[1], "cap-3")
+	}
+}

@@ -2138,3 +2138,214 @@ func TestRunPipeline_ResumeMergesWithInputSkipPhases(t *testing.T) {
 		t.Errorf("provider called %d times, want 1", got)
 	}
 }
+
+// --- Pause tests ---
+
+func TestRunPipeline_PauseBeforeSecondPhase(t *testing.T) {
+	// Given a 3-phase pipeline where pause is requested after phase-a completes
+	callCount := 0
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	pauseAfterFirst := func() bool {
+		// Called before each phase: false before phase-a, true before phase-b.
+		callCount++
+		return callCount > 1
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+		WithPauseRequested(pauseAfterFirst),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns ErrPipelinePaused
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And only 1 phase executed (phase-a)
+	if got := len(sp.calls); got != 1 {
+		t.Errorf("provider called %d times, want 1", got)
+	}
+	// And a checkpoint was saved
+	if got := len(cs.saved); got < 1 {
+		t.Error("expected at least 1 checkpoint save on pause")
+	}
+}
+
+func TestRunPipeline_PauseNilFuncRunsAll(t *testing.T) {
+	// Given a 3-phase pipeline with no WithPauseRequested (nil)
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	output, err := o.RunPipeline(context.Background(), input)
+
+	// Then all phases run successfully
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := len(sp.calls); got != 3 {
+		t.Errorf("provider called %d times, want 3", got)
+	}
+	if !output.Completed {
+		t.Error("expected Completed=true")
+	}
+}
+
+func TestRunPipeline_PauseNeverRequestedRunsAll(t *testing.T) {
+	// Given a 3-phase pipeline where pause is never requested
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithPauseRequested(func() bool { return false }),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	output, err := o.RunPipeline(context.Background(), input)
+
+	// Then all phases run successfully
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := len(sp.calls); got != 3 {
+		t.Errorf("provider called %d times, want 3", got)
+	}
+	if !output.Completed {
+		t.Error("expected Completed=true")
+	}
+}
+
+func TestRunPipeline_PauseSavesCheckpoint(t *testing.T) {
+	// Given a 3-phase pipeline with pause after phase-a, with a checkpoint store
+	callCount := 0
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+		WithPauseRequested(func() bool {
+			callCount++
+			return callCount > 1
+		}),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it pauses
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And checkpoints were saved: once after phase-a, and once on pause
+	if got := len(cs.saved); got < 2 {
+		t.Errorf("checkpoint saves = %d, want >= 2 (phase + pause)", got)
+	}
+	// And the last checkpoint has the phase-a result
+	last := cs.saved[len(cs.saved)-1]
+	if last.BeadID != "cap-42" {
+		t.Errorf("checkpoint BeadID = %q, want %q", last.BeadID, "cap-42")
+	}
+	if got := len(last.PhaseResults); got != 1 {
+		t.Errorf("checkpoint results = %d, want 1", got)
+	}
+	if last.PhaseResults[0].PhaseName != "phase-a" {
+		t.Errorf("checkpoint phase = %q, want %q", last.PhaseResults[0].PhaseName, "phase-a")
+	}
+}
+
+func TestRunPipeline_PauseAfterRetryPair(t *testing.T) {
+	// Given a worker-reviewer pair that succeeds on retry, then pause before next phase
+	pairCallCount := 0
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                 // test-writer (initial)
+		needsWorkResponse("fix tests"), // test-review (NEEDS_WORK)
+		passResponse(),                 // test-writer (retry)
+		passResponse(),                 // test-review (retry → PASS)
+		// execute, execute-review, sign-off, merge would follow but pause stops it
+	}}
+
+	// Pause check is called before each phase in the main loop.
+	// Phase 0 = test-writer (check 1: false), Phase 1 = test-review (check 2: false),
+	// then retry pair runs within the test-review switch case.
+	// Next iteration: Phase 2 = execute (check 3: true → pause).
+	pauseFunc := func() bool {
+		pairCallCount++
+		return pairCallCount > 2
+	}
+
+	cs := &mockCheckpointStore{}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithCheckpointStore(cs),
+		WithPauseRequested(pauseFunc),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns ErrPipelinePaused (after test-writer/test-review retry pair)
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And the retry pair completed (4 provider calls: 2 initial + 2 retry)
+	if got := len(sp.calls); got != 4 {
+		t.Errorf("provider called %d times, want 4", got)
+	}
+}
+
+func TestRunPipeline_PauseBeforeAnyPhase(t *testing.T) {
+	// Given pause returns true immediately
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+		WithPauseRequested(func() bool { return true }),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns ErrPipelinePaused
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And zero phases executed
+	if got := len(sp.calls); got != 0 {
+		t.Errorf("provider called %d times, want 0", got)
+	}
+	// And a checkpoint was saved (with empty results)
+	if got := len(cs.saved); got != 1 {
+		t.Errorf("checkpoint saves = %d, want 1", got)
+	}
+	if got := len(cs.saved[0].PhaseResults); got != 0 {
+		t.Errorf("checkpoint results = %d, want 0", got)
+	}
+}

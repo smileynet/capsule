@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -85,6 +87,16 @@ func (c *CampaignCmd) Run() error {
 		return fmt.Errorf("campaign: loading phases: %w", err)
 	}
 
+	// Set up SIGUSR1 → pause trigger.
+	var paused atomic.Bool
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGUSR1)
+	go func() {
+		<-sigCh
+		paused.Store(true)
+	}()
+	defer signal.Stop(sigCh)
+
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
@@ -98,6 +110,7 @@ func (c *CampaignCmd) Run() error {
 		orchestrator.WithGateRunner(gateRunner),
 		orchestrator.WithPhases(phases),
 		orchestrator.WithStatusCallback(plainTextCallback(os.Stdout)),
+		orchestrator.WithPauseRequested(paused.Load),
 	)
 
 	// Build campaign dependencies.
@@ -201,6 +214,16 @@ func (r *RunCmd) Run() error {
 		CancelFunc: pipelineCancel,
 	})
 
+	// Set up SIGUSR1 → pause trigger.
+	var paused atomic.Bool
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGUSR1)
+	go func() {
+		<-sigCh
+		paused.Store(true)
+	}()
+	defer signal.Stop(sigCh)
+
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
@@ -215,6 +238,7 @@ func (r *RunCmd) Run() error {
 		orchestrator.WithGateRunner(gateRunner),
 		orchestrator.WithPhases(phases),
 		orchestrator.WithStatusCallback(bridgeStatusCallback(bridge)),
+		orchestrator.WithPauseRequested(paused.Load),
 	)
 
 	return r.run(os.Stdout, orch, wtMgr, bdClient, display, bridge, pipelineCtx)
@@ -240,6 +264,11 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 
 	// Wait for display to finish (so it releases the terminal).
 	<-displayDone
+
+	if errors.Is(pipelineErr, orchestrator.ErrPipelinePaused) {
+		_, _ = fmt.Fprintf(w, "Pipeline paused. Resume with: capsule run %s\n", r.BeadID)
+		return pipelineErr
+	}
 
 	if pipelineErr != nil {
 		return pipelineErr
@@ -519,12 +548,16 @@ const (
 	exitSuccess  = 0
 	exitPipeline = 1
 	exitSetup    = 2
+	exitPaused   = 3
 )
 
 // exitCode maps an error to the appropriate exit code.
 func exitCode(err error) int {
 	if err == nil {
 		return exitSuccess
+	}
+	if errors.Is(err, orchestrator.ErrPipelinePaused) || errors.Is(err, campaign.ErrCampaignPaused) {
+		return exitPaused
 	}
 	var pe *orchestrator.PipelineError
 	if errors.As(err, &pe) {
