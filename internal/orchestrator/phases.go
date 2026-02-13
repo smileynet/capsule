@@ -40,7 +40,7 @@ type PhaseDefinition struct {
 	Optional    bool          // If true, SKIP/ERROR → continue pipeline.
 	Condition   string        // "files_match:<glob>" or empty (always run). Evaluated before phase execution.
 	Provider    string        // Override default provider for this phase (looked up from providers registry).
-	Timeout     time.Duration // TODO(cap-6vp): apply via context.WithTimeout in executePhase. Override default timeout for this phase.
+	Timeout     time.Duration // Override default timeout for this phase.
 }
 
 // PromptName returns the prompt template name for this phase.

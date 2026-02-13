@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smileynet/capsule/internal/prompt"
 	"github.com/smileynet/capsule/internal/provider"
@@ -1542,6 +1543,130 @@ func TestExecutePhase_UnknownProviderError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nonexistent") {
 		t.Errorf("error = %q, want mention of provider name", err.Error())
+	}
+}
+
+// --- Timeout tests ---
+
+// contextCapturingProvider records the context it receives so tests can inspect deadlines.
+type contextCapturingProvider struct {
+	responses []mockResponse
+	ctxs      []context.Context
+	callIdx   int
+}
+
+func (m *contextCapturingProvider) Name() string { return "ctx-capture" }
+
+func (m *contextCapturingProvider) Execute(ctx context.Context, p, workDir string) (provider.Result, error) {
+	m.ctxs = append(m.ctxs, ctx)
+	if m.callIdx >= len(m.responses) {
+		return provider.Result{}, fmt.Errorf("unexpected call %d", m.callIdx+1)
+	}
+	resp := m.responses[m.callIdx]
+	m.callIdx++
+	return resp.result, resp.err
+}
+
+func TestExecutePhase_TimeoutSetsDeadline(t *testing.T) {
+	// Given a phase with a 5-second Timeout
+	cp := &contextCapturingProvider{responses: []mockResponse{passResponse()}}
+	o := New(cp,
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1, Timeout: 5 * time.Second}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the provider received a context with a deadline
+	if len(cp.ctxs) != 1 {
+		t.Fatalf("got %d calls, want 1", len(cp.ctxs))
+	}
+	deadline, ok := cp.ctxs[0].Deadline()
+	if !ok {
+		t.Fatal("expected context to have a deadline, but it doesn't")
+	}
+	// The deadline should be roughly 5 seconds from now (allow some slack)
+	remaining := time.Until(deadline)
+	if remaining < 4*time.Second || remaining > 6*time.Second {
+		t.Errorf("deadline in %v, want ~5s", remaining)
+	}
+}
+
+func TestExecutePhase_NoTimeoutNoDeadline(t *testing.T) {
+	// Given a phase with no Timeout (zero value)
+	cp := &contextCapturingProvider{responses: []mockResponse{passResponse()}}
+	o := New(cp,
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1} // Timeout is zero
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called with a context that has no deadline
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the provider received a context WITHOUT a deadline
+	if len(cp.ctxs) != 1 {
+		t.Fatalf("got %d calls, want 1", len(cp.ctxs))
+	}
+	if _, ok := cp.ctxs[0].Deadline(); ok {
+		t.Error("expected context without deadline when Timeout is zero")
+	}
+}
+
+// contextCapturingGateRunner wraps a GateRunner to capture the context passed to Run.
+type contextCapturingGateRunner struct {
+	inner       GateRunner
+	capturedCtx context.Context
+}
+
+func (m *contextCapturingGateRunner) Run(ctx context.Context, command, workDir string) (provider.Signal, error) {
+	m.capturedCtx = ctx
+	return m.inner.Run(ctx, command, workDir)
+}
+
+func TestExecutePhase_TimeoutAppliesToGate(t *testing.T) {
+	// Given a gate phase with a timeout
+	gr := &mockGateRunner{
+		signals: []provider.Signal{{
+			Status: provider.StatusPass, Feedback: "ok", Summary: "passed",
+			FilesChanged: []string{}, Findings: []provider.Finding{},
+		}},
+	}
+	wrappedGR := &contextCapturingGateRunner{inner: gr}
+
+	o := New(&sequenceProvider{},
+		WithPromptLoader(&mockPromptLoader{}),
+		WithGateRunner(wrappedGR),
+	)
+
+	phase := PhaseDefinition{Name: "lint", Kind: Gate, Command: "make lint", Timeout: 3 * time.Second}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the gate runner received a context with a deadline
+	if wrappedGR.capturedCtx == nil {
+		t.Fatal("gate runner was not called")
+	}
+	if _, ok := wrappedGR.capturedCtx.Deadline(); !ok {
+		t.Error("expected gate context to have a deadline")
 	}
 }
 

@@ -470,6 +470,12 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 func (o *Orchestrator) executePhase(ctx context.Context, phase PhaseDefinition,
 	pCtx prompt.Context, wtPath string) (provider.Signal, error) {
 
+	if phase.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, phase.Timeout)
+		defer cancel()
+	}
+
 	if phase.Kind == Gate {
 		return o.executeGate(ctx, phase, wtPath)
 	}
