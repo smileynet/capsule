@@ -118,7 +118,6 @@ func (e *PipelineError) Unwrap() error {
 }
 
 // RetryStrategy holds resolved retry settings for a phase.
-// TODO(cap-6vp): Wire into runPhasePair to replace direct MaxRetries usage.
 type RetryStrategy struct {
 	MaxAttempts      int
 	BackoffFactor    float64 // TODO(cap-6vp): apply as timeout multiplier per retry attempt.
@@ -426,7 +425,9 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseDefinition,
 	basePCtx prompt.Context, wtPath, progress, feedback string, startAttempt int) (provider.Signal, error) {
 
-	for attempt := startAttempt; attempt <= reviewer.MaxRetries; attempt++ {
+	maxAttempts := o.ResolveRetryStrategy(reviewer).MaxAttempts
+
+	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
 		// Run worker with feedback.
 		workerCtx := basePCtx
 		workerCtx.Feedback = feedback
@@ -434,7 +435,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 		o.notify(StatusUpdate{
 			BeadID: basePCtx.BeadID, Phase: worker.Name,
 			Status: PhaseRunning, Progress: progress,
-			Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+			Attempt: attempt, MaxRetry: maxAttempts,
 		})
 
 		workerSignal, err := o.executePhase(ctx, worker, workerCtx, wtPath)
@@ -449,7 +450,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: worker.Name,
 				Status: PhaseError, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Signal: &workerSignal,
 			})
 			return workerSignal, &PipelineError{Phase: worker.Name, Attempt: attempt, Signal: workerSignal}
@@ -458,7 +459,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 		o.notify(StatusUpdate{
 			BeadID: basePCtx.BeadID, Phase: worker.Name,
 			Status: PhasePassed, Progress: progress,
-			Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+			Attempt: attempt, MaxRetry: maxAttempts,
 			Signal: &workerSignal,
 		})
 
@@ -466,7 +467,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 		o.notify(StatusUpdate{
 			BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 			Status: PhaseRunning, Progress: progress,
-			Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+			Attempt: attempt, MaxRetry: maxAttempts,
 		})
 
 		reviewerSignal, err := o.executePhase(ctx, reviewer, basePCtx, wtPath)
@@ -480,7 +481,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhasePassed, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Signal: &reviewerSignal,
 			})
 			return reviewerSignal, nil
@@ -489,7 +490,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhaseError, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Signal: &reviewerSignal,
 			})
 			return reviewerSignal, &PipelineError{Phase: reviewer.Name, Attempt: attempt, Signal: reviewerSignal}
@@ -498,7 +499,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhaseFailed, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Signal: &reviewerSignal,
 			})
 			feedback = reviewerSignal.Feedback
@@ -507,8 +508,8 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 
 	return provider.Signal{}, &PipelineError{
 		Phase:   reviewer.Name,
-		Attempt: reviewer.MaxRetries,
-		Err:     fmt.Errorf("max retries (%d) exceeded", reviewer.MaxRetries),
+		Attempt: maxAttempts,
+		Err:     fmt.Errorf("max retries (%d) exceeded", maxAttempts),
 	}
 }
 

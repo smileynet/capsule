@@ -499,6 +499,82 @@ func TestRunPhasePair_MaxRetriesExceeded(t *testing.T) {
 	}
 }
 
+func TestRunPhasePair_UsesResolveRetryStrategy(t *testing.T) {
+	// Given phases with MaxRetries=0 (meaning "use pipeline defaults")
+	// and pipeline defaults set to MaxAttempts=2
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), needsWorkResponse("fix 1"), // attempt 1
+		passResponse(), needsWorkResponse("fix 2"), // attempt 2
+	}}
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 0},
+		{Name: "reviewer", Kind: Reviewer, MaxRetries: 0, RetryTarget: "worker"},
+	}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 2}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+
+	// Then it fails after 2 attempts (from pipeline defaults, not phase MaxRetries=0)
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if pe.Attempt != 2 {
+		t.Errorf("Attempt = %d, want 2", pe.Attempt)
+	}
+	// And exactly 4 provider calls were made (2 attempts x 2 phases)
+	if got := len(sp.calls); got != 4 {
+		t.Errorf("provider called %d times, want 4", got)
+	}
+}
+
+func TestRunPhasePair_PhaseOverrideTakesPrecedence(t *testing.T) {
+	// Given phases with MaxRetries=2 and pipeline defaults with MaxAttempts=5
+	// Phase-level should win.
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), needsWorkResponse("fix 1"), // attempt 1
+		passResponse(), needsWorkResponse("fix 2"), // attempt 2
+	}}
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 2},
+		{Name: "reviewer", Kind: Reviewer, MaxRetries: 2, RetryTarget: "worker"},
+	}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 5}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+
+	// Then it fails after 2 attempts (from phase MaxRetries, not pipeline default of 5)
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if pe.Attempt != 2 {
+		t.Errorf("Attempt = %d, want 2", pe.Attempt)
+	}
+	// And exactly 4 provider calls (not 10)
+	if got := len(sp.calls); got != 4 {
+		t.Errorf("provider called %d times, want 4", got)
+	}
+}
+
 func TestRunPhasePair_ProviderError(t *testing.T) {
 	// Given the provider returns an execution error
 	sp := &sequenceProvider{responses: []mockResponse{
