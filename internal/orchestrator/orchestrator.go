@@ -229,10 +229,19 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 		baseBranch = o.baseBranch
 	}
 
-	// Build skip set for resume.
+	// Build skip set for resume from input and checkpoint.
 	skipSet := make(map[string]bool, len(input.SkipPhases))
 	for _, name := range input.SkipPhases {
 		skipSet[name] = true
+	}
+	if o.checkpointStore != nil {
+		if cp, found, err := o.checkpointStore.LoadCheckpoint(beadID); err == nil && found {
+			for _, pr := range cp.PhaseResults {
+				if pr.Signal.Status == provider.StatusPass || pr.Signal.Status == provider.StatusSkip {
+					skipSet[pr.PhaseName] = true
+				}
+			}
+		}
 	}
 
 	// Create worktree.
