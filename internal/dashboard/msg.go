@@ -131,3 +131,12 @@ type PipelineDoneMsg struct {
 type PipelineErrorMsg struct {
 	Err error
 }
+
+// DispatchMsg signals the user has selected a bead to run a pipeline on.
+type DispatchMsg struct {
+	BeadID string
+}
+
+// RefreshBeadsMsg signals that the bead list should be reloaded.
+// browseState emits this on 'r'; Model.Update intercepts it and calls initBrowse.
+type RefreshBeadsMsg struct{}

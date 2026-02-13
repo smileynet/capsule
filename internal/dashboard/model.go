@@ -22,20 +22,40 @@ type Model struct {
 	height   int
 	viewport viewport.Model
 	help     help.Model
+	browse   browseState
+	lister   BeadLister
 }
 
 // NewModel creates a dashboard Model in browse mode with left-pane focus.
-func NewModel() Model {
-	return Model{
+// If a BeadLister is provided, Init will fire an async fetch for the bead list.
+func NewModel(opts ...ModelOption) Model {
+	m := Model{
 		mode:     ModeBrowse,
 		focus:    PaneLeft,
 		viewport: viewport.New(0, 0),
 		help:     help.New(),
+		browse:   newBrowseState(),
 	}
+	for _, o := range opts {
+		o(&m)
+	}
+	return m
 }
 
-// Init returns the initial command.
+// ModelOption configures a Model during construction.
+type ModelOption func(*Model)
+
+// WithBeadLister sets the BeadLister used to fetch the bead list.
+func WithBeadLister(l BeadLister) ModelOption {
+	return func(m *Model) { m.lister = l }
+}
+
+// Init returns the initial command. If a BeadLister was provided,
+// it fires an async fetch for the bead list.
 func (m Model) Init() tea.Cmd {
+	if m.lister != nil {
+		return initBrowse(m.lister)
+	}
 	return nil
 }
 
@@ -47,12 +67,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.help.Width = msg.Width
 		_, rightWidth := PaneWidths(msg.Width)
-		vpWidth := rightWidth - borderChrome
-		if vpWidth < 0 {
-			vpWidth = 0
-		}
-		m.viewport.Width = vpWidth
+		m.viewport.Width = max(rightWidth-borderChrome, 0)
 		m.viewport.Height = m.contentHeight()
+		return m, nil
+
+	case BeadListMsg:
+		m.browse, _ = m.browse.Update(msg)
+		return m, nil
+
+	case RefreshBeadsMsg:
+		if m.lister != nil {
+			return m, initBrowse(m.lister)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -64,6 +90,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes key messages with global and mode-specific routing.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Global keys.
 	switch msg.String() {
 	case "q", "ctrl+c":
 		if m.mode == ModeBrowse {
@@ -78,17 +105,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Mode-specific keys.
+	if m.mode == ModeBrowse && m.focus == PaneLeft {
+		var cmd tea.Cmd
+		m.browse, cmd = m.browse.Update(msg)
+		return m, cmd
+	}
+
 	return m, nil
 }
 
 // contentHeight returns the usable height for pane content,
 // accounting for border chrome and the help bar.
 func (m Model) contentHeight() int {
-	h := m.height - borderChrome - helpBarHeight
-	if h < 1 {
-		return 1
-	}
-	return h
+	return max(m.height-borderChrome-helpBarHeight, 1)
 }
 
 // View renders the two-pane layout with help bar.
@@ -132,7 +162,8 @@ func (m Model) viewLeft() string {
 	case ModeSummary:
 		return "Summary"
 	default:
-		return "Beads"
+		leftWidth, _ := PaneWidths(m.width)
+		return m.browse.View(leftWidth-borderChrome, m.contentHeight())
 	}
 }
 
