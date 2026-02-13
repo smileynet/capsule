@@ -783,6 +783,133 @@ func TestRunPhasePair_BackoffNoEffectWhenNoTimeout(t *testing.T) {
 	}
 }
 
+func TestRunPhasePair_EscalateProviderSwitchesAfterN(t *testing.T) {
+	// Given a retry strategy with EscalateProvider="alternate" and EscalateAfter=1,
+	// the first attempt should use the default provider,
+	// and the second attempt (after escalation) should use the alternate provider.
+	defaultProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker (default)
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer (default)
+	}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // attempt 2: worker (escalated)
+		passResponse(), // attempt 2: reviewer (escalated)
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithProviders(map[string]Provider{"alternate": alternateProv}),
+		WithRetryDefaults(RetryStrategy{
+			MaxAttempts:      3,
+			EscalateProvider: "alternate",
+			EscalateAfter:    1,
+		}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+
+	// Then default provider was called for attempt 1 (worker + reviewer)
+	if len(defaultProv.calls) != 2 {
+		t.Errorf("default provider called %d times, want 2", len(defaultProv.calls))
+	}
+	// And alternate provider was called for attempt 2 (worker + reviewer)
+	if len(alternateProv.calls) != 2 {
+		t.Errorf("alternate provider called %d times, want 2", len(alternateProv.calls))
+	}
+}
+
+func TestRunPhasePair_EscalateProviderNoEffectWhenEmpty(t *testing.T) {
+	// Given a retry strategy without EscalateProvider,
+	// all attempts should use the default provider.
+	defaultProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+		passResponse(),                      // attempt 2: worker
+		passResponse(),                      // attempt 2: reviewer
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{
+			MaxAttempts:   3,
+			EscalateAfter: 1,
+		}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+	// All 4 calls should go to the default provider
+	if len(defaultProv.calls) != 4 {
+		t.Errorf("default provider called %d times, want 4", len(defaultProv.calls))
+	}
+}
+
+func TestRunPhasePair_EscalateProviderUnknownReturnsError(t *testing.T) {
+	// Given an EscalateProvider that is not registered,
+	// the retry loop should return an error when escalation is triggered.
+	defaultProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		// No WithProviders — "nonexistent" won't be found.
+		WithRetryDefaults(RetryStrategy{
+			MaxAttempts:      3,
+			EscalateProvider: "nonexistent",
+			EscalateAfter:    1,
+		}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err == nil {
+		t.Fatal("expected error for unknown escalation provider, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error = %q, want mention of provider name", err.Error())
+	}
+}
+
 // --- RunPipeline tests ---
 
 func TestRunPipeline_AllPhasesPass(t *testing.T) {

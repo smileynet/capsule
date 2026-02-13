@@ -122,7 +122,7 @@ func (e *PipelineError) Unwrap() error {
 type RetryStrategy struct {
 	MaxAttempts      int
 	BackoffFactor    float64 // Timeout multiplier per retry: timeout * BackoffFactor^(attempt-1).
-	EscalateProvider string  // TODO(cap-6vp): switch provider after EscalateAfter attempts.
+	EscalateProvider string  // Switch to this provider after EscalateAfter attempts.
 	EscalateAfter    int
 }
 
@@ -440,6 +440,19 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			if r.Timeout > 0 {
 				r.Timeout = time.Duration(float64(r.Timeout) * multiplier)
 			}
+		}
+
+		// Escalate to a different provider after N attempts.
+		if rs.EscalateProvider != "" && attempt > rs.EscalateAfter {
+			if _, ok := o.providers[rs.EscalateProvider]; !ok {
+				return provider.Signal{}, &PipelineError{
+					Phase:   worker.Name,
+					Attempt: attempt,
+					Err:     fmt.Errorf("escalation provider %q not registered", rs.EscalateProvider),
+				}
+			}
+			w.Provider = rs.EscalateProvider
+			r.Provider = rs.EscalateProvider
 		}
 
 		// Run worker with feedback.
