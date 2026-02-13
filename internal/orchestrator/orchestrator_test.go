@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1252,5 +1254,210 @@ func TestFindPhase_NotFound(t *testing.T) {
 	// Then it is not found
 	if ok {
 		t.Fatal("expected not to find phase")
+	}
+}
+
+// --- evaluateCondition tests ---
+
+func TestEvaluateCondition_EmptyAlwaysRuns(t *testing.T) {
+	// Given an empty condition string
+	// When evaluateCondition is called
+	ok, err := evaluateCondition("", t.TempDir())
+
+	// Then the phase should run (condition met)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("empty condition should return true (always run)")
+	}
+}
+
+func TestEvaluateCondition_FilesMatch_Found(t *testing.T) {
+	// Given a temp directory with a .go file
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When evaluateCondition checks for *.go files
+	ok, err := evaluateCondition("files_match:*.go", dir)
+
+	// Then the condition is met
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("files_match:*.go should match main.go")
+	}
+}
+
+func TestEvaluateCondition_FilesMatch_NotFound(t *testing.T) {
+	// Given a temp directory with no .xyz files
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When evaluateCondition checks for *.xyz files
+	ok, err := evaluateCondition("files_match:*.xyz", dir)
+
+	// Then the condition is NOT met
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("files_match:*.xyz should not match any files")
+	}
+}
+
+func TestEvaluateCondition_UnrecognizedCondition(t *testing.T) {
+	// Given an unrecognized condition format
+	// When evaluateCondition is called
+	_, err := evaluateCondition("unknown_check:foo", t.TempDir())
+
+	// Then it returns an error
+	if err == nil {
+		t.Fatal("expected error for unrecognized condition")
+	}
+	if !strings.Contains(err.Error(), "unrecognized condition") {
+		t.Errorf("error = %q, want mention of unrecognized condition", err.Error())
+	}
+}
+
+// --- RunPipeline condition tests ---
+
+func TestRunPipeline_ConditionSkipsPhase(t *testing.T) {
+	// Given a pipeline where a phase has a condition that won't match
+	var updates []StatusUpdate
+	cb := func(su StatusUpdate) { updates = append(updates, su) }
+
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker (runs, no condition)
+		// reviewer is skipped (condition not met) — no provider call
+		passResponse(), // merge (runs, no condition)
+	}}
+	wt := &mockWorktreeMgr{path: t.TempDir()} // empty dir, no .xyz files
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "reviewer", Kind: Reviewer, MaxRetries: 1, RetryTarget: "worker",
+			Condition: "files_match:*.xyz"},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+		WithStatusCallback(cb),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	output, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And only 2 provider calls were made (reviewer was skipped)
+	if got := len(sp.calls); got != 2 {
+		t.Errorf("provider called %d times, want 2", got)
+	}
+	// And the reviewer phase emitted a PhaseSkipped callback
+	var foundSkipped bool
+	for _, u := range updates {
+		if u.Phase == "reviewer" && u.Status == PhaseSkipped {
+			foundSkipped = true
+		}
+	}
+	if !foundSkipped {
+		t.Error("expected PhaseSkipped callback for reviewer (condition not met)")
+	}
+	// And PhaseResults includes all 3 phases (with skip for reviewer)
+	if got := len(output.PhaseResults); got != 3 {
+		t.Errorf("PhaseResults = %d, want 3", got)
+	}
+}
+
+func TestRunPipeline_ConditionRunsPhaseWhenMet(t *testing.T) {
+	// Given a pipeline where a phase has a condition that WILL match
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.go"), []byte("package x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+		passResponse(), // conditional-worker (condition met, runs normally)
+		passResponse(), // merge
+	}}
+	wt := &mockWorktreeMgr{path: dir}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "conditional-worker", Kind: Worker, MaxRetries: 1,
+			Condition: "files_match:*.go"},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And all 3 provider calls were made (conditional phase ran)
+	if got := len(sp.calls); got != 3 {
+		t.Errorf("provider called %d times, want 3", got)
+	}
+}
+
+func TestRunPipeline_ConditionErrorAborts(t *testing.T) {
+	// Given a pipeline where a phase has an unrecognized condition
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+	}}
+	wt := &mockWorktreeMgr{path: t.TempDir()}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "checker", Kind: Worker, MaxRetries: 1,
+			Condition: "bogus:stuff"},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns a PipelineError for the checker phase
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if pe.Phase != "checker" {
+		t.Errorf("Phase = %q, want %q", pe.Phase, "checker")
+	}
+	if !strings.Contains(pe.Err.Error(), "unrecognized condition") {
+		t.Errorf("error = %q, want mention of unrecognized condition", pe.Err.Error())
 	}
 }

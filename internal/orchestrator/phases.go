@@ -38,7 +38,7 @@ type PhaseDefinition struct {
 	MaxRetries  int           // Maximum retry attempts for this phase's pair.
 	RetryTarget string        // Phase to re-run on NEEDS_WORK (empty for workers).
 	Optional    bool          // If true, SKIP/ERROR → continue pipeline.
-	Condition   string        // TODO(cap-6vp): evaluate in RunPipeline loop. "files_match:<glob>" or empty (always run).
+	Condition   string        // "files_match:<glob>" or empty (always run). Evaluated before phase execution.
 	Provider    string        // TODO(cap-6vp): select alternate provider in executePhase. Override default provider for this phase.
 	Timeout     time.Duration // TODO(cap-6vp): apply via context.WithTimeout in executePhase. Override default timeout for this phase.
 }

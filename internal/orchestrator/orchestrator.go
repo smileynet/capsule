@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/smileynet/capsule/internal/prompt"
@@ -238,6 +240,33 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 		}
 
 		progress := fmt.Sprintf("%d/%d", i+1, len(o.phases))
+
+		// Evaluate phase condition before execution.
+		met, err := evaluateCondition(phase.Condition, wtPath)
+		if err != nil {
+			return output, &PipelineError{Phase: phase.Name, Err: err}
+		}
+		if !met {
+			skipSignal := provider.Signal{
+				Status:       provider.StatusSkip,
+				Feedback:     fmt.Sprintf("condition not met: %s", phase.Condition),
+				Summary:      "skipped by condition",
+				FilesChanged: []string{},
+				Findings:     []provider.Finding{},
+			}
+			output.PhaseResults = append(output.PhaseResults, PhaseResult{
+				PhaseName: phase.Name,
+				Signal:    skipSignal,
+				Timestamp: time.Now(),
+			})
+			o.notify(StatusUpdate{
+				BeadID: beadID, Phase: phase.Name,
+				Status: PhaseSkipped, Progress: progress,
+				Attempt: 1, MaxRetry: phase.MaxRetries,
+				Signal: &skipSignal,
+			})
+			continue
+		}
 
 		o.notify(StatusUpdate{
 			BeadID: beadID, Phase: phase.Name,
@@ -487,6 +516,26 @@ func (o *Orchestrator) ResolveRetryStrategy(phase PhaseDefinition) RetryStrategy
 	}
 
 	return rs
+}
+
+// evaluateCondition checks whether a phase's condition is met.
+// Empty condition means always run. "files_match:<glob>" checks for matching files in dir.
+// The glob is non-recursive (filepath.Glob); patterns like "*.go" match only in dir, not subdirectories.
+func evaluateCondition(condition, dir string) (bool, error) {
+	if condition == "" {
+		return true, nil
+	}
+
+	if strings.HasPrefix(condition, "files_match:") {
+		pattern := strings.TrimPrefix(condition, "files_match:")
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			return false, fmt.Errorf("evaluating condition %q: %w", condition, err)
+		}
+		return len(matches) > 0, nil
+	}
+
+	return false, fmt.Errorf("unrecognized condition: %q", condition)
 }
 
 // logPhaseEntry records a phase result in the worklog (best-effort).
