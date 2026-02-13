@@ -112,6 +112,7 @@ type RetryStrategy struct {
 // Orchestrator sequences pipeline phases with retry logic.
 type Orchestrator struct {
 	provider       Provider
+	providers      map[string]Provider // Named provider overrides for per-phase routing.
 	promptLoader   PromptLoader
 	worktreeMgr    WorktreeManager
 	worklogMgr     WorklogManager
@@ -181,6 +182,13 @@ func WithRetryDefaults(rs RetryStrategy) Option {
 // WithBaseBranch sets the base branch for worktree creation.
 func WithBaseBranch(branch string) Option {
 	return func(o *Orchestrator) { o.baseBranch = branch }
+}
+
+// WithProviders registers named providers for per-phase routing.
+// When a PhaseDefinition.Provider is set, executePhase looks up the
+// named provider from this map instead of using the default.
+func WithProviders(providers map[string]Provider) Option {
+	return func(o *Orchestrator) { o.providers = providers }
 }
 
 // RunPipeline executes all pipeline phases for the given bead.
@@ -458,11 +466,17 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 // executePhase composes a prompt and executes a single phase.
 // For Gate phases, it delegates to the GateRunner.
 // For Worker and Reviewer phases, it composes a prompt and calls the provider.
+// When PhaseDefinition.Provider is set, the named provider is used instead of the default.
 func (o *Orchestrator) executePhase(ctx context.Context, phase PhaseDefinition,
 	pCtx prompt.Context, wtPath string) (provider.Signal, error) {
 
 	if phase.Kind == Gate {
 		return o.executeGate(ctx, phase, wtPath)
+	}
+
+	p, err := o.resolveProvider(phase)
+	if err != nil {
+		return provider.Signal{}, err
 	}
 
 	promptName := phase.PromptName()
@@ -471,7 +485,7 @@ func (o *Orchestrator) executePhase(ctx context.Context, phase PhaseDefinition,
 		return provider.Signal{}, fmt.Errorf("composing prompt for %s: %w", phase.Name, err)
 	}
 
-	result, err := o.provider.Execute(ctx, composed, wtPath)
+	result, err := p.Execute(ctx, composed, wtPath)
 	if err != nil {
 		return provider.Signal{}, fmt.Errorf("executing %s: %w", phase.Name, err)
 	}
@@ -482,6 +496,19 @@ func (o *Orchestrator) executePhase(ctx context.Context, phase PhaseDefinition,
 	}
 
 	return signal, nil
+}
+
+// resolveProvider returns the provider for a phase: the named override if set,
+// otherwise the orchestrator's default.
+func (o *Orchestrator) resolveProvider(phase PhaseDefinition) (Provider, error) {
+	if phase.Provider == "" {
+		return o.provider, nil
+	}
+	p, ok := o.providers[phase.Provider]
+	if !ok {
+		return nil, fmt.Errorf("phase %q: provider %q not registered", phase.Name, phase.Provider)
+	}
+	return p, nil
 }
 
 // executeGate runs a gate phase via the GateRunner.
@@ -514,7 +541,6 @@ func (o *Orchestrator) ResolveRetryStrategy(phase PhaseDefinition) RetryStrategy
 	if phase.MaxRetries > 0 {
 		rs.MaxAttempts = phase.MaxRetries
 	}
-
 	return rs
 }
 

@@ -1461,3 +1461,121 @@ func TestRunPipeline_ConditionErrorAborts(t *testing.T) {
 		t.Errorf("error = %q, want mention of unrecognized condition", pe.Err.Error())
 	}
 }
+
+// --- Provider override tests ---
+
+func TestExecutePhase_UsesNamedProvider(t *testing.T) {
+	// Given an orchestrator with a default provider and a named alternate
+	defaultProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithProviders(map[string]Provider{"alternate": alternateProv}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1, Provider: "alternate"}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	signal, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+	// And the alternate provider was called (not the default)
+	if len(alternateProv.calls) != 1 {
+		t.Errorf("alternate provider called %d times, want 1", len(alternateProv.calls))
+	}
+	if len(defaultProv.calls) != 0 {
+		t.Errorf("default provider called %d times, want 0", len(defaultProv.calls))
+	}
+}
+
+func TestExecutePhase_DefaultProviderWhenEmpty(t *testing.T) {
+	// Given an orchestrator with a default provider and no Provider override on the phase
+	defaultProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithProviders(map[string]Provider{"alternate": alternateProv}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1} // No Provider set
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds using the default provider
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(defaultProv.calls) != 1 {
+		t.Errorf("default provider called %d times, want 1", len(defaultProv.calls))
+	}
+	if len(alternateProv.calls) != 0 {
+		t.Errorf("alternate provider called %d times, want 0", len(alternateProv.calls))
+	}
+}
+
+func TestExecutePhase_UnknownProviderError(t *testing.T) {
+	// Given an orchestrator with no named providers registered
+	o := New(&sequenceProvider{},
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1, Provider: "nonexistent"}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called with a non-existent provider name
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it returns an error mentioning the unknown provider
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error = %q, want mention of provider name", err.Error())
+	}
+}
+
+func TestRunPipeline_PhaseProviderOverride(t *testing.T) {
+	// Given a 2-phase pipeline where the second phase uses a named provider
+	defaultProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},                                // uses default
+		{Name: "merge", Kind: Worker, MaxRetries: 1, Provider: "alternate-provider"}, // uses alternate
+	}
+
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithProviders(map[string]Provider{"alternate-provider": alternateProv}),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the default provider handled the first phase
+	if len(defaultProv.calls) != 1 {
+		t.Errorf("default provider called %d times, want 1", len(defaultProv.calls))
+	}
+	// And the alternate provider handled the second phase
+	if len(alternateProv.calls) != 1 {
+		t.Errorf("alternate provider called %d times, want 1", len(alternateProv.calls))
+	}
+}
