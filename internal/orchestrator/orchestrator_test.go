@@ -2143,14 +2143,14 @@ func TestRunPipeline_ResumeMergesWithInputSkipPhases(t *testing.T) {
 
 func TestRunPipeline_PauseBeforeSecondPhase(t *testing.T) {
 	// Given a 3-phase pipeline where pause is requested after phase-a completes
-	callCount := 0
+	pauseCheckCount := 0
 	sp := &sequenceProvider{responses: nPassResponses(3)}
 	cs := &mockCheckpointStore{}
 
 	pauseAfterFirst := func() bool {
 		// Called before each phase: false before phase-a, true before phase-b.
-		callCount++
-		return callCount > 1
+		pauseCheckCount++
+		return pauseCheckCount > 1
 	}
 
 	o := New(sp,
@@ -2234,7 +2234,7 @@ func TestRunPipeline_PauseNeverRequestedRunsAll(t *testing.T) {
 
 func TestRunPipeline_PauseSavesCheckpoint(t *testing.T) {
 	// Given a 3-phase pipeline with pause after phase-a, with a checkpoint store
-	callCount := 0
+	pauseCheckCount := 0
 	sp := &sequenceProvider{responses: nPassResponses(3)}
 	cs := &mockCheckpointStore{}
 
@@ -2243,8 +2243,8 @@ func TestRunPipeline_PauseSavesCheckpoint(t *testing.T) {
 		WithPhases(threePhases()),
 		WithCheckpointStore(cs),
 		WithPauseRequested(func() bool {
-			callCount++
-			return callCount > 1
+			pauseCheckCount++
+			return pauseCheckCount > 1
 		}),
 	)
 
@@ -2276,7 +2276,7 @@ func TestRunPipeline_PauseSavesCheckpoint(t *testing.T) {
 
 func TestRunPipeline_PauseAfterRetryPair(t *testing.T) {
 	// Given a worker-reviewer pair that succeeds on retry, then pause before next phase
-	pairCallCount := 0
+	pauseCheckCount := 0
 	sp := &sequenceProvider{responses: []mockResponse{
 		passResponse(),                 // test-writer (initial)
 		needsWorkResponse("fix tests"), // test-review (NEEDS_WORK)
@@ -2290,8 +2290,8 @@ func TestRunPipeline_PauseAfterRetryPair(t *testing.T) {
 	// then retry pair runs within the test-review switch case.
 	// Next iteration: Phase 2 = execute (check 3: true → pause).
 	pauseFunc := func() bool {
-		pairCallCount++
-		return pairCallCount > 2
+		pauseCheckCount++
+		return pauseCheckCount > 2
 	}
 
 	cs := &mockCheckpointStore{}

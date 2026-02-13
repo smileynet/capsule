@@ -87,15 +87,8 @@ func (c *CampaignCmd) Run() error {
 		return fmt.Errorf("campaign: loading phases: %w", err)
 	}
 
-	// Set up SIGUSR1 → pause trigger.
-	var paused atomic.Bool
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGUSR1)
-	go func() {
-		<-sigCh
-		paused.Store(true)
-	}()
-	defer signal.Stop(sigCh)
+	pauseCheck, stopPause := setupPauseTrigger()
+	defer stopPause()
 
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
@@ -110,7 +103,7 @@ func (c *CampaignCmd) Run() error {
 		orchestrator.WithGateRunner(gateRunner),
 		orchestrator.WithPhases(phases),
 		orchestrator.WithStatusCallback(plainTextCallback(os.Stdout)),
-		orchestrator.WithPauseRequested(paused.Load),
+		orchestrator.WithPauseRequested(pauseCheck),
 	)
 
 	// Build campaign dependencies.
@@ -214,15 +207,8 @@ func (r *RunCmd) Run() error {
 		CancelFunc: pipelineCancel,
 	})
 
-	// Set up SIGUSR1 → pause trigger.
-	var paused atomic.Bool
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGUSR1)
-	go func() {
-		<-sigCh
-		paused.Store(true)
-	}()
-	defer signal.Stop(sigCh)
+	pauseCheck, stopPause := setupPauseTrigger()
+	defer stopPause()
 
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
@@ -238,7 +224,7 @@ func (r *RunCmd) Run() error {
 		orchestrator.WithGateRunner(gateRunner),
 		orchestrator.WithPhases(phases),
 		orchestrator.WithStatusCallback(bridgeStatusCallback(bridge)),
-		orchestrator.WithPauseRequested(paused.Load),
+		orchestrator.WithPauseRequested(pauseCheck),
 	)
 
 	return r.run(os.Stdout, orch, wtMgr, bdClient, display, bridge, pipelineCtx)
@@ -543,12 +529,30 @@ func severityToPriorityCLI(severity string) int {
 	}
 }
 
+// setupPauseTrigger registers SIGUSR1 to flip an atomic bool.
+// The returned function checks whether pause was requested.
+// The returned stop function deregisters the signal and must be deferred.
+func setupPauseTrigger() (check func() bool, stop func()) {
+	var paused atomic.Bool
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGUSR1)
+	go func() {
+		if _, ok := <-sigCh; ok {
+			paused.Store(true)
+		}
+	}()
+	return paused.Load, func() {
+		signal.Stop(sigCh)
+		close(sigCh)
+	}
+}
+
 // Exit codes.
 const (
-	exitSuccess  = 0
-	exitPipeline = 1
-	exitSetup    = 2
-	exitPaused   = 3
+	exitSuccess  = 0 // No error.
+	exitPipeline = 1 // Pipeline phase failure or context cancellation.
+	exitSetup    = 2 // Config, provider, or wiring error.
+	exitPaused   = 3 // Pipeline or campaign paused via SIGUSR1.
 )
 
 // exitCode maps an error to the appropriate exit code.
