@@ -1670,6 +1670,216 @@ func TestExecutePhase_TimeoutAppliesToGate(t *testing.T) {
 	}
 }
 
+// --- Checkpoint tests ---
+
+// mockCheckpointStore records checkpoint saves for test assertions.
+type mockCheckpointStore struct {
+	saved   []PipelineCheckpoint
+	saveErr error
+}
+
+func (m *mockCheckpointStore) SaveCheckpoint(cp PipelineCheckpoint) error {
+	m.saved = append(m.saved, cp)
+	return m.saveErr
+}
+
+func (m *mockCheckpointStore) LoadCheckpoint(string) (PipelineCheckpoint, bool, error) {
+	return PipelineCheckpoint{}, false, nil
+}
+
+func (m *mockCheckpointStore) RemoveCheckpoint(string) error {
+	return nil
+}
+
+func TestRunPipeline_CheckpointAfterEachPhase(t *testing.T) {
+	// Given a 3-phase pipeline with a checkpoint store
+	phases := []PhaseDefinition{
+		{Name: "phase-a", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-b", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-c", Kind: Worker, MaxRetries: 1},
+	}
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the checkpoint store was called 3 times (once per phase)
+	if got := len(cs.saved); got != 3 {
+		t.Fatalf("checkpoint saves = %d, want 3", got)
+	}
+	// And each checkpoint accumulates results
+	if got := len(cs.saved[0].PhaseResults); got != 1 {
+		t.Errorf("checkpoint[0] results = %d, want 1", got)
+	}
+	if got := len(cs.saved[1].PhaseResults); got != 2 {
+		t.Errorf("checkpoint[1] results = %d, want 2", got)
+	}
+	if got := len(cs.saved[2].PhaseResults); got != 3 {
+		t.Errorf("checkpoint[2] results = %d, want 3", got)
+	}
+	// And the bead ID is set correctly
+	for i, cp := range cs.saved {
+		if cp.BeadID != "cap-42" {
+			t.Errorf("checkpoint[%d].BeadID = %q, want %q", i, cp.BeadID, "cap-42")
+		}
+	}
+	// And SavedAt is set on each checkpoint
+	for i, cp := range cs.saved {
+		if cp.SavedAt.IsZero() {
+			t.Errorf("checkpoint[%d].SavedAt is zero", i)
+		}
+	}
+	// And phase names accumulate correctly
+	if cs.saved[0].PhaseResults[0].PhaseName != "phase-a" {
+		t.Errorf("checkpoint[0] phase = %q, want %q", cs.saved[0].PhaseResults[0].PhaseName, "phase-a")
+	}
+	if cs.saved[1].PhaseResults[1].PhaseName != "phase-b" {
+		t.Errorf("checkpoint[1] phase = %q, want %q", cs.saved[1].PhaseResults[1].PhaseName, "phase-b")
+	}
+	if cs.saved[2].PhaseResults[2].PhaseName != "phase-c" {
+		t.Errorf("checkpoint[2] phase = %q, want %q", cs.saved[2].PhaseResults[2].PhaseName, "phase-c")
+	}
+}
+
+func TestRunPipeline_CheckpointNilIsNoop(t *testing.T) {
+	// Given a pipeline with no checkpoint store (nil)
+	sp := &sequenceProvider{responses: nPassResponses(6)}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error (no panic from nil store)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunPipeline_CheckpointOnConditionSkip(t *testing.T) {
+	// Given a pipeline where a phase is skipped by condition
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // phase-a
+		// phase-b skipped by condition
+		passResponse(), // phase-c
+	}}
+	wt := &mockWorktreeMgr{path: t.TempDir()} // empty dir, no .xyz files
+	cs := &mockCheckpointStore{}
+
+	phases := []PhaseDefinition{
+		{Name: "phase-a", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-b", Kind: Worker, MaxRetries: 1, Condition: "files_match:*.xyz"},
+		{Name: "phase-c", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the checkpoint store was called 3 times (including the skipped phase)
+	if got := len(cs.saved); got != 3 {
+		t.Fatalf("checkpoint saves = %d, want 3", got)
+	}
+	// And the second checkpoint includes a SKIP result
+	if cs.saved[1].PhaseResults[1].Signal.Status != provider.StatusSkip {
+		t.Errorf("checkpoint[1] phase-b status = %q, want %q",
+			cs.saved[1].PhaseResults[1].Signal.Status, provider.StatusSkip)
+	}
+}
+
+func TestRunPipeline_CheckpointErrorIgnored(t *testing.T) {
+	// Given a checkpoint store that always fails
+	sp := &sequenceProvider{responses: nPassResponses(6)}
+	cs := &mockCheckpointStore{saveErr: fmt.Errorf("disk full")}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error (checkpoint failures are best-effort)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the store was still called for each phase
+	if got := len(cs.saved); got != 6 {
+		t.Errorf("checkpoint saves = %d, want 6", got)
+	}
+}
+
+func TestRunPipeline_CheckpointOnError(t *testing.T) {
+	// Given a 3-phase pipeline where phase-c returns ERROR
+	phases := []PhaseDefinition{
+		{Name: "phase-a", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-b", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-c", Kind: Worker, MaxRetries: 1},
+	}
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),
+		passResponse(),
+		errorResponse("build failed"),
+	}}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns an error (phase-c failed)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// And the checkpoint store saved results for all 3 phases
+	// (including the failed phase, so resume knows what completed)
+	if got := len(cs.saved); got != 3 {
+		t.Fatalf("checkpoint saves = %d, want 3", got)
+	}
+	// And the last checkpoint has all 3 phase results
+	if got := len(cs.saved[2].PhaseResults); got != 3 {
+		t.Errorf("final checkpoint results = %d, want 3", got)
+	}
+}
+
 func TestRunPipeline_PhaseProviderOverride(t *testing.T) {
 	// Given a 2-phase pipeline where the second phase uses a named provider
 	defaultProv := &sequenceProvider{responses: []mockResponse{passResponse()}}

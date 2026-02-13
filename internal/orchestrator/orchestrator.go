@@ -47,6 +47,20 @@ type WorklogManager interface {
 	Archive(worktreePath, beadID string) error
 }
 
+// CheckpointStore persists pipeline state for pause/resume.
+type CheckpointStore interface {
+	SaveCheckpoint(cp PipelineCheckpoint) error
+	LoadCheckpoint(beadID string) (PipelineCheckpoint, bool, error)
+	RemoveCheckpoint(beadID string) error
+}
+
+// PipelineCheckpoint holds the state of a pipeline at a point in time.
+type PipelineCheckpoint struct {
+	BeadID       string        `json:"bead_id"`
+	PhaseResults []PhaseResult `json:"phase_results"`
+	SavedAt      time.Time     `json:"saved_at"`
+}
+
 // PipelineInput provides the context needed to run a pipeline.
 type PipelineInput struct {
 	BeadID         string
@@ -60,11 +74,11 @@ type PipelineInput struct {
 
 // PhaseResult records the outcome of a single phase execution with timing metadata.
 type PhaseResult struct {
-	PhaseName string
-	Signal    provider.Signal
-	Attempt   int
-	Duration  time.Duration
-	Timestamp time.Time
+	PhaseName string          `json:"phase_name"`
+	Signal    provider.Signal `json:"signal"`
+	Attempt   int             `json:"attempt"`
+	Duration  time.Duration   `json:"duration"`
+	Timestamp time.Time       `json:"timestamp"`
 }
 
 // PipelineOutput is the result of running a pipeline.
@@ -111,16 +125,17 @@ type RetryStrategy struct {
 
 // Orchestrator sequences pipeline phases with retry logic.
 type Orchestrator struct {
-	provider       Provider
-	providers      map[string]Provider // Named provider overrides for per-phase routing.
-	promptLoader   PromptLoader
-	worktreeMgr    WorktreeManager
-	worklogMgr     WorklogManager
-	gateRunner     GateRunner
-	phases         []PhaseDefinition
-	statusCallback StatusCallback
-	baseBranch     string
-	retryDefaults  RetryStrategy
+	provider        Provider
+	providers       map[string]Provider // Named provider overrides for per-phase routing.
+	promptLoader    PromptLoader
+	worktreeMgr     WorktreeManager
+	worklogMgr      WorklogManager
+	gateRunner      GateRunner
+	checkpointStore CheckpointStore
+	phases          []PhaseDefinition
+	statusCallback  StatusCallback
+	baseBranch      string
+	retryDefaults   RetryStrategy
 }
 
 // Option configures an Orchestrator.
@@ -189,6 +204,12 @@ func WithBaseBranch(branch string) Option {
 // named provider from this map instead of using the default.
 func WithProviders(providers map[string]Provider) Option {
 	return func(o *Orchestrator) { o.providers = providers }
+}
+
+// WithCheckpointStore enables pipeline checkpointing.
+// When set, phase results are persisted after each phase completes.
+func WithCheckpointStore(s CheckpointStore) Option {
+	return func(o *Orchestrator) { o.checkpointStore = s }
 }
 
 // RunPipeline executes all pipeline phases for the given bead.
@@ -267,6 +288,7 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 				Signal:    skipSignal,
 				Timestamp: time.Now(),
 			})
+			o.saveCheckpoint(beadID, output)
 			o.notify(StatusUpdate{
 				BeadID: beadID, Phase: phase.Name,
 				Status: PhaseSkipped, Progress: progress,
@@ -297,6 +319,7 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 			Duration:  phaseDuration,
 			Timestamp: phaseStart,
 		})
+		o.saveCheckpoint(beadID, output)
 
 		switch signal.Status {
 		case provider.StatusPass:
@@ -568,6 +591,19 @@ func evaluateCondition(condition, dir string) (bool, error) {
 	}
 
 	return false, fmt.Errorf("unrecognized condition: %q", condition)
+}
+
+// saveCheckpoint persists the current pipeline state (best-effort).
+func (o *Orchestrator) saveCheckpoint(beadID string, output PipelineOutput) {
+	if o.checkpointStore == nil {
+		return
+	}
+	// Best-effort: checkpoint failures don't abort the pipeline.
+	_ = o.checkpointStore.SaveCheckpoint(PipelineCheckpoint{
+		BeadID:       beadID,
+		PhaseResults: output.PhaseResults,
+		SavedAt:      time.Now(),
+	})
 }
 
 // logPhaseEntry records a phase result in the worklog (best-effort).
