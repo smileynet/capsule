@@ -39,3 +39,25 @@
 2026-02-06 | finalize | BDD specs as Gherkin .feature files | 14 BDD feature files in tests/features/, one per scoped feature. Acceptance criteria from menu plan YAML mapped directly to Given-When-Then scenarios.
 
 2026-02-06 | finalize | TDD specs as markdown test tables | 38 TDD spec files in tests/specs/, one per task with tdd:true (t-2.1.3 excluded). Each spec contains context, test cases table, edge cases checklist, and deliverable reference.
+
+2026-02-12 | scope | Epic 4 re-scoped from placeholders to concrete tasks | 3 features reopened with acceptance criteria focused on TODO(cap-6vp) comments. 9 tasks created. Dropped "parallel phase execution" from scope.
+
+2026-02-12 | scope | Epic 6: Task Dashboard TUI | New epic for interactive bead browsing and pipeline dispatch. 3 features, 8 tasks. Addresses the missing "dispatch and monitor" half of the original TUI goal (Epic 3 only built the phase viewer).
+
+2026-02-12 | scope | New internal/dashboard/ package | Separate from internal/tui/ to maintain one-responsibility-per-package. Dashboard defines its own consumer-side interfaces (BeadLister, BeadResolver, PipelineRunner).
+
+2026-02-12 | scope | Async bead loading via tea.Cmd | bead.Client.Ready() shells out to bd CLI — must not block Bubble Tea Update/View. Loading spinner shown during fetch.
+
+2026-02-12 | scope | Self-scheduling channel pump for pipeline events | Dashboard reads pipeline events from a buffered channel using a tea.Cmd that returns one event per call and re-schedules itself. Idiomatic Bubble Tea pattern for channel consumption.
+
+2026-02-12 | scope | Manual refresh (r key) over auto-polling | Simpler, no flicker. User just finished a pipeline and picks next task — instant feedback on demand is sufficient.
+
+2026-02-12 | scope | Dashboard reimplements phase rendering (no tui.Model embedding) | Dashboard needs cursor-driven selectable phase list constrained to left pane. Embedding tui.Model would require WithSuppressQuit hack and couples packages. ~15 lines of status indicator rendering duplicated to avoid coupling. Zero regression risk for capsule run.
+
+2026-02-12 | scope | Persistent two-pane layout (not sequential screens) | Left pane: list (beads or phases). Right pane: contextual detail (bead info or phase reports). Tab switches focus. Same layout structure across browse/pipeline/summary modes. More information density than sequential screens.
+
+2026-02-12 | scope | Phase report browsing via cursor in pipeline mode | map[string]*PhaseReport stores completed phase Signal data. Auto-follow tracks running phase. User up/down disables auto-follow to browse completed reports. Gives visibility into what each phase produced.
+
+2026-02-12 | scope | AdaptiveColor + rounded borders for modern styling | lipgloss.AdaptiveColor for light/dark terminal support. RoundedBorder for modern look. Priority badges: P0=red, P1=orange, P2=yellow, P3=blue, P4=gray. 1/3 left + 2/3 right layout with min 28 chars left.
+
+2026-02-12 | scope | Epic 6 re-scoped: rich multi-pane dashboard | 3 features, 12 tasks (up from 8). Two-pane persistent layout, Tab focus, phase report browsing. Dropped tui.Model embedding and WithSuppressQuit in favor of reimplemented phase rendering.

@@ -990,6 +990,352 @@ phases:
         tasks: []
 
   # ============================================================================
+  # EPIC 6: TASK DASHBOARD TUI
+  # ============================================================================
+  # Rich two-pane TUI for browsing ready beads, inspecting details, dispatching
+  # pipelines, and browsing phase reports. Persistent layout with Tab-based
+  # focus switching. New internal/dashboard/ package — zero changes to
+  # internal/tui/ (capsule run unchanged).
+  #
+  # E2E Smoke Test: `capsule dashboard` shows two-pane layout with bead list,
+  # Tab switches focus, Enter dispatches pipeline with phase progress in left
+  # pane and phase reports in right pane, summary shown, any key returns to list.
+  # ============================================================================
+
+  - id: epic-6
+    title: "Task Dashboard TUI"
+    description: >
+      Rich two-pane interactive TUI for browsing ready beads, inspecting
+      bead details, dispatching pipelines with phase report browsing, and
+      viewing results in a continuous loop. New internal/dashboard/ package
+      reimplements phase rendering for cursor-driven pane layout. Tab
+      switches focus between left (list) and right (detail/report) panes.
+      Zero changes to internal/tui/ — capsule run works identically.
+    smoke_tests:
+      - "capsule dashboard shows two-pane layout with bead list (left) and detail (right)"
+      - "Tab switches focus — border color changes, right pane becomes scrollable"
+      - "Enter dispatches pipeline — left pane shows phase progress, right shows reports"
+      - "Up/down during pipeline browses completed phase reports in right pane"
+      - "Pipeline done → summary in right pane, any key → back to browse with refresh"
+      - "capsule run still works identically (no code changes to tui package)"
+
+    features:
+      # ------------------------------------------------------------------
+      # F-6.1: Dashboard Shell and Browse Mode
+      # ------------------------------------------------------------------
+      - id: f-6.1
+        title: Dashboard shell with two-pane layout and bead browsing
+        priority: 3
+        user_story: >
+          As a user, I want to run `capsule dashboard` and see a two-pane
+          layout with a navigable bead list on the left and bead detail on
+          the right so that I can browse available work with full context.
+        acceptance_criteria:
+          - "Given a TTY, When capsule dashboard runs, Then a loading spinner appears followed by a two-pane layout with rounded borders"
+          - "Given the two-pane layout, When beads load, Then the left pane shows ready beads with ID, title, priority badge (P0-P4), and type"
+          - "Given a selected bead, When the cursor moves, Then the right pane updates with resolved bead detail (hierarchy, description, acceptance criteria)"
+          - "Given the layout, When I press Tab, Then focus switches between panes (border color changes) and arrow keys control the focused pane"
+          - "Given the bead list, When I press 'r', Then the list and detail cache refresh from bd ready"
+          - "Given the bead list, When I press 'q', Then the dashboard exits cleanly"
+          - "Given no TTY, When capsule dashboard runs, Then an error prints saying dashboard requires a terminal"
+        tracer_strategy:
+          minimal_flow: "DashboardCmd → Model → two-pane layout → bead list → async resolve → detail viewport"
+          layers: "CLI (Kong) → Bubble Tea model → lipgloss layout → bead loading → cache"
+          expansion: "Filtering by type/priority, search, vim-style j/k navigation"
+        tasks:
+          - id: t-6.1.1
+            title: "Create internal/dashboard/ scaffold: styles, keys, help, messages, cache"
+            priority: 3
+            tdd: true
+            description: >
+              Create foundational files for the dashboard package:
+              1. internal/dashboard/styles.go: Centralized lipgloss styles using
+                 AdaptiveColor for light/dark terminals. Rounded borders
+                 (lipgloss.RoundedBorder). Priority badges: P0=red, P1=orange,
+                 P2=yellow, P3=blue, P4=gray. Focused/unfocused border colors.
+                 Layout helpers for 1/3 left + 2/3 right split.
+              2. internal/dashboard/keys.go: bubbles/key bindings per mode
+                 (browse, pipeline, summary). Global keys (q, Ctrl+C, Tab, r).
+              3. internal/dashboard/help.go: bubbles/help integration for
+                 context-aware help bar. Returns different bindings per mode.
+              4. internal/dashboard/msg.go: All tea.Msg types: BeadListMsg,
+                 BeadResolvedMsg, PhaseUpdateMsg, PipelineDoneMsg, etc.
+                 Consumer-side interfaces: BeadLister, BeadResolver, PipelineRunner.
+                 Data types: BeadSummary, BeadDetail, PhaseReport.
+              5. internal/dashboard/cache.go: Simple map[string]*BeadDetail cache
+                 with Invalidate() method.
+              Tests: style rendering doesn't panic, key bindings per mode return
+              correct sets, cache get/set/invalidate.
+            deliverable: "internal/dashboard/ scaffold with styles, keys, help, messages, cache"
+
+          - id: t-6.1.2
+            title: Implement Model with two-pane layout, focus management, and mode routing
+            priority: 3
+            tdd: true
+            depends_on: [t-6.1.1]
+            description: >
+              internal/dashboard/model.go:
+              Model struct with mode enum (browse/pipeline/summary), focus enum
+              (PaneLeft/PaneRight), viewport for right pane, help model,
+              terminal width/height from WindowSizeMsg.
+              Init()/Update()/View() with mode-based routing.
+              View(): lipgloss.JoinHorizontal for left+right panes,
+              lipgloss.JoinVertical for panes+help bar.
+              Layout: 1/3 left (min 28 chars), 2/3 right, calculated from
+              WindowSizeMsg. Tab toggles focus — focused pane gets accent border,
+              unfocused gets dim border.
+              Global keys: q/Ctrl+C quit (browse), Tab switches focus.
+              Tests: mode routing, focus toggle, layout calculation at various
+              widths, window resize handling.
+            deliverable: "Root Model with two-pane layout and focus management"
+
+          - id: t-6.1.3
+            title: Implement browse mode with bead list, async loading, and cursor navigation
+            priority: 3
+            tdd: true
+            depends_on: [t-6.1.2]
+            description: >
+              internal/dashboard/browse.go:
+              Browse mode state: []BeadSummary, cursor int, loading bool, err error.
+              Init fires tea.Cmd calling BeadLister.Ready() asynchronously.
+              Hand-rolled list rendering (not bubbles/list) for full control
+              over cursor position, priority badges, and phase indicators.
+              Render each bead: cursor marker, bead ID, priority badge, title.
+              Left-focused keys: up/down move cursor, Enter emits dispatch.
+              Loading state shows spinner. Error state shows message + r to retry.
+              Empty list shows "No ready beads" message.
+              Tests: loading state view, beads loaded view, cursor movement and
+              wrapping, enter dispatches selected bead, error display, empty list.
+            deliverable: "Browse mode with bead list and cursor navigation"
+
+          - id: t-6.1.4
+            title: Implement bead resolution with cache and detail viewport
+            priority: 3
+            tdd: true
+            depends_on: [t-6.1.3]
+            description: >
+              Wire async bead resolution into browse mode:
+              Cursor movement triggers resolveBeadCmd (tea.Cmd calling
+              BeadResolver.Resolve()). Results cached in map[string]*BeadDetail.
+              Cache hit skips CLI call. Cache invalidated on: manual refresh (r),
+              return from summary mode.
+              Right pane renders resolved detail in bubbles/viewport:
+              Bead ID, title, epic/feature/task hierarchy, description,
+              acceptance criteria. Loading state shows spinner in right pane.
+              Failed resolve shows error + suggestion.
+              Right-focused keys: up/down/PgUp/PgDn scroll viewport.
+              Tests: cache hit skips resolve, cache miss triggers resolve,
+              invalidation clears cache, viewport scrolls when focused,
+              loading/error states in right pane.
+            deliverable: "Bead resolution with caching and scrollable detail viewport"
+
+          - id: t-6.1.5
+            title: Wire DashboardCmd in main.go with Run()/run() split and adapters
+            priority: 3
+            tdd: true
+            depends_on: [t-6.1.4]
+            description: >
+              cmd/capsule/main.go:
+              Add DashboardCmd struct to CLI Kong grammar with Provider, Timeout
+              flags. Run() builds real deps (bead.Client adapters for BeadLister
+              and BeadResolver interfaces), run() accepts interfaces for testing.
+              Non-TTY returns error. Creates dashboard.Model, runs tea.NewProgram.
+              Adapter types: beadListerAdapter wraps bead.Client.Ready() to
+              []dashboard.BeadSummary. beadResolverAdapter wraps bead.Client.Resolve()
+              to dashboard.BeadDetail.
+              cmd/capsule/main_test.go: CLI parsing tests (kong.New), run() with
+              mock interfaces.
+              Tests: dashboard subcommand parsed, non-TTY error, run() creates
+              program with mock deps.
+            deliverable: "capsule dashboard command wired to dashboard.Model"
+
+      # ------------------------------------------------------------------
+      # F-6.2: Pipeline Mode with Phase Report Browsing
+      # ------------------------------------------------------------------
+      - id: f-6.2
+        title: Pipeline mode with phase list and report browsing
+        priority: 3
+        blocks: [f-6.1]
+        user_story: >
+          As a user, I want to dispatch a pipeline from the dashboard and
+          see phase progress in the left pane with detailed phase reports
+          in the right pane so that I have clear visibility into what each
+          phase produced.
+        acceptance_criteria:
+          - "Given Enter pressed on a bead, When pipeline dispatches, Then left pane switches to phase list with status indicators (spinner, checkmark, cross)"
+          - "Given a completed phase, When its report is available, Then selecting it in the left pane shows summary, files changed, and duration in the right pane"
+          - "Given a running pipeline, When phases complete, Then the cursor auto-follows the running phase"
+          - "Given the user presses up/down during pipeline, Then auto-follow disables and the user can browse completed phase reports"
+          - "Given pipeline completion, When all phases finish, Then the right pane shows overall result summary"
+          - "Given a running pipeline, When I press q/Ctrl+C, Then the pipeline aborts gracefully"
+        tracer_strategy:
+          minimal_flow: "Enter → RunPipeline goroutine → channel → self-scheduling pump → phase list + report rendering"
+          layers: "Pipeline dispatch → channel bridge → phase state tracking → report storage → cursor/auto-follow"
+          expansion: "Raw output view (d key), phase timing chart, retry detail view"
+        tasks:
+          - id: t-6.2.1
+            title: Implement pipeline mode phase list rendering with spinner and cursor
+            priority: 3
+            tdd: true
+            depends_on: [t-6.1.2]
+            description: >
+              internal/dashboard/pipeline.go:
+              Pipeline mode state: []PhaseState, cursor int, autoFollow bool,
+              spinner model, running bool.
+              PhaseState: Name, Status (pending/running/pass/fail), Attempt,
+              MaxRetry, Duration. Status indicators reimplemented from tui.Model
+              (~15 lines duplication to avoid coupling): checkmark=pass, cross=fail,
+              spinner=running, dot=pending. Retry counter (2/3). Duration per phase.
+              Left-focused keys: up/down move cursor (disables autoFollow).
+              Auto-follow: cursor tracks running phase by default.
+              Tests: phase list rendering at each state, cursor movement disables
+              auto-follow, auto-follow tracks running phase.
+            deliverable: "Phase list rendering with spinner, status indicators, and cursor"
+
+          - id: t-6.2.2
+            title: Implement PhaseReport storage and right-pane rendering
+            priority: 3
+            tdd: true
+            depends_on: [t-6.2.1]
+            description: >
+              Store phase reports in map[string]*PhaseReport as phases complete.
+              PhaseReport: PhaseName, Status, Summary, Feedback, FilesChanged,
+              Duration. Populated from StatusUpdateMsg when status is pass/fail.
+              Right pane renders report for cursor-selected phase in viewport:
+              Phase name + status header, summary, files changed list, duration,
+              feedback (if failed). Pending phase shows "Waiting...".
+              Running phase shows spinner text + elapsed time.
+              Tests: report stored on phase completion, right pane shows correct
+              report for selected phase, pending/running state rendering.
+            deliverable: "Phase report storage and right-pane rendering per selected phase"
+
+          - id: t-6.2.3
+            title: Wire pipeline dispatch with channel, goroutine, and self-scheduling pump
+            priority: 3
+            tdd: true
+            depends_on: [t-6.2.2, t-6.1.5]
+            description: >
+              Wire Enter keypress to pipeline execution:
+              1. Create context.WithCancel for pipeline abort
+              2. Create buffered channel for phase events
+              3. Launch PipelineRunner.RunPipeline() in goroutine
+              4. Self-scheduling channel pump:
+                 func listenForEvents(ch) tea.Cmd returns func() tea.Msg
+                 that reads one event from channel, returns channelClosedMsg
+                 on close. Re-schedule after each event in Update().
+              5. Convert orchestrator StatusUpdate to dashboard PhaseUpdateMsg
+              6. Pipeline goroutine sends events to channel, sends done/error on completion
+              7. q/Ctrl+C during pipeline cancels context (graceful abort)
+              Interface: PipelineRunner with RunPipeline(ctx, PipelineInput)
+              returning (PipelineOutput, error).
+              Tests: mock PipelineRunner, verify events flow through channel to
+              model, verify abort cancels context, verify channel closed transitions
+              to summary.
+            deliverable: "Pipeline dispatch with channel-based event bridging"
+
+          - id: t-6.2.4
+            title: Implement summary mode with any-key return to browse and refresh
+            priority: 3
+            tdd: true
+            depends_on: [t-6.2.3]
+            description: >
+              Summary mode triggered on pipeline completion (channel closed).
+              Left pane: phase list with final checkmark/cross statuses frozen.
+              Right pane: overall result summary:
+              - Pass: green checkmark, "N/N phases passed in Xs"
+              - Fail: red cross, error message, "N/M phases passed"
+              - Post-pipeline status (merge/cleanup if applicable)
+              Footer: "Press any key to continue"
+              Any keypress: transition back to browse mode, invalidate bead cache,
+              trigger BeadLister.Ready() refresh (closed bead disappears).
+              Tests: pass summary display, fail summary with error, any key
+              transitions to browse, cache invalidated on return.
+            deliverable: "Summary mode with result display and any-key return to browse"
+
+      # ------------------------------------------------------------------
+      # F-6.3: Polish and Edge Cases
+      # ------------------------------------------------------------------
+      - id: f-6.3
+        title: Polish, shared lifecycle, and edge case handling
+        priority: 3
+        blocks: [f-6.2]
+        user_story: >
+          As a user, I want the dashboard to handle edge cases gracefully
+          and share post-pipeline lifecycle with capsule run so that the
+          dashboard is robust and reliable in real use.
+        acceptance_criteria:
+          - "Given a successful pipeline, When returning to browse, Then post-pipeline lifecycle (merge, cleanup, close bead) runs in the background"
+          - "Given a terminal resize, When the window size changes, Then both panes re-layout proportionally"
+          - "Given Ctrl+C during pipeline, When abort triggers, Then cleanup runs and dashboard returns to browse"
+          - "Given bd is not installed, When dashboard launches, Then a clear error message is shown"
+          - "Given an empty bead list, When dashboard renders, Then 'No ready beads' message with refresh hint is shown"
+        tracer_strategy:
+          minimal_flow: "Extract postPipeline → wire background lifecycle → handle resize → handle abort → error states"
+          layers: "Shared lifecycle → background goroutines → terminal resize → error UX"
+          expansion: "Double-press force quit, failed bead load retry, network error handling"
+        tasks:
+          - id: t-6.3.1
+            title: Extract shared postPipeline helper and wire background lifecycle
+            priority: 3
+            tdd: true
+            depends_on: [t-6.2.4]
+            description: >
+              cmd/capsule/main.go:
+              Extract RunCmd.runPostPipeline() logic into standalone function:
+              postPipeline(w io.Writer, beadID string, wt mergeOps, bd beadResolver)
+              Both RunCmd.run() and DashboardCmd.run() call this.
+              RunCmd.runPostPipeline() becomes thin wrapper calling postPipeline().
+              In dashboard: on return from summary, fire tea.Batch with:
+              1. tea.Cmd calling postPipeline() in background goroutine
+                 (merge, cleanup, close bead). Errors logged, not shown.
+              2. tea.Cmd re-fetching BeadLister.Ready() to refresh list.
+              Tests: RunCmd still calls post-pipeline correctly (regression),
+              postPipeline works with mock interfaces, both cmds fire on
+              return from summary.
+            deliverable: "Shared post-pipeline lifecycle callable from both commands"
+
+          - id: t-6.3.2
+            title: Handle error states — loading spinners, failed loads, empty list
+            priority: 3
+            tdd: true
+            depends_on: [t-6.3.1]
+            description: >
+              Comprehensive error state handling:
+              1. Loading spinner: shown in both panes during initial bead fetch
+                 and during bead resolution. Uses bubbles/spinner.
+              2. Failed bead load: left pane shows error message + "press r to retry".
+              3. Empty bead list: "No ready beads — press r to refresh" message.
+              4. Failed resolve: right pane shows "Could not load bead detail"
+                 with error text. Bead list still navigable.
+              5. bd not installed: early error in DashboardCmd.Run() before
+                 launching TUI.
+              Tests: each error state renders correctly, r retries from error,
+              failed resolve doesn't crash navigation.
+            deliverable: "Robust error state handling for all failure modes"
+
+          - id: t-6.3.3
+            title: Handle edge cases — terminal resize, abort during pipeline, force quit
+            priority: 3
+            tdd: true
+            depends_on: [t-6.3.2]
+            description: >
+              Edge case handling:
+              1. Terminal resize: WindowSizeMsg recalculates pane widths
+                 (1/3 + 2/3, min 28 left), re-renders both panes. Viewport
+                 width/height updated.
+              2. Abort during pipeline: Ctrl+C cancels pipeline context,
+                 shows "Aborting..." in phase status, waits for cleanup,
+                 transitions to browse mode (not summary).
+              3. Double-press force quit: second q/Ctrl+C during abort
+                 forces tea.Quit immediately.
+              4. Focus interaction: left focus up/down moves list cursor,
+                 right focus up/down/PgUp/PgDn scrolls viewport. Global keys
+                 (q, Ctrl+C, Tab, r) work regardless of focus.
+              Tests: resize recalculates layout, abort during pipeline cancels
+              context, double-press force quits, focus-dependent key routing.
+            deliverable: "Edge case handling for resize, abort, and focus interactions"
+
+  # ============================================================================
   # EPIC 5: MULTI-CLI SUPPORT (Unscoped)
   # ============================================================================
 

@@ -17,10 +17,11 @@ worklog tracking, and structured signal contracts.
 | 1 | Tracer Bullet: Scripts & Direct Claude CLI | Fully scoped | 6 | 20 |
 | 2 | Go CLI Tool (Kong) | Fully scoped | 5 | 13 |
 | 3 | TUI (Bubble Tea) | Fully scoped | 3 | 6 |
-| 4 | Robust Task Pipeline | Placeholder | 3 | — |
+| 4 | Robust Task Pipeline | Re-scoped | 3 | 9 |
 | 5 | Multi-CLI Support | Placeholder | 2 | — |
+| 6 | Task Dashboard TUI | Re-scoped | 3 | 12 |
 
-**Total scoped:** 14 features, 39 tasks across 3 epics
+**Total scoped:** 20 features, 60 tasks across 4 epics
 
 ## Epic Summaries
 
@@ -39,13 +40,19 @@ Add Bubble Tea TUI for live phase status display. Dual-mode: TUI when TTY
 detected, plain text when piped. Progressive enhancement from Epic 2's
 plain text output.
 
-### Epic 4: Robust Task Pipeline (Unscoped)
-More granular pipeline steps. Configurable phase definitions, pluggable
-quality gates, pipeline pause/resume.
+### Epic 4: Robust Task Pipeline (Re-scoped)
+Wire scaffolded PhaseDefinition fields (Condition, Provider, Timeout) into
+runtime, intra-pipeline checkpointing for pause/resume, and advanced retry
+strategies (backoff, provider escalation). Foundation built in Epic 2.
 
 ### Epic 5: Multi-CLI Support (Unscoped)
-Support multiple AI CLI tools beyond Claude Code. Provider interface
-extensions for OpenCode, Kiro, and other headless CLI tools.
+
+### Epic 6: Task Dashboard TUI (Re-scoped)
+Rich two-pane interactive TUI for browsing ready beads, inspecting bead
+details, dispatching pipelines with phase report browsing, and viewing
+results in a continuous loop. New internal/dashboard/ package reimplements
+phase rendering for cursor-driven pane layout. Tab switches focus between
+left (list) and right (detail/report) panes. Zero changes to internal/tui/.
 
 ## Finalization Summary
 
@@ -65,8 +72,9 @@ All scoped work has been converted to beads with full hierarchy and dependencies
 | 1 — Tracer Bullet | cap-8ax | 6 | 20 |
 | 2 — Go CLI Tool | cap-9qv | 5 | 13 |
 | 3 — TUI (Bubble Tea) | cap-awd | 3 | 6 |
-| 4 — Robust Pipeline | cap-6vp | 3 (placeholder) | — |
+| 4 — Robust Pipeline | cap-6vp | 3 (re-scoped) | 9 |
 | 5 — Multi-CLI Support | cap-10s | 2 (placeholder) | — |
+| 6 — Task Dashboard TUI | cap-kxw | 3 | 12 |
 
 **Test specifications:**
 - 14 BDD `.feature` files in `tests/features/` (one per scoped feature)
