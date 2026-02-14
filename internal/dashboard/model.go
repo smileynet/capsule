@@ -299,7 +299,8 @@ func (m Model) viewLeft() string {
 func (m Model) viewRight() string {
 	switch m.mode {
 	case ModePipeline:
-		return "Phase report"
+		_, rightWidth := PaneWidths(m.width)
+		return m.pipeline.ViewReport(rightWidth-borderChrome, m.contentHeight())
 	case ModeSummary:
 		return "Result details"
 	default:

@@ -19,13 +19,14 @@ type phaseEntry struct {
 	Duration time.Duration
 }
 
-// pipelineState manages the phase list, cursor, and auto-follow for pipeline mode.
+// pipelineState manages the phase list, cursor, reports, and auto-follow for pipeline mode.
 type pipelineState struct {
 	phases     []phaseEntry
 	cursor     int
 	autoFollow bool
 	spinner    spinner.Model
 	running    bool
+	reports    map[string]*PhaseReport
 }
 
 // newPipelineState creates a pipelineState for the given phase names.
@@ -41,6 +42,7 @@ func newPipelineState(phaseNames []string) pipelineState {
 		phases:     phases,
 		autoFollow: true,
 		spinner:    s,
+		reports:    make(map[string]*PhaseReport),
 	}
 }
 
@@ -76,6 +78,16 @@ func (ps pipelineState) handlePhaseUpdate(msg PhaseUpdateMsg) pipelineState {
 				ps.running = true
 				if ps.autoFollow {
 					ps.cursor = i
+				}
+			}
+			if msg.Status == PhasePassed || msg.Status == PhaseFailed {
+				ps.reports[msg.Phase] = &PhaseReport{
+					PhaseName:    msg.Phase,
+					Status:       msg.Status,
+					Summary:      msg.Summary,
+					Feedback:     msg.Feedback,
+					FilesChanged: msg.FilesChanged,
+					Duration:     msg.Duration,
 				}
 			}
 			break
@@ -174,6 +186,77 @@ func (ps pipelineState) View(width, height int) string {
 			fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", phase.Duration.Seconds())))
 		}
 	}
+	return b.String()
+}
+
+// ViewReport renders the right-pane content for the currently selected phase.
+func (ps pipelineState) ViewReport(width, height int) string {
+	if len(ps.phases) == 0 {
+		return ""
+	}
+	if ps.cursor < 0 || ps.cursor >= len(ps.phases) {
+		return ""
+	}
+
+	phase := ps.phases[ps.cursor]
+
+	switch phase.Status {
+	case PhasePending:
+		return pipePendingStyle.Render("Waiting...")
+
+	case PhaseRunning:
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s  %s\n", pipeRunningStyle.Render(phase.Name), pipeRunningStyle.Render("Running"))
+		fmt.Fprintf(&b, "\n%s %s", ps.spinner.View(), pipeRunningStyle.Render("In progress..."))
+		return b.String()
+
+	case PhaseSkipped:
+		return pipeSkippedStyle.Render("Skipped")
+
+	default:
+		report := ps.reports[phase.Name]
+		if report == nil {
+			return ""
+		}
+		return ps.formatReport(report)
+	}
+}
+
+func (ps pipelineState) formatReport(r *PhaseReport) string {
+	var b strings.Builder
+
+	// Header: phase name + status.
+	statusText := "Passed"
+	statusStyle := pipePassedStyle
+	if r.Status == PhaseFailed {
+		statusText = "Failed"
+		statusStyle = pipeFailedStyle
+	}
+	fmt.Fprintf(&b, "%s  %s\n", r.PhaseName, statusStyle.Render(statusText))
+
+	// Duration.
+	if r.Duration > 0 {
+		fmt.Fprintf(&b, "\n%s %s", pipeDurationStyle.Render("Duration:"), pipeDurationStyle.Render(fmt.Sprintf("%.1fs", r.Duration.Seconds())))
+	}
+
+	// Summary.
+	if r.Summary != "" {
+		fmt.Fprintf(&b, "\n\n%s", r.Summary)
+	}
+
+	// Files changed.
+	if len(r.FilesChanged) > 0 {
+		b.WriteString("\n\nFiles changed:")
+		for _, f := range r.FilesChanged {
+			fmt.Fprintf(&b, "\n  %s", f)
+		}
+	}
+
+	// Feedback (failed phases only).
+	if r.Feedback != "" {
+		fmt.Fprintf(&b, "\n\nFeedback:\n%s", r.Feedback)
+	}
+
 	return b.String()
 }
 

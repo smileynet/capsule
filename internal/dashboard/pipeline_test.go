@@ -298,6 +298,186 @@ func TestPipeline_PhaseUpdateSetsRunning(t *testing.T) {
 	}
 }
 
+func TestPipeline_ReportStoredOnPass(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{
+		Phase:        "plan",
+		Status:       PhasePassed,
+		Duration:     2 * time.Second,
+		Summary:      "All checks passed",
+		FilesChanged: []string{"main.go", "util.go"},
+	})
+
+	report := ps.reports["plan"]
+	if report == nil {
+		t.Fatal("expected report for passed phase")
+	}
+	if report.PhaseName != "plan" {
+		t.Errorf("PhaseName = %q, want %q", report.PhaseName, "plan")
+	}
+	if report.Status != PhasePassed {
+		t.Errorf("Status = %q, want %q", report.Status, PhasePassed)
+	}
+	if report.Summary != "All checks passed" {
+		t.Errorf("Summary = %q, want %q", report.Summary, "All checks passed")
+	}
+	if len(report.FilesChanged) != 2 {
+		t.Errorf("FilesChanged len = %d, want 2", len(report.FilesChanged))
+	}
+	if report.Duration != 2*time.Second {
+		t.Errorf("Duration = %v, want 2s", report.Duration)
+	}
+}
+
+func TestPipeline_ReportStoredOnFail(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{
+		Phase:    "code",
+		Status:   PhaseFailed,
+		Duration: 5 * time.Second,
+		Summary:  "Compilation failed",
+		Feedback: "error in main.go:42",
+	})
+
+	report := ps.reports["code"]
+	if report == nil {
+		t.Fatal("expected report for failed phase")
+	}
+	if report.Status != PhaseFailed {
+		t.Errorf("Status = %q, want %q", report.Status, PhaseFailed)
+	}
+	if report.Feedback != "error in main.go:42" {
+		t.Errorf("Feedback = %q, want %q", report.Feedback, "error in main.go:42")
+	}
+}
+
+func TestPipeline_NoReportForRunningPhase(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+
+	if ps.reports["plan"] != nil {
+		t.Error("running phase should not store a report")
+	}
+}
+
+func TestPipeline_NoReportForPendingPhase(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+
+	if ps.reports["plan"] != nil {
+		t.Error("pending phase should not have a report")
+	}
+}
+
+func TestPipeline_ViewReportPending(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	// Cursor at "plan" which is pending.
+	view := ps.ViewReport(60, 20)
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "Waiting") {
+		t.Errorf("pending phase report should show 'Waiting', got:\n%s", plain)
+	}
+}
+
+func TestPipeline_ViewReportRunning(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+
+	view := ps.ViewReport(60, 20)
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("running phase report should show phase name, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Running") {
+		t.Errorf("running phase report should show 'Running', got:\n%s", plain)
+	}
+}
+
+func TestPipeline_ViewReportPassed(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{
+		Phase:        "plan",
+		Status:       PhasePassed,
+		Duration:     3 * time.Second,
+		Summary:      "All checks passed",
+		FilesChanged: []string{"main.go", "util.go"},
+	})
+
+	view := ps.ViewReport(60, 20)
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("report should show phase name, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Passed") {
+		t.Errorf("report should show 'Passed', got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "All checks passed") {
+		t.Errorf("report should show summary, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "main.go") {
+		t.Errorf("report should show files changed, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "3.0s") {
+		t.Errorf("report should show duration, got:\n%s", plain)
+	}
+}
+
+func TestPipeline_ViewReportFailed(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{
+		Phase:    "code",
+		Status:   PhaseFailed,
+		Duration: 5 * time.Second,
+		Summary:  "Build failed",
+		Feedback: "error in main.go:42",
+	})
+	// Move cursor to "code".
+	ps, _ = ps.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	view := ps.ViewReport(60, 20)
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "Failed") {
+		t.Errorf("report should show 'Failed', got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "error in main.go:42") {
+		t.Errorf("report should show feedback, got:\n%s", plain)
+	}
+}
+
+func TestPipeline_ViewReportNoFeedbackForPassedPhase(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{
+		Phase:    "plan",
+		Status:   PhasePassed,
+		Duration: 2 * time.Second,
+		Summary:  "Done",
+	})
+
+	view := ps.ViewReport(60, 20)
+	plain := stripANSI(view)
+	if strings.Contains(plain, "Feedback") {
+		t.Errorf("passed phase report should not show feedback header, got:\n%s", plain)
+	}
+}
+
+func TestPipeline_ViewReportSkipped(t *testing.T) {
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseSkipped})
+
+	view := ps.ViewReport(60, 20)
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "Skipped") {
+		t.Errorf("skipped phase report should show 'Skipped', got:\n%s", plain)
+	}
+}
+
+func TestPipeline_ViewReportEmptyPhases(t *testing.T) {
+	ps := newPipelineState(nil)
+	view := ps.ViewReport(60, 20)
+	if view != "" {
+		t.Errorf("empty phases ViewReport should return empty, got: %q", view)
+	}
+}
+
 func TestPipeline_PhaseUpdateIgnoresUnknownPhase(t *testing.T) {
 	ps := newPipelineState(samplePhaseNames())
 	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "nonexistent", Status: PhaseRunning})

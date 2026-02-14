@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -571,6 +572,38 @@ func TestModel_PipelineQuitDoesNotQuitInPipelineMode(t *testing.T) {
 		if _, ok := msg.(tea.QuitMsg); ok {
 			t.Error("q should not quit in pipeline mode")
 		}
+	}
+}
+
+func TestModel_PipelineRightPaneShowsReport(t *testing.T) {
+	m := newPipelineModel(90, 40, []string{"plan", "code"})
+
+	// Mark plan as passed with a summary.
+	updated, _ := m.Update(PhaseUpdateMsg{
+		Phase:    "plan",
+		Status:   PhasePassed,
+		Duration: 2 * time.Second,
+		Summary:  "Planning complete",
+	})
+	m = updated.(Model)
+
+	view := m.View()
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "Passed") {
+		t.Errorf("pipeline right pane should show report status, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Planning complete") {
+		t.Errorf("pipeline right pane should show report summary, got:\n%s", plain)
+	}
+}
+
+func TestModel_PipelineRightPaneShowsWaiting(t *testing.T) {
+	m := newPipelineModel(90, 40, []string{"plan", "code"})
+
+	view := m.View()
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "Waiting") {
+		t.Errorf("pipeline right pane should show 'Waiting' for pending phase, got:\n%s", plain)
 	}
 }
 
