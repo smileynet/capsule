@@ -11,8 +11,10 @@ import (
 // viewSummaryRight renders the right pane in summary mode:
 // an overall result summary showing pass/fail status and phase count.
 func (m Model) viewSummaryRight() string {
-	var passed int
-	var totalDuration time.Duration
+	var (
+		passed        int
+		totalDuration time.Duration
+	)
 	for _, p := range m.pipeline.phases {
 		if p.Status == PhasePassed {
 			passed++
@@ -36,6 +38,22 @@ func (m Model) viewSummaryRight() string {
 	}
 
 	return b.String()
+}
+
+// returnToBrowseAfterAbort transitions from pipeline mode to browse mode
+// after an abort. Unlike returnToBrowse, it skips post-pipeline lifecycle
+// since the pipeline was cancelled.
+func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
+	m.mode = ModeBrowse
+	m.focus = PaneLeft
+	m.aborting = false
+	m.dispatchedBeadID = ""
+	m.cache.Invalidate()
+
+	if m.lister != nil {
+		return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
+	}
+	return m, nil
 }
 
 // returnToBrowse transitions from summary mode back to browse mode,

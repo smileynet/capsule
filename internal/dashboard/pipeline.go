@@ -27,6 +27,7 @@ type pipelineState struct {
 	spinner    spinner.Model
 	running    bool
 	reports    map[string]*PhaseReport
+	aborting   bool
 }
 
 // newPipelineState creates a pipelineState for the given phase names.
@@ -174,8 +175,14 @@ func (ps pipelineState) View(width, height int) string {
 			b.WriteString("  ")
 		}
 
-		indicator := pipeIndicator(phase.Status, ps.spinner.View())
-		name := pipePhaseName(phase.Status, phase.Name)
+		var indicator, name string
+		if phase.Status == PhaseRunning && ps.aborting {
+			indicator = pipeFailedStyle.Render("⚠")
+			name = pipeRunningStyle.Render(phase.Name + " Aborting...")
+		} else {
+			indicator = pipeIndicator(phase.Status, ps.spinner.View())
+			name = pipePhaseName(phase.Status, phase.Name)
+		}
 		fmt.Fprintf(&b, "%s %s", indicator, name)
 
 		if phase.Attempt > 1 {
@@ -191,10 +198,7 @@ func (ps pipelineState) View(width, height int) string {
 
 // ViewReport renders the right-pane content for the currently selected phase.
 func (ps pipelineState) ViewReport(width, height int) string {
-	if len(ps.phases) == 0 {
-		return ""
-	}
-	if ps.cursor < 0 || ps.cursor >= len(ps.phases) {
+	if len(ps.phases) == 0 || ps.cursor < 0 || ps.cursor >= len(ps.phases) {
 		return ""
 	}
 
@@ -206,8 +210,13 @@ func (ps pipelineState) ViewReport(width, height int) string {
 
 	case PhaseRunning:
 		var b strings.Builder
-		fmt.Fprintf(&b, "%s  %s\n", pipeRunningStyle.Render(phase.Name), pipeRunningStyle.Render("Running"))
-		fmt.Fprintf(&b, "\n%s %s", ps.spinner.View(), pipeRunningStyle.Render("In progress..."))
+		if ps.aborting {
+			fmt.Fprintf(&b, "%s  %s\n", pipeRunningStyle.Render(phase.Name), pipeFailedStyle.Render("Aborting"))
+			fmt.Fprintf(&b, "\n%s %s", pipeFailedStyle.Render("⚠"), pipeFailedStyle.Render("Waiting for cleanup..."))
+		} else {
+			fmt.Fprintf(&b, "%s  %s\n", pipeRunningStyle.Render(phase.Name), pipeRunningStyle.Render("Running"))
+			fmt.Fprintf(&b, "\n%s %s", ps.spinner.View(), pipeRunningStyle.Render("In progress..."))
+		}
 		return b.String()
 
 	case PhaseSkipped:
@@ -236,7 +245,7 @@ func (ps pipelineState) formatReport(r *PhaseReport) string {
 
 	// Duration.
 	if r.Duration > 0 {
-		fmt.Fprintf(&b, "\n%s %s", pipeDurationStyle.Render("Duration:"), pipeDurationStyle.Render(fmt.Sprintf("%.1fs", r.Duration.Seconds())))
+		fmt.Fprintf(&b, "\n%s", pipeDurationStyle.Render(fmt.Sprintf("Duration: %.1fs", r.Duration.Seconds())))
 	}
 
 	// Summary.

@@ -1180,6 +1180,204 @@ func TestModel_InitReturnsBatchWithSpinner(t *testing.T) {
 	}
 }
 
+// --- Resize edge case tests ---
+
+func TestModel_ResizeRecalculatesViewportDimensions(t *testing.T) {
+	// Given: a model sized at 80x30
+	m := newSizedModel(80, 30)
+	origVPWidth := m.viewport.Width
+	origVPHeight := m.viewport.Height
+
+	// When: the window is resized to 120x50
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+	m = updated.(Model)
+
+	// Then: viewport dimensions are recalculated (larger window → larger viewport)
+	if m.viewport.Width <= origVPWidth {
+		t.Errorf("viewport width should increase: got %d, was %d", m.viewport.Width, origVPWidth)
+	}
+	if m.viewport.Height <= origVPHeight {
+		t.Errorf("viewport height should increase: got %d, was %d", m.viewport.Height, origVPHeight)
+	}
+}
+
+func TestModel_ResizeSmallTerminalClampsMinLeft(t *testing.T) {
+	// Given: a model sized at a very small width
+	m := newSizedModel(40, 20)
+
+	// When: PaneWidths is calculated for that width
+	left, _ := PaneWidths(m.width)
+
+	// Then: the left pane respects the minimum width
+	if left < MinLeftWidth {
+		t.Errorf("left pane = %d, want >= %d (MinLeftWidth)", left, MinLeftWidth)
+	}
+}
+
+// --- Abort tests ---
+
+func TestModel_AbortSetsAbortingFlag(t *testing.T) {
+	// Given: a model in pipeline mode with a cancel function
+	var cancelled bool
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.cancelPipeline = func() { cancelled = true }
+
+	// When: q is pressed (first press)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+
+	// Then: aborting flag is set and cancel function is called
+	if !m.aborting {
+		t.Error("aborting should be true after first q in pipeline mode")
+	}
+	if !cancelled {
+		t.Error("cancelPipeline should be called on first q")
+	}
+}
+
+func TestModel_AbortChannelClosedTransitionsToBrowse(t *testing.T) {
+	// Given: a model in pipeline mode that is aborting
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.aborting = true
+	m.cancelPipeline = func() {}
+
+	// When: channelClosedMsg is received
+	updated, _ := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: the model transitions to browse mode (not summary)
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse (%d) after abort", m.mode, ModeBrowse)
+	}
+	if m.aborting {
+		t.Error("aborting should be cleared after transition to browse")
+	}
+}
+
+func TestModel_AbortDoesNotRunPostPipeline(t *testing.T) {
+	// Given: a model in pipeline mode with postPipeline configured and aborting
+	var postPipelineCalled bool
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithPostPipelineFunc(func(beadID string) error {
+			postPipelineCalled = true
+			return nil
+		}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModePipeline
+	m.aborting = true
+	m.cancelPipeline = func() {}
+	m.dispatchedBeadID = "cap-001"
+
+	// When: channelClosedMsg is received
+	updated, cmd := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: mode is browse and postPipeline is not triggered
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+	// Execute any returned commands to verify postPipeline is not called
+	if cmd != nil {
+		for _, msg := range execBatch(t, cmd) {
+			if _, ok := msg.(PostPipelineDoneMsg); ok {
+				t.Error("postPipeline should not fire on abort")
+			}
+		}
+	}
+	if postPipelineCalled {
+		t.Error("PostPipelineFunc should not be called during abort")
+	}
+}
+
+func TestModel_AbortViewShowsAbortingIndicator(t *testing.T) {
+	// Given: a model in pipeline mode with a running phase and aborting
+	m := newPipelineModel(90, 40, []string{"plan", "code"})
+	updated, _ := m.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+	m = updated.(Model)
+	m.aborting = true
+	m.pipeline.aborting = true
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: "Aborting" is shown in the view
+	if !strings.Contains(plain, "Aborting") {
+		t.Errorf("view should show 'Aborting' during abort, got:\n%s", plain)
+	}
+}
+
+// --- Double-press force quit tests ---
+
+func TestModel_DoublePressQForceQuits(t *testing.T) {
+	// Given: a model in pipeline mode that is already aborting
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.aborting = true
+
+	// When: q is pressed again (second press)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	// Then: a quit command is returned (force quit)
+	if cmd == nil {
+		t.Fatal("second q during abort should return a quit command")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("second q during abort should produce tea.QuitMsg, got %T", msg)
+	}
+}
+
+func TestModel_DoublePressCtrlCForceQuits(t *testing.T) {
+	// Given: a model in pipeline mode that is already aborting
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.aborting = true
+
+	// When: ctrl+c is pressed again (second press)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	// Then: a quit command is returned (force quit)
+	if cmd == nil {
+		t.Fatal("second ctrl+c during abort should return a quit command")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("second ctrl+c during abort should produce tea.QuitMsg, got %T", msg)
+	}
+}
+
+// --- Global refresh key tests ---
+
+func TestModel_RefreshWorksFromRightPane(t *testing.T) {
+	// Given: a model in browse mode with right pane focused and a lister
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+	m.focus = PaneRight
+
+	// When: r is pressed from the right pane
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(Model)
+
+	// Then: a refresh is triggered (browse enters loading state)
+	if !m.browse.loading {
+		t.Error("r from right pane should trigger refresh (loading=true)")
+	}
+	if cmd == nil {
+		t.Fatal("r from right pane should produce a refresh command")
+	}
+}
+
 func TestModel_ResolveErrorNavigable(t *testing.T) {
 	// Given: a model with cap-001 resolve failed
 	m, _ := newResolverModel(90, 40)

@@ -46,6 +46,7 @@ type Model struct {
 	pipelineErr      error
 	postPipeline     PostPipelineFunc
 	dispatchedBeadID string
+	aborting         bool
 }
 
 // newBrowseSpinner returns a spinner for browse mode loading states.
@@ -250,6 +251,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case channelClosedMsg:
 		m.cancelPipeline = nil
 		m.eventCh = nil
+		if m.aborting {
+			return m.returnToBrowseAfterAbort()
+		}
 		m.mode = ModeSummary
 		return m, nil
 
@@ -283,10 +287,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Global keys.
 	switch msg.String() {
 	case "q", "ctrl+c":
-		if m.mode == ModeBrowse {
+		switch {
+		case m.mode == ModeBrowse:
 			return m, tea.Quit
-		}
-		if m.mode == ModePipeline && m.cancelPipeline != nil {
+		case m.mode == ModePipeline && m.aborting:
+			return m, tea.Quit
+		case m.mode == ModePipeline && m.cancelPipeline != nil:
+			m.aborting = true
+			m.pipeline.aborting = true
 			m.cancelPipeline()
 			return m, nil
 		}
@@ -297,6 +305,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = PaneLeft
 		}
 		return m, nil
+	case "r":
+		if m.mode == ModeBrowse {
+			m.browse.loading = true
+			m.browse.err = nil
+			return m, func() tea.Msg { return RefreshBeadsMsg{} }
+		}
 	}
 
 	// Mode-specific keys.
@@ -340,6 +354,7 @@ func (m Model) handleDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.pipeline = newPipelineState(m.phaseNames)
 	m.pipelineOutput = nil
 	m.pipelineErr = nil
+	m.aborting = false
 	m.dispatchedBeadID = msg.BeadID
 	input := PipelineInput{BeadID: msg.BeadID}
 	go dispatchPipeline(ctx, m.runner, input, ch)
