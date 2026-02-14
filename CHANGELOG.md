@@ -35,3 +35,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Summary mode on completion: pass/fail result with phase count and timing, any-key return to browse
   - Graceful abort with q/Ctrl+C during pipeline execution
   - TTY detection with clear error message when run without a terminal
+- Dashboard polish and edge case handling (cap-kxw.3)
+  - Shared post-pipeline lifecycle: merge, cleanup, and close bead run in background after pipeline completion
+  - Terminal resize: both panes re-layout proportionally on window size changes
+  - Graceful abort: Ctrl+C during pipeline triggers cleanup and returns to browse; double-press force quits
+  - Missing bd detection: clear error message when bd is not installed
+  - Empty bead list: "No ready beads" message with refresh hint
+  - Given-When-Then structural comments on all dashboard test files
+  - Smoke test for dashboard pipeline mode
