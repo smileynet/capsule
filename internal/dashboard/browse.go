@@ -100,6 +100,15 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 	return bs, nil
 }
 
+// SelectedID returns the bead ID at the current cursor position,
+// or "" if the list is empty or still loading.
+func (bs browseState) SelectedID() string {
+	if len(bs.beads) == 0 || bs.cursor < 0 || bs.cursor >= len(bs.beads) {
+		return ""
+	}
+	return bs.beads[bs.cursor].ID
+}
+
 // View renders the browse pane content for the given dimensions.
 func (bs browseState) View(width, height int) string {
 	if bs.loading {

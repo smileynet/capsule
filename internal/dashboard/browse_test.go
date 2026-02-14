@@ -249,6 +249,56 @@ func TestBrowse_KeysIgnoredDuringLoading(t *testing.T) {
 	}
 }
 
+func TestBrowse_SelectedID(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func() browseState
+		wantID string
+	}{
+		{
+			name:   "loading returns empty",
+			setup:  newBrowseState,
+			wantID: "",
+		},
+		{
+			name: "empty list returns empty",
+			setup: func() browseState {
+				bs := newBrowseState()
+				bs, _ = bs.Update(BeadListMsg{Beads: []BeadSummary{}})
+				return bs
+			},
+			wantID: "",
+		},
+		{
+			name: "first bead selected by default",
+			setup: func() browseState {
+				bs := newBrowseState()
+				bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+				return bs
+			},
+			wantID: "cap-001",
+		},
+		{
+			name: "second bead after cursor down",
+			setup: func() browseState {
+				bs := newBrowseState()
+				bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+				bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+				return bs
+			},
+			wantID: "cap-002",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bs := tt.setup()
+			if got := bs.SelectedID(); got != tt.wantID {
+				t.Errorf("SelectedID() = %q, want %q", got, tt.wantID)
+			}
+		})
+	}
+}
+
 func TestBrowse_ErrorThenRetry(t *testing.T) {
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Err: fmt.Errorf("timeout")})
