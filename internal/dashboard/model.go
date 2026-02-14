@@ -249,6 +249,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes key messages with global and mode-specific routing.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Summary mode: any key returns to browse with cache refresh.
+	if m.mode == ModeSummary {
+		return m.returnToBrowse()
+	}
+
 	// Global keys.
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -381,15 +386,15 @@ func (m Model) View() string {
 
 // viewLeft renders the left pane content based on mode.
 func (m Model) viewLeft() string {
+	leftWidth, _ := PaneWidths(m.width)
+	w := leftWidth - borderChrome
+	h := m.contentHeight()
+
 	switch m.mode {
-	case ModePipeline:
-		leftWidth, _ := PaneWidths(m.width)
-		return m.pipeline.View(leftWidth-borderChrome, m.contentHeight())
-	case ModeSummary:
-		return "Summary"
+	case ModePipeline, ModeSummary:
+		return m.pipeline.View(w, h)
 	default:
-		leftWidth, _ := PaneWidths(m.width)
-		return m.browse.View(leftWidth-borderChrome, m.contentHeight())
+		return m.browse.View(w, h)
 	}
 }
 
@@ -400,7 +405,7 @@ func (m Model) viewRight() string {
 		_, rightWidth := PaneWidths(m.width)
 		return m.pipeline.ViewReport(rightWidth-borderChrome, m.contentHeight())
 	case ModeSummary:
-		return "Result details"
+		return m.viewSummaryRight()
 	default:
 		return m.viewBrowseDetail()
 	}
