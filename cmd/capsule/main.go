@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/campaign"
 	"github.com/smileynet/capsule/internal/config"
+	"github.com/smileynet/capsule/internal/dashboard"
 	"github.com/smileynet/capsule/internal/gate"
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/prompt"
@@ -33,11 +36,12 @@ var (
 
 // CLI is the top-level command structure for capsule.
 type CLI struct {
-	Version  kong.VersionFlag `help:"Show version." short:"V"`
-	Run      RunCmd           `cmd:"" help:"Run a capsule pipeline."`
-	Campaign CampaignCmd      `cmd:"" help:"Run a campaign for a feature or epic."`
-	Abort    AbortCmd         `cmd:"" help:"Abort a running capsule."`
-	Clean    CleanCmd         `cmd:"" help:"Clean up capsule worktree and artifacts."`
+	Version   kong.VersionFlag `help:"Show version." short:"V"`
+	Run       RunCmd           `cmd:"" help:"Run a capsule pipeline."`
+	Campaign  CampaignCmd      `cmd:"" help:"Run a campaign for a feature or epic."`
+	Dashboard DashboardCmd     `cmd:"" help:"Open interactive dashboard TUI."`
+	Abort     AbortCmd         `cmd:"" help:"Abort a running capsule."`
+	Clean     CleanCmd         `cmd:"" help:"Clean up capsule worktree and artifacts."`
 }
 
 // RunCmd executes a capsule pipeline for a given bead.
@@ -402,6 +406,91 @@ func (c *CleanCmd) run(w io.Writer, mgr worktreeOps) error {
 
 	_, _ = fmt.Fprintf(w, "Cleaned capsule %s\n", c.BeadID)
 	return nil
+}
+
+// --- Dashboard command ---
+
+// DashboardCmd opens the interactive dashboard TUI.
+type DashboardCmd struct{}
+
+// teaRunner abstracts Bubble Tea program execution for testing.
+type teaRunner interface {
+	Run() (tea.Model, error)
+}
+
+// Run builds real dependencies and launches the dashboard TUI.
+func (d *DashboardCmd) Run() error {
+	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+		return fmt.Errorf("dashboard: requires a terminal (TTY)")
+	}
+
+	bdClient := bead.NewClient(".")
+	lister := &beadListerAdapter{client: bdClient}
+	resolver := &beadResolverAdapter{client: bdClient}
+
+	m := dashboard.NewModel(
+		dashboard.WithBeadLister(lister),
+		dashboard.WithBeadResolver(resolver),
+	)
+
+	prog := tea.NewProgram(m, tea.WithAltScreen())
+	return d.run(true, prog)
+}
+
+// run executes the tea program, enabling testable wiring.
+func (d *DashboardCmd) run(isTTY bool, prog teaRunner) error {
+	if !isTTY {
+		return fmt.Errorf("dashboard: requires a terminal (TTY)")
+	}
+	_, err := prog.Run()
+	return err
+}
+
+// --- Dashboard adapter types ---
+
+// beadListerAdapter wraps *bead.Client to implement dashboard.BeadLister.
+type beadListerAdapter struct {
+	client *bead.Client
+}
+
+func (a *beadListerAdapter) Ready() ([]dashboard.BeadSummary, error) {
+	summaries, err := a.client.Ready()
+	if err != nil {
+		return nil, err
+	}
+	beads := make([]dashboard.BeadSummary, len(summaries))
+	for i, s := range summaries {
+		beads[i] = dashboard.BeadSummary{
+			ID:       s.ID,
+			Title:    s.Title,
+			Priority: s.Priority,
+			Type:     s.Type,
+		}
+	}
+	return beads, nil
+}
+
+// beadResolverAdapter wraps *bead.Client to implement dashboard.BeadResolver.
+type beadResolverAdapter struct {
+	client *bead.Client
+}
+
+func (a *beadResolverAdapter) Resolve(id string) (dashboard.BeadDetail, error) {
+	ctx, err := a.client.Resolve(id)
+	if err != nil {
+		return dashboard.BeadDetail{}, err
+	}
+	// Priority and Type are zero-valued: worklog.BeadContext does not carry them.
+	return dashboard.BeadDetail{
+		ID:           ctx.TaskID,
+		Title:        ctx.TaskTitle,
+		Description:  ctx.TaskDescription,
+		Acceptance:   ctx.AcceptanceCriteria,
+		EpicID:       ctx.EpicID,
+		EpicTitle:    ctx.EpicTitle,
+		FeatureID:    ctx.FeatureID,
+		FeatureTitle: ctx.FeatureTitle,
+	}, nil
 }
 
 // --- Campaign adapter types ---
