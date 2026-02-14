@@ -6,15 +6,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"time"
 
 	"github.com/alecthomas/kong"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/campaign"
 	"github.com/smileynet/capsule/internal/config"
+	"github.com/smileynet/capsule/internal/dashboard"
 	"github.com/smileynet/capsule/internal/gate"
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/prompt"
@@ -33,11 +37,12 @@ var (
 
 // CLI is the top-level command structure for capsule.
 type CLI struct {
-	Version  kong.VersionFlag `help:"Show version." short:"V"`
-	Run      RunCmd           `cmd:"" help:"Run a capsule pipeline."`
-	Campaign CampaignCmd      `cmd:"" help:"Run a campaign for a feature or epic."`
-	Abort    AbortCmd         `cmd:"" help:"Abort a running capsule."`
-	Clean    CleanCmd         `cmd:"" help:"Clean up capsule worktree and artifacts."`
+	Version   kong.VersionFlag `help:"Show version." short:"V"`
+	Run       RunCmd           `cmd:"" help:"Run a capsule pipeline."`
+	Campaign  CampaignCmd      `cmd:"" help:"Run a campaign for a feature or epic."`
+	Dashboard DashboardCmd     `cmd:"" help:"Open interactive dashboard TUI."`
+	Abort     AbortCmd         `cmd:"" help:"Abort a running capsule."`
+	Clean     CleanCmd         `cmd:"" help:"Clean up capsule worktree and artifacts."`
 }
 
 // RunCmd executes a capsule pipeline for a given bead.
@@ -247,7 +252,7 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 
 	// Post-pipeline lifecycle: merge → cleanup → close bead.
 	// Best-effort: pipeline success is the hard requirement.
-	r.runPostPipeline(w, wt, bd)
+	postPipeline(w, r.BeadID, wt, bd)
 	return nil
 }
 
@@ -283,11 +288,10 @@ func (r *RunCmd) resolveBeadContext(w io.Writer, bd beadResolver) worklog.BeadCo
 	return beadCtx
 }
 
-// runPostPipeline performs merge, cleanup, and bead closing after a successful pipeline.
-// Failures print warnings but don't affect the exit code.
-func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
-	id := r.BeadID
-
+// postPipeline performs merge, cleanup, and bead closing after a successful pipeline.
+// Callable from both RunCmd and DashboardCmd. Failures print warnings to w but are
+// otherwise best-effort.
+func postPipeline(w io.Writer, beadID string, wt mergeOps, bd beadResolver) {
 	// Detect main branch.
 	mainBranch, err := wt.DetectMainBranch()
 	if err != nil {
@@ -296,25 +300,25 @@ func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
 	}
 
 	// Merge to main.
-	commitMsg := fmt.Sprintf("%s: pipeline complete", id)
-	err = wt.MergeToMain(id, mainBranch, commitMsg)
+	commitMsg := fmt.Sprintf("%s: pipeline complete", beadID)
+	err = wt.MergeToMain(beadID, mainBranch, commitMsg)
 	if err != nil {
 		if errors.Is(err, worktree.ErrMergeConflict) {
-			_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", id, mainBranch)
+			_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", beadID, mainBranch)
 			_, _ = fmt.Fprintf(w, "  To fix:\n")
 			_, _ = fmt.Fprintf(w, "    git checkout %s\n", mainBranch)
-			_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", id)
+			_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", beadID)
 			_, _ = fmt.Fprintf(w, "    # resolve conflicts, then:\n")
-			_, _ = fmt.Fprintf(w, "    capsule clean %s\n", id)
+			_, _ = fmt.Fprintf(w, "    capsule clean %s\n", beadID)
 			return
 		}
 		_, _ = fmt.Fprintf(w, "warning: merge failed: %v\n", err)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", id, mainBranch)
+	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", beadID, mainBranch)
 
 	// Cleanup: remove worktree and branch.
-	if err := wt.Remove(id, true); err != nil {
+	if err := wt.Remove(beadID, true); err != nil {
 		_, _ = fmt.Fprintf(w, "warning: cleanup failed: %v\n", err)
 	}
 	if err := wt.Prune(); err != nil {
@@ -322,13 +326,13 @@ func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
 	}
 
 	// Close bead.
-	if err := bd.Close(id); err != nil {
+	if err := bd.Close(beadID); err != nil {
 		_, _ = fmt.Fprintf(w, "warning: bead close failed: %v\n", err)
 	} else {
-		_, _ = fmt.Fprintf(w, "Closed %s\n", id)
+		_, _ = fmt.Fprintf(w, "Closed %s\n", beadID)
 	}
 
-	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", id)
+	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", beadID)
 }
 
 // AbortCmd aborts a running capsule by removing the worktree.
@@ -402,6 +406,107 @@ func (c *CleanCmd) run(w io.Writer, mgr worktreeOps) error {
 
 	_, _ = fmt.Fprintf(w, "Cleaned capsule %s\n", c.BeadID)
 	return nil
+}
+
+// --- Dashboard command ---
+
+// DashboardCmd opens the interactive dashboard TUI.
+type DashboardCmd struct{}
+
+// teaRunner abstracts Bubble Tea program execution for testing.
+type teaRunner interface {
+	Run() (tea.Model, error)
+}
+
+// Run builds real dependencies and launches the dashboard TUI.
+func (d *DashboardCmd) Run() error {
+	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+		return fmt.Errorf("dashboard: requires a terminal (TTY)")
+	}
+
+	if _, err := exec.LookPath("bd"); err != nil {
+		return fmt.Errorf("dashboard: bd is not installed (required for bead management)")
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("dashboard: %w", err)
+	}
+
+	bdClient := bead.NewClient(".")
+	lister := &beadListerAdapter{client: bdClient}
+	resolver := &beadResolverAdapter{client: bdClient}
+	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+
+	ppFunc := func(beadID string) error {
+		postPipeline(io.Discard, beadID, wtMgr, bdClient)
+		return nil
+	}
+
+	m := dashboard.NewModel(
+		dashboard.WithBeadLister(lister),
+		dashboard.WithBeadResolver(resolver),
+		dashboard.WithPostPipelineFunc(ppFunc),
+	)
+
+	prog := tea.NewProgram(m, tea.WithAltScreen())
+	return d.run(true, prog)
+}
+
+// run executes the tea program, enabling testable wiring.
+func (d *DashboardCmd) run(isTTY bool, prog teaRunner) error {
+	if !isTTY {
+		return fmt.Errorf("dashboard: requires a terminal (TTY)")
+	}
+	_, err := prog.Run()
+	return err
+}
+
+// --- Dashboard adapter types ---
+
+// beadListerAdapter wraps *bead.Client to implement dashboard.BeadLister.
+type beadListerAdapter struct {
+	client *bead.Client
+}
+
+func (a *beadListerAdapter) Ready() ([]dashboard.BeadSummary, error) {
+	summaries, err := a.client.Ready()
+	if err != nil {
+		return nil, err
+	}
+	beads := make([]dashboard.BeadSummary, len(summaries))
+	for i, s := range summaries {
+		beads[i] = dashboard.BeadSummary{
+			ID:       s.ID,
+			Title:    s.Title,
+			Priority: s.Priority,
+			Type:     s.Type,
+		}
+	}
+	return beads, nil
+}
+
+// beadResolverAdapter wraps *bead.Client to implement dashboard.BeadResolver.
+type beadResolverAdapter struct {
+	client *bead.Client
+}
+
+func (a *beadResolverAdapter) Resolve(id string) (dashboard.BeadDetail, error) {
+	ctx, err := a.client.Resolve(id)
+	if err != nil {
+		return dashboard.BeadDetail{}, err
+	}
+	// Priority and Type are zero-valued: worklog.BeadContext does not carry them.
+	return dashboard.BeadDetail{
+		ID:           ctx.TaskID,
+		Title:        ctx.TaskTitle,
+		Description:  ctx.TaskDescription,
+		Acceptance:   ctx.AcceptanceCriteria,
+		EpicID:       ctx.EpicID,
+		EpicTitle:    ctx.EpicTitle,
+		FeatureID:    ctx.FeatureID,
+		FeatureTitle: ctx.FeatureTitle,
+	}, nil
 }
 
 // --- Campaign adapter types ---

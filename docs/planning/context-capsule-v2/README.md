@@ -1,6 +1,6 @@
 # Context: Capsule v2
 
-**Status:** finalized
+**Status:** archived
 **Created:** 2026-02-06
 **Updated:** 2026-02-06
 

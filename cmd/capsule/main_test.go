@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/orchestrator"
@@ -976,3 +977,135 @@ func TestFeature_CleanCommand(t *testing.T) {
 		}
 	})
 }
+
+func TestPostPipeline_MergesAndClosesBead(t *testing.T) {
+	// Given: mock worktree and bead resolver that succeed
+	var buf bytes.Buffer
+	wt := &mockMergeOps{mainBranch: "main"}
+	bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-pp"}}
+
+	// When: postPipeline is called
+	postPipeline(&buf, "cap-pp", wt, bd)
+
+	// Then: merge and close are called
+	if !wt.merged {
+		t.Error("merge was not called")
+	}
+	if !bd.closed {
+		t.Error("bead close was not called")
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Merged capsule-cap-pp") {
+		t.Errorf("output missing merge message, got: %q", output)
+	}
+	if !strings.Contains(output, "Closed cap-pp") {
+		t.Errorf("output missing close message, got: %q", output)
+	}
+}
+
+func TestPostPipeline_WarnsOnMergeConflict(t *testing.T) {
+	// Given: mock worktree that returns merge conflict
+	var buf bytes.Buffer
+	wt := &mockMergeOps{mainBranch: "main", mergeErr: worktree.ErrMergeConflict}
+	bd := &mockBeadResolver{}
+
+	// When: postPipeline is called
+	postPipeline(&buf, "cap-conflict", wt, bd)
+
+	// Then: merge conflict warning is printed
+	output := buf.String()
+	if !strings.Contains(output, "merge conflict") {
+		t.Errorf("output missing merge conflict warning, got: %q", output)
+	}
+	// And: bead close is NOT called (merge failed)
+	if bd.closed {
+		t.Error("bead should not be closed after merge conflict")
+	}
+}
+
+func TestFeature_DashboardCommand(t *testing.T) {
+	t.Run("dashboard subcommand is parsed", func(t *testing.T) {
+		// Given a CLI parser
+		var cli CLI
+		k, err := kong.New(&cli, kong.Vars{"version": "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// When dashboard command is invoked
+		kctx, err := k.Parse([]string{"dashboard"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Then the command is parsed correctly
+		if kctx.Command() != "dashboard" {
+			t.Errorf("got command %q, want %q", kctx.Command(), "dashboard")
+		}
+	})
+
+	t.Run("run returns error when not a TTY", func(t *testing.T) {
+		// Given a DashboardCmd
+		cmd := &DashboardCmd{}
+
+		// When run is called with isTTY=false
+		err := cmd.run(false, nil)
+
+		// Then an error mentioning "terminal" is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "terminal") {
+			t.Errorf("error = %q, want to contain 'terminal'", err)
+		}
+	})
+
+	t.Run("run executes tea program when TTY", func(t *testing.T) {
+		// Given a DashboardCmd and a mock tea program
+		cmd := &DashboardCmd{}
+		mock := &mockTeaRunner{}
+
+		// When run is called with isTTY=true
+		err := cmd.run(true, mock)
+
+		// Then no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And the program was run
+		if !mock.ran {
+			t.Error("tea program was not run")
+		}
+	})
+
+	t.Run("run returns tea program error", func(t *testing.T) {
+		// Given a DashboardCmd and a mock that fails
+		cmd := &DashboardCmd{}
+		mock := &mockTeaRunner{err: fmt.Errorf("tea: terminal error")}
+
+		// When run is called
+		err := cmd.run(true, mock)
+
+		// Then the tea error is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "tea: terminal error") {
+			t.Errorf("error = %q, want to contain tea error", err)
+		}
+	})
+}
+
+// mockTeaRunner stubs tea program execution for DashboardCmd testing.
+type mockTeaRunner struct {
+	ran bool
+	err error
+}
+
+func (m *mockTeaRunner) Run() (tea.Model, error) {
+	m.ran = true
+	return nil, m.err
+}
+
+// Compile-time check: mockTeaRunner satisfies teaRunner.
+var _ teaRunner = (*mockTeaRunner)(nil)
