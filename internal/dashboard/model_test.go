@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -527,6 +528,39 @@ func newPipelineModel(w, h int, phases []string) Model {
 	return updated.(Model)
 }
 
+// mockRunner implements PipelineRunner for testing.
+type mockRunner struct {
+	events []PhaseUpdateMsg
+	output PipelineOutput
+	err    error
+}
+
+func (r *mockRunner) RunPipeline(_ context.Context, _ PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error) {
+	for _, e := range r.events {
+		statusFn(e)
+	}
+	return r.output, r.err
+}
+
+// drainPipeline pumps all events from m.eventCh through Update until
+// channelClosedMsg transitions the model to summary mode.
+func drainPipeline(t *testing.T, m Model) Model {
+	t.Helper()
+	for i := 0; i < 20; i++ { // safety limit
+		cmd := listenForEvents(m.eventCh)
+		if cmd == nil {
+			break
+		}
+		msg := cmd()
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+		if _, ok := msg.(channelClosedMsg); ok {
+			break
+		}
+	}
+	return m
+}
+
 func TestModel_PipelineModeViewShowsPhases(t *testing.T) {
 	m := newPipelineModel(90, 40, []string{"plan", "code", "test"})
 
@@ -565,7 +599,7 @@ func TestModel_PipelineKeyRoutesLeft(t *testing.T) {
 func TestModel_PipelineQuitDoesNotQuitInPipelineMode(t *testing.T) {
 	m := newPipelineModel(90, 40, []string{"plan"})
 
-	// q should not quit in pipeline mode (it's "abort" but needs dispatch wiring).
+	// q should cancel the pipeline, not quit the program.
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd != nil {
 		msg := cmd()
@@ -627,5 +661,341 @@ func TestModel_HelpBarReflectsMode(t *testing.T) {
 				t.Errorf("View() should contain %q", tt.wantText)
 			}
 		})
+	}
+}
+
+// --- listenForEvents unit tests ---
+
+func TestListenForEvents_NilChannel(t *testing.T) {
+	cmd := listenForEvents(nil)
+	if cmd != nil {
+		t.Error("listenForEvents(nil) should return nil")
+	}
+}
+
+func TestListenForEvents_ReceivesEvent(t *testing.T) {
+	ch := make(chan tea.Msg, 1)
+	ch <- PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning}
+
+	cmd := listenForEvents(ch)
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd")
+	}
+	msg := cmd()
+	pu, ok := msg.(PhaseUpdateMsg)
+	if !ok {
+		t.Fatalf("expected PhaseUpdateMsg, got %T", msg)
+	}
+	if pu.Phase != "plan" {
+		t.Errorf("Phase = %q, want %q", pu.Phase, "plan")
+	}
+}
+
+func TestListenForEvents_ClosedChannel(t *testing.T) {
+	ch := make(chan tea.Msg)
+	close(ch)
+
+	cmd := listenForEvents(ch)
+	msg := cmd()
+	if _, ok := msg.(channelClosedMsg); !ok {
+		t.Fatalf("expected channelClosedMsg, got %T", msg)
+	}
+}
+
+// --- dispatchPipeline unit tests ---
+
+func TestDispatchPipeline_SendsEventsAndDone(t *testing.T) {
+	runner := &mockRunner{
+		events: []PhaseUpdateMsg{
+			{Phase: "plan", Status: PhaseRunning},
+			{Phase: "plan", Status: PhasePassed, Duration: time.Second},
+		},
+		output: PipelineOutput{Success: true},
+	}
+	ch := make(chan tea.Msg, 16)
+	ctx := context.Background()
+
+	dispatchPipeline(ctx, runner, PipelineInput{BeadID: "cap-001"}, ch)
+
+	// First two messages: PhaseUpdateMsgs.
+	for i, want := range []PhaseStatus{PhaseRunning, PhasePassed} {
+		msg := <-ch
+		pu, ok := msg.(PhaseUpdateMsg)
+		if !ok {
+			t.Fatalf("event %d: expected PhaseUpdateMsg, got %T", i, msg)
+		}
+		if pu.Status != want {
+			t.Errorf("event %d: status = %q, want %q", i, pu.Status, want)
+		}
+	}
+
+	// Third message: PipelineDoneMsg.
+	msg := <-ch
+	done, ok := msg.(PipelineDoneMsg)
+	if !ok {
+		t.Fatalf("expected PipelineDoneMsg, got %T", msg)
+	}
+	if !done.Output.Success {
+		t.Error("expected Success = true")
+	}
+
+	// Channel should be closed.
+	_, ok = <-ch
+	if ok {
+		t.Error("channel should be closed after dispatchPipeline returns")
+	}
+}
+
+func TestDispatchPipeline_SendsError(t *testing.T) {
+	runner := &mockRunner{err: fmt.Errorf("pipeline failed")}
+	ch := make(chan tea.Msg, 16)
+
+	dispatchPipeline(context.Background(), runner, PipelineInput{}, ch)
+
+	msg := <-ch
+	errMsg, ok := msg.(PipelineErrorMsg)
+	if !ok {
+		t.Fatalf("expected PipelineErrorMsg, got %T", msg)
+	}
+	if errMsg.Err == nil || errMsg.Err.Error() != "pipeline failed" {
+		t.Errorf("unexpected error: %v", errMsg.Err)
+	}
+
+	_, ok = <-ch
+	if ok {
+		t.Error("channel should be closed")
+	}
+}
+
+// --- Model dispatch wiring tests ---
+
+func TestModel_DispatchWithRunnerTransitions(t *testing.T) {
+	runner := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(runner),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	updated, cmd := m.Update(DispatchMsg{BeadID: "cap-001"})
+	m = updated.(Model)
+
+	if m.mode != ModePipeline {
+		t.Errorf("mode = %d, want ModePipeline (%d)", m.mode, ModePipeline)
+	}
+	if m.cancelPipeline == nil {
+		t.Error("cancelPipeline should be set")
+	}
+	if m.eventCh == nil {
+		t.Error("eventCh should be set")
+	}
+	if cmd == nil {
+		t.Error("dispatch should return a command")
+	}
+}
+
+func TestModel_DispatchWithoutRunnerIgnored(t *testing.T) {
+	m := newSizedModel(90, 40)
+
+	updated, cmd := m.Update(DispatchMsg{BeadID: "cap-001"})
+	m = updated.(Model)
+
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse (%d)", m.mode, ModeBrowse)
+	}
+	if cmd != nil {
+		t.Error("should return nil command without runner")
+	}
+}
+
+func TestModel_DispatchResetsState(t *testing.T) {
+	runner := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(runner),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.focus = PaneRight
+	m.pipelineOutput = &PipelineOutput{}
+	m.pipelineErr = fmt.Errorf("old error")
+
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-001"})
+	m = updated.(Model)
+
+	if m.focus != PaneLeft {
+		t.Error("dispatch should reset focus to left pane")
+	}
+	if m.pipelineOutput != nil {
+		t.Error("dispatch should clear pipelineOutput")
+	}
+	if m.pipelineErr != nil {
+		t.Error("dispatch should clear pipelineErr")
+	}
+}
+
+// --- Channel message handler tests ---
+
+func TestModel_ChannelClosedTransitionsToSummary(t *testing.T) {
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.cancelPipeline = func() {}
+
+	updated, _ := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	if m.mode != ModeSummary {
+		t.Errorf("mode = %d, want ModeSummary (%d)", m.mode, ModeSummary)
+	}
+	if m.cancelPipeline != nil {
+		t.Error("cancelPipeline should be nil after channel closed")
+	}
+	if m.eventCh != nil {
+		t.Error("eventCh should be nil after channel closed")
+	}
+}
+
+func TestModel_PipelineDoneStoresOutput(t *testing.T) {
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+
+	output := PipelineOutput{Success: true}
+	updated, _ := m.Update(PipelineDoneMsg{Output: output})
+	m = updated.(Model)
+
+	if m.pipelineOutput == nil {
+		t.Fatal("pipelineOutput should be set")
+	}
+	if !m.pipelineOutput.Success {
+		t.Error("pipelineOutput.Success should be true")
+	}
+}
+
+func TestModel_PipelineErrorStoresErr(t *testing.T) {
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+
+	updated, _ := m.Update(PipelineErrorMsg{Err: fmt.Errorf("boom")})
+	m = updated.(Model)
+
+	if m.pipelineErr == nil {
+		t.Fatal("pipelineErr should be set")
+	}
+}
+
+// --- Abort tests ---
+
+func TestModel_PipelineQuitCancels(t *testing.T) {
+	var cancelled bool
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.cancelPipeline = func() { cancelled = true }
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	if !cancelled {
+		t.Error("q in pipeline mode should cancel the pipeline")
+	}
+}
+
+func TestModel_PipelineCtrlCCancels(t *testing.T) {
+	var cancelled bool
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.cancelPipeline = func() { cancelled = true }
+
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	if !cancelled {
+		t.Error("ctrl+c in pipeline mode should cancel the pipeline")
+	}
+}
+
+// --- Integration test: full pipeline flow ---
+
+func TestModel_PipelineFullFlow(t *testing.T) {
+	runner := &mockRunner{
+		events: []PhaseUpdateMsg{
+			{Phase: "plan", Status: PhaseRunning},
+			{Phase: "plan", Status: PhasePassed, Duration: time.Second},
+		},
+		output: PipelineOutput{Success: true},
+	}
+	m := NewModel(
+		WithPipelineRunner(runner),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// Dispatch starts the pipeline.
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-001"})
+	m = updated.(Model)
+
+	if m.mode != ModePipeline {
+		t.Fatal("should be in pipeline mode after dispatch")
+	}
+
+	// Drain all events through the channel pump.
+	m = drainPipeline(t, m)
+
+	if m.mode != ModeSummary {
+		t.Errorf("mode = %d, want ModeSummary after pipeline completes", m.mode)
+	}
+	if m.pipelineOutput == nil {
+		t.Fatal("pipelineOutput should be set after successful pipeline")
+	}
+	if !m.pipelineOutput.Success {
+		t.Error("pipelineOutput.Success should be true")
+	}
+}
+
+func TestModel_PipelineFullFlowError(t *testing.T) {
+	runner := &mockRunner{
+		events: []PhaseUpdateMsg{
+			{Phase: "plan", Status: PhaseRunning},
+		},
+		err: fmt.Errorf("build failed"),
+	}
+	m := NewModel(
+		WithPipelineRunner(runner),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-001"})
+	m = updated.(Model)
+
+	m = drainPipeline(t, m)
+
+	if m.mode != ModeSummary {
+		t.Errorf("mode = %d, want ModeSummary after pipeline error", m.mode)
+	}
+	if m.pipelineErr == nil {
+		t.Fatal("pipelineErr should be set after pipeline error")
+	}
+}
+
+func TestModel_PhaseUpdateReschedulesListener(t *testing.T) {
+	m := newSizedModel(90, 40)
+	m.mode = ModePipeline
+	m.pipeline = newPipelineState([]string{"plan"})
+
+	// Set up a channel to verify rescheduling.
+	ch := make(chan tea.Msg, 1)
+	ch <- PhaseUpdateMsg{Phase: "plan", Status: PhasePassed}
+	m.eventCh = ch
+
+	updated, cmd := m.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+	m = updated.(Model)
+
+	if m.pipeline.phases[0].Status != PhaseRunning {
+		t.Errorf("phase status = %q, want running", m.pipeline.phases[0].Status)
+	}
+	// cmd should be non-nil (batch of pipeline update + listener reschedule).
+	if cmd == nil {
+		t.Error("PhaseUpdateMsg should return a command to reschedule listener")
 	}
 }

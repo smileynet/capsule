@@ -3,7 +3,10 @@
 // the capsule run display.
 package dashboard
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Mode represents the current dashboard view mode.
 type Mode int
@@ -92,7 +95,7 @@ type BeadResolver interface {
 
 // PipelineRunner dispatches and runs a pipeline.
 type PipelineRunner interface {
-	RunPipeline(input PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error)
+	RunPipeline(ctx context.Context, input PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error)
 }
 
 // --- tea.Msg types ---
@@ -140,3 +143,7 @@ type DispatchMsg struct {
 // RefreshBeadsMsg signals that the bead list should be reloaded.
 // browseState emits this on 'r'; Model.Update intercepts it and calls initBrowse.
 type RefreshBeadsMsg struct{}
+
+// channelClosedMsg signals that the pipeline event channel has been closed,
+// indicating the pipeline goroutine has finished.
+type channelClosedMsg struct{}

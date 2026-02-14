@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -35,6 +36,13 @@ type Model struct {
 	detailID    string // ID currently displayed in right pane
 	resolvingID string // ID of the bead currently being resolved ("" = idle)
 	resolveErr  error  // last resolve error (nil on success)
+
+	runner         PipelineRunner
+	phaseNames     []string
+	cancelPipeline context.CancelFunc
+	eventCh        <-chan tea.Msg
+	pipelineOutput *PipelineOutput
+	pipelineErr    error
 }
 
 // NewModel creates a dashboard Model in browse mode with left-pane focus.
@@ -65,6 +73,56 @@ func WithBeadLister(l BeadLister) ModelOption {
 // WithBeadResolver sets the BeadResolver used to fetch bead details.
 func WithBeadResolver(r BeadResolver) ModelOption {
 	return func(m *Model) { m.resolver = r }
+}
+
+// WithPipelineRunner sets the PipelineRunner used to dispatch pipelines.
+func WithPipelineRunner(r PipelineRunner) ModelOption {
+	return func(m *Model) { m.runner = r }
+}
+
+// WithPhaseNames sets the phase names displayed in pipeline mode.
+func WithPhaseNames(names []string) ModelOption {
+	return func(m *Model) { m.phaseNames = names }
+}
+
+// listenForEvents returns a tea.Cmd that reads one message from ch.
+// On channel close, it returns channelClosedMsg. Returns nil if ch is nil.
+func listenForEvents(ch <-chan tea.Msg) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return channelClosedMsg{}
+		}
+		return msg
+	}
+}
+
+// dispatchPipeline runs a pipeline in the calling goroutine, bridging
+// status events to ch via statusFn. It sends PipelineDoneMsg or
+// PipelineErrorMsg on completion and closes ch when done.
+func dispatchPipeline(ctx context.Context, runner PipelineRunner, input PipelineInput, ch chan<- tea.Msg) {
+	defer close(ch)
+	statusFn := func(msg PhaseUpdateMsg) {
+		select {
+		case ch <- msg:
+		case <-ctx.Done():
+		}
+	}
+	output, err := runner.RunPipeline(ctx, input, statusFn)
+	if err != nil {
+		select {
+		case ch <- PipelineErrorMsg{Err: err}:
+		case <-ctx.Done():
+		}
+		return
+	}
+	select {
+	case ch <- PipelineDoneMsg{Output: output}:
+	case <-ctx.Done():
+	}
 }
 
 // resolveBeadCmd returns a tea.Cmd that calls resolver.Resolve(id)
@@ -152,10 +210,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case DispatchMsg:
+		return m.handleDispatch(msg)
+
 	case PhaseUpdateMsg:
 		var cmd tea.Cmd
 		m.pipeline, cmd = m.pipeline.Update(msg)
-		return m, cmd
+		return m, tea.Batch(cmd, listenForEvents(m.eventCh))
+
+	case PipelineDoneMsg:
+		m.pipelineOutput = &msg.Output
+		return m, listenForEvents(m.eventCh)
+
+	case PipelineErrorMsg:
+		m.pipelineErr = msg.Err
+		return m, listenForEvents(m.eventCh)
+
+	case channelClosedMsg:
+		m.cancelPipeline = nil
+		m.eventCh = nil
+		m.mode = ModeSummary
+		return m, nil
 
 	case spinner.TickMsg:
 		if m.mode == ModePipeline {
@@ -179,6 +254,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		if m.mode == ModeBrowse {
 			return m, tea.Quit
+		}
+		if m.mode == ModePipeline && m.cancelPipeline != nil {
+			m.cancelPipeline()
+			return m, nil
 		}
 	case "tab":
 		if m.focus == PaneLeft {
@@ -214,6 +293,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// handleDispatch transitions to pipeline mode and starts the pipeline goroutine.
+func (m Model) handleDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
+	if m.runner == nil {
+		return m, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelPipeline = cancel
+	ch := make(chan tea.Msg, 16)
+	m.eventCh = ch
+	m.mode = ModePipeline
+	m.focus = PaneLeft
+	m.pipeline = newPipelineState(m.phaseNames)
+	m.pipelineOutput = nil
+	m.pipelineErr = nil
+	input := PipelineInput{BeadID: msg.BeadID}
+	go dispatchPipeline(ctx, m.runner, input, ch)
+	return m, tea.Batch(m.pipeline.spinner.Tick, listenForEvents(ch))
 }
 
 // maybeResolve checks if the selected bead changed and triggers a resolve
