@@ -29,8 +29,9 @@ func sampleBeads() []BeadSummary {
 func TestBrowse_LoadingState(t *testing.T) {
 	bs := newBrowseState()
 	view := bs.View(40, 20)
-	if !containsPlainText(view, "Loading") {
-		t.Errorf("loading view should contain 'Loading', got:\n%s", stripANSI(view))
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "Loading") {
+		t.Errorf("loading view should contain 'Loading', got:\n%s", plain)
 	}
 }
 
