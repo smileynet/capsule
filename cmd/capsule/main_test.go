@@ -978,6 +978,51 @@ func TestFeature_CleanCommand(t *testing.T) {
 	})
 }
 
+func TestPostPipeline_MergesAndClosesBead(t *testing.T) {
+	// Given: mock worktree and bead resolver that succeed
+	var buf bytes.Buffer
+	wt := &mockMergeOps{mainBranch: "main"}
+	bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-pp"}}
+
+	// When: postPipeline is called
+	postPipeline(&buf, "cap-pp", wt, bd)
+
+	// Then: merge and close are called
+	if !wt.merged {
+		t.Error("merge was not called")
+	}
+	if !bd.closed {
+		t.Error("bead close was not called")
+	}
+	output := buf.String()
+	if !strings.Contains(output, "Merged capsule-cap-pp") {
+		t.Errorf("output missing merge message, got: %q", output)
+	}
+	if !strings.Contains(output, "Closed cap-pp") {
+		t.Errorf("output missing close message, got: %q", output)
+	}
+}
+
+func TestPostPipeline_WarnsOnMergeConflict(t *testing.T) {
+	// Given: mock worktree that returns merge conflict
+	var buf bytes.Buffer
+	wt := &mockMergeOps{mainBranch: "main", mergeErr: worktree.ErrMergeConflict}
+	bd := &mockBeadResolver{}
+
+	// When: postPipeline is called
+	postPipeline(&buf, "cap-conflict", wt, bd)
+
+	// Then: merge conflict warning is printed
+	output := buf.String()
+	if !strings.Contains(output, "merge conflict") {
+		t.Errorf("output missing merge conflict warning, got: %q", output)
+	}
+	// And: bead close is NOT called (merge failed)
+	if bd.closed {
+		t.Error("bead should not be closed after merge conflict")
+	}
+}
+
 func TestFeature_DashboardCommand(t *testing.T) {
 	t.Run("dashboard subcommand is parsed", func(t *testing.T) {
 		// Given a CLI parser

@@ -39,13 +39,37 @@ func (m Model) viewSummaryRight() string {
 }
 
 // returnToBrowse transitions from summary mode back to browse mode,
-// invalidating the bead cache and triggering a refresh.
+// invalidating the bead cache and triggering a refresh. If a post-pipeline
+// function is configured, it fires in a background goroutine.
 func (m Model) returnToBrowse() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
 	m.cache.Invalidate()
-	if m.lister != nil {
-		return m, initBrowse(m.lister)
+
+	var cmds []tea.Cmd
+
+	// Fire post-pipeline lifecycle in background if configured.
+	if m.postPipeline != nil && m.dispatchedBeadID != "" {
+		beadID := m.dispatchedBeadID
+		ppFn := m.postPipeline
+		m.dispatchedBeadID = ""
+		cmds = append(cmds, func() tea.Msg {
+			err := ppFn(beadID)
+			return PostPipelineDoneMsg{BeadID: beadID, Err: err}
+		})
 	}
-	return m, nil
+
+	// Refresh bead list.
+	if m.lister != nil {
+		cmds = append(cmds, initBrowse(m.lister))
+	}
+
+	switch len(cmds) {
+	case 0:
+		return m, nil
+	case 1:
+		return m, cmds[0]
+	default:
+		return m, tea.Batch(cmds...)
+	}
 }

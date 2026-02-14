@@ -224,3 +224,117 @@ func TestSummary_FullFlowReturnToBrowse(t *testing.T) {
 		t.Fatal("should produce refresh command")
 	}
 }
+
+func TestSummary_ReturnToBrowseFiresPostPipeline(t *testing.T) {
+	// Given: a model in summary mode with PostPipelineFunc configured
+	var calledBeadID string
+	ppFunc := func(beadID string) error {
+		calledBeadID = beadID
+		return nil
+	}
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithPostPipelineFunc(ppFunc),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeSummary
+	m.dispatchedBeadID = "cap-001"
+	m.pipeline = newPipelineState([]string{"plan"})
+	m.pipeline, _ = m.pipeline.Update(PhaseUpdateMsg{Phase: "plan", Status: PhasePassed, Duration: time.Second})
+	m.pipelineOutput = &PipelineOutput{Success: true}
+
+	// When: any key is pressed to return to browse
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: the model transitions to browse mode
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+	// And: dispatchedBeadID is cleared
+	if m.dispatchedBeadID != "" {
+		t.Errorf("dispatchedBeadID = %q, want empty", m.dispatchedBeadID)
+	}
+	// And: a batch command is produced containing both postPipeline and refresh
+	if cmd == nil {
+		t.Fatal("expected batch command")
+	}
+	batchMsg := cmd()
+	batch, ok := batchMsg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected BatchMsg, got %T", batchMsg)
+	}
+	// Execute all cmds in the batch to trigger PostPipelineFunc
+	for _, c := range batch {
+		if c != nil {
+			c()
+		}
+	}
+	if calledBeadID != "cap-001" {
+		t.Errorf("PostPipelineFunc called with %q, want %q", calledBeadID, "cap-001")
+	}
+}
+
+func TestSummary_ReturnToBrowseWithoutPostPipelineProducesRefreshOnly(t *testing.T) {
+	// Given: a model in summary mode with dispatchedBeadID but no PostPipelineFunc
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeSummary
+	m.dispatchedBeadID = "cap-001"
+	m.pipeline = newPipelineState([]string{"plan"})
+	m.pipeline, _ = m.pipeline.Update(PhaseUpdateMsg{Phase: "plan", Status: PhasePassed, Duration: time.Second})
+	m.pipelineOutput = &PipelineOutput{Success: true}
+
+	// When: any key is pressed
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	// Then: only a refresh command is produced (not a batch)
+	if cmd == nil {
+		t.Fatal("expected refresh command")
+	}
+	msg := cmd()
+	if _, ok := msg.(BeadListMsg); !ok {
+		t.Fatalf("command produced %T, want BeadListMsg (not batch)", msg)
+	}
+}
+
+func TestSummary_DispatchStoresBeadID(t *testing.T) {
+	// Given: a model with a pipeline runner
+	runner := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(runner),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// When: a DispatchMsg is received
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-042"})
+	m = updated.(Model)
+
+	// Then: the dispatched bead ID is stored
+	if m.dispatchedBeadID != "cap-042" {
+		t.Errorf("dispatchedBeadID = %q, want %q", m.dispatchedBeadID, "cap-042")
+	}
+}
+
+func TestSummary_PostPipelineDoneMsgHandledSilently(t *testing.T) {
+	// Given: a model in browse mode
+	m := newSizedModel(90, 40)
+
+	// When: a PostPipelineDoneMsg is received
+	updated, cmd := m.Update(PostPipelineDoneMsg{BeadID: "cap-001", Err: fmt.Errorf("merge failed")})
+	m = updated.(Model)
+
+	// Then: the model is unchanged (message handled silently)
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+	if cmd != nil {
+		t.Error("PostPipelineDoneMsg should produce no command")
+	}
+}

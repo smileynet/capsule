@@ -98,6 +98,12 @@ type PipelineRunner interface {
 	RunPipeline(ctx context.Context, input PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error)
 }
 
+// PostPipelineFunc runs post-pipeline lifecycle (merge, cleanup, close bead).
+// Called in a background goroutine after a pipeline completes and the user
+// returns to browse mode. Errors are surfaced via PostPipelineDoneMsg but
+// not displayed in the UI.
+type PostPipelineFunc func(beadID string) error
+
 // --- tea.Msg types ---
 
 // BeadListMsg carries the result of a BeadLister.Ready() call.
@@ -143,6 +149,13 @@ type DispatchMsg struct {
 // RefreshBeadsMsg signals that the bead list should be reloaded.
 // browseState emits this on 'r'; Model.Update intercepts it and calls initBrowse.
 type RefreshBeadsMsg struct{}
+
+// PostPipelineDoneMsg signals that post-pipeline lifecycle completed.
+// Best-effort: the UI does not display errors from post-pipeline.
+type PostPipelineDoneMsg struct {
+	BeadID string
+	Err    error
+}
 
 // channelClosedMsg signals that the pipeline event channel has been closed,
 // indicating the pipeline goroutine has finished.

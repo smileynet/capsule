@@ -37,12 +37,14 @@ type Model struct {
 	resolvingID string // ID of the bead currently being resolved ("" = idle)
 	resolveErr  error  // last resolve error (nil on success)
 
-	runner         PipelineRunner
-	phaseNames     []string
-	cancelPipeline context.CancelFunc
-	eventCh        <-chan tea.Msg
-	pipelineOutput *PipelineOutput
-	pipelineErr    error
+	runner           PipelineRunner
+	phaseNames       []string
+	cancelPipeline   context.CancelFunc
+	eventCh          <-chan tea.Msg
+	pipelineOutput   *PipelineOutput
+	pipelineErr      error
+	postPipeline     PostPipelineFunc
+	dispatchedBeadID string
 }
 
 // NewModel creates a dashboard Model in browse mode with left-pane focus.
@@ -83,6 +85,12 @@ func WithPipelineRunner(r PipelineRunner) ModelOption {
 // WithPhaseNames sets the phase names displayed in pipeline mode.
 func WithPhaseNames(names []string) ModelOption {
 	return func(m *Model) { m.phaseNames = names }
+}
+
+// WithPostPipelineFunc sets the function called after a pipeline completes
+// and the user returns to browse mode. It runs in a background goroutine.
+func WithPostPipelineFunc(fn PostPipelineFunc) ModelOption {
+	return func(m *Model) { m.postPipeline = fn }
 }
 
 // listenForEvents returns a tea.Cmd that reads one message from ch.
@@ -226,6 +234,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pipelineErr = msg.Err
 		return m, listenForEvents(m.eventCh)
 
+	case PostPipelineDoneMsg:
+		// Post-pipeline is best-effort; no UI update needed.
+		return m, nil
+
 	case channelClosedMsg:
 		m.cancelPipeline = nil
 		m.eventCh = nil
@@ -314,6 +326,7 @@ func (m Model) handleDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.pipeline = newPipelineState(m.phaseNames)
 	m.pipelineOutput = nil
 	m.pipelineErr = nil
+	m.dispatchedBeadID = msg.BeadID
 	input := PipelineInput{BeadID: msg.BeadID}
 	go dispatchPipeline(ctx, m.runner, input, ch)
 	return m, tea.Batch(m.pipeline.spinner.Tick, listenForEvents(ch))
