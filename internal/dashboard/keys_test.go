@@ -7,10 +7,12 @@ import (
 )
 
 func TestBrowseKeys_ContainsExpected(t *testing.T) {
+	// Given: the browse key map
 	km := BrowseKeyMap()
 	bindings := km.ShortHelp()
 	allKeys := collectKeys(bindings)
 
+	// Then: all expected navigation and action keys are present
 	expected := []string{"up", "down", "enter", "tab", "r", "q"}
 	for _, want := range expected {
 		if !containsKey(allKeys, want) {
@@ -20,10 +22,12 @@ func TestBrowseKeys_ContainsExpected(t *testing.T) {
 }
 
 func TestPipelineKeys_ContainsExpected(t *testing.T) {
+	// Given: the pipeline key map
 	km := PipelineKeyMap()
 	bindings := km.ShortHelp()
 	allKeys := collectKeys(bindings)
 
+	// Then: all expected navigation keys are present
 	expected := []string{"up", "down", "tab", "q"}
 	for _, want := range expected {
 		if !containsKey(allKeys, want) {
@@ -33,12 +37,16 @@ func TestPipelineKeys_ContainsExpected(t *testing.T) {
 }
 
 func TestSummaryKeys_ContainsAnyKey(t *testing.T) {
+	// Given: the summary key map
 	km := SummaryKeyMap()
 	bindings := km.ShortHelp()
+
+	// Then: at least one binding exists
 	if len(bindings) == 0 {
 		t.Fatal("SummaryKeyMap returned no bindings")
 	}
-	// Summary mode should have an "any key" binding help text.
+
+	// And: an "any key" binding is present in help text
 	found := false
 	for _, b := range bindings {
 		h := b.Help()
@@ -53,10 +61,12 @@ func TestSummaryKeys_ContainsAnyKey(t *testing.T) {
 }
 
 func TestPipelineKeys_NoEnter(t *testing.T) {
+	// Given: the pipeline key map
 	km := PipelineKeyMap()
 	bindings := km.ShortHelp()
 	allKeys := collectKeys(bindings)
 
+	// Then: enter is not included (no dispatch in pipeline mode)
 	if containsKey(allKeys, "enter") {
 		t.Error("PipelineKeyMap should not contain 'enter' key")
 	}
