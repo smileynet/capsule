@@ -50,41 +50,56 @@ func newSizedModel(w, h int) Model {
 }
 
 func TestNewModel_DefaultMode(t *testing.T) {
+	// Given: a newly created model
 	m := NewModel()
+
+	// Then: the default mode is browse
 	if m.mode != ModeBrowse {
 		t.Errorf("mode = %d, want ModeBrowse (%d)", m.mode, ModeBrowse)
 	}
 }
 
 func TestNewModel_DefaultFocus(t *testing.T) {
+	// Given: a newly created model
 	m := NewModel()
+
+	// Then: the default focus is the left pane
 	if m.focus != PaneLeft {
 		t.Errorf("focus = %d, want PaneLeft (%d)", m.focus, PaneLeft)
 	}
 }
 
 func TestModel_TabTogglesFocus(t *testing.T) {
+	// Given: a sized model with left pane focused
 	m := newSizedModel(90, 40)
 
-	// Tab should switch from left to right.
+	// When: tab is pressed
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(Model)
+
+	// Then: focus switches to the right pane
 	if m.focus != PaneRight {
 		t.Errorf("after first Tab: focus = %d, want PaneRight (%d)", m.focus, PaneRight)
 	}
 
-	// Tab again should switch back to left.
+	// When: tab is pressed again
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(Model)
+
+	// Then: focus switches back to the left pane
 	if m.focus != PaneLeft {
 		t.Errorf("after second Tab: focus = %d, want PaneLeft (%d)", m.focus, PaneLeft)
 	}
 }
 
 func TestModel_QuitInBrowseMode(t *testing.T) {
+	// Given: a model in browse mode
 	m := newSizedModel(90, 40)
 
+	// When: q is pressed
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	// Then: a quit command is returned
 	if cmd == nil {
 		t.Fatal("q in browse mode should return a quit command")
 	}
@@ -95,9 +110,13 @@ func TestModel_QuitInBrowseMode(t *testing.T) {
 }
 
 func TestModel_CtrlCQuits(t *testing.T) {
+	// Given: a model in browse mode
 	m := newSizedModel(90, 40)
 
+	// When: ctrl+c is pressed
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+
+	// Then: a quit command is returned
 	if cmd == nil {
 		t.Fatal("ctrl+c should return a quit command")
 	}
@@ -108,11 +127,14 @@ func TestModel_CtrlCQuits(t *testing.T) {
 }
 
 func TestModel_WindowSizeMsg(t *testing.T) {
+	// Given: a model with no dimensions set
 	m := NewModel()
 
+	// When: a window size message is received
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
 	m = updated.(Model)
 
+	// Then: width and height are stored
 	if m.width != 120 {
 		t.Errorf("width = %d, want 120", m.width)
 	}
@@ -132,10 +154,14 @@ func TestModel_ModeRouting(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given: a model in the specified mode
 			m := newSizedModel(90, 40)
 			m.mode = tt.mode
 
+			// When: the view is rendered
 			view := m.View()
+
+			// Then: a non-empty view is produced
 			if view == "" {
 				t.Error("View() returned empty string")
 			}
@@ -144,28 +170,34 @@ func TestModel_ModeRouting(t *testing.T) {
 }
 
 func TestModel_WindowResizeUpdatesLayout(t *testing.T) {
+	// Given: a model with initial dimensions 80x30
 	m := NewModel()
-
-	// Set initial size.
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
 	m = updated.(Model)
 	if m.width != 80 || m.height != 30 {
 		t.Errorf("after first resize: %dx%d, want 80x30", m.width, m.height)
 	}
 
-	// Resize again.
+	// When: the window is resized to 120x50
 	updated, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
 	m = updated.(Model)
+
+	// Then: dimensions are updated
 	if m.width != 120 || m.height != 50 {
 		t.Errorf("after second resize: %dx%d, want 120x50", m.width, m.height)
 	}
 }
 
 func TestResolveBeadCmd_ReturnsBeadResolvedMsg(t *testing.T) {
+	// Given: a resolver with cap-001 detail
 	resolver := &stubResolver{details: map[string]BeadDetail{
 		"cap-001": sampleDetail(),
 	}}
+
+	// When: resolveBeadCmd is called for cap-001
 	cmd := resolveBeadCmd(resolver, "cap-001")
+
+	// Then: a BeadResolvedMsg with the correct detail is produced
 	if cmd == nil {
 		t.Fatal("resolveBeadCmd should return a non-nil command")
 	}
@@ -186,8 +218,13 @@ func TestResolveBeadCmd_ReturnsBeadResolvedMsg(t *testing.T) {
 }
 
 func TestResolveBeadCmd_ReturnsError(t *testing.T) {
+	// Given: a resolver that always returns an error
 	resolver := &stubResolver{err: fmt.Errorf("resolve failed")}
+
+	// When: resolveBeadCmd is called
 	cmd := resolveBeadCmd(resolver, "cap-999")
+
+	// Then: a BeadResolvedMsg with an error is produced
 	msg := cmd().(BeadResolvedMsg)
 	if msg.Err == nil {
 		t.Fatal("expected error from resolver")
@@ -198,9 +235,13 @@ func TestResolveBeadCmd_ReturnsError(t *testing.T) {
 }
 
 func TestFormatBeadDetail_ContainsAllFields(t *testing.T) {
+	// Given: a bead detail with all fields populated
 	detail := sampleDetail()
+
+	// When: it is formatted as text
 	text := formatBeadDetail(detail)
 
+	// Then: all fields appear in the output
 	for _, want := range []string{
 		"cap-001",
 		"First task",
@@ -219,6 +260,7 @@ func TestFormatBeadDetail_ContainsAllFields(t *testing.T) {
 }
 
 func TestFormatBeadDetail_OmitsEmptyHierarchy(t *testing.T) {
+	// Given: a bead detail with no epic or feature
 	detail := BeadDetail{
 		ID:          "cap-solo",
 		Title:       "Standalone",
@@ -226,7 +268,11 @@ func TestFormatBeadDetail_OmitsEmptyHierarchy(t *testing.T) {
 		Type:        "bug",
 		Description: "Fix the thing.",
 	}
+
+	// When: it is formatted as text
 	text := formatBeadDetail(detail)
+
+	// Then: Epic and Feature headers are omitted
 	if strings.Contains(text, "Epic:") {
 		t.Errorf("should not contain Epic header for empty epic, got:\n%s", text)
 	}
@@ -254,11 +300,11 @@ func newResolverModel(w, h int) (Model, *stubResolver) {
 }
 
 func TestModel_BeadListTriggersResolve(t *testing.T) {
+	// Given: a model with lister and resolver
+	// When: the bead list is loaded via Init
 	m, _ := newResolverModel(90, 40)
 
-	// After bead list loads, a resolve command should be returned.
-	// The maybeResolve should have fired for the first bead.
-	// Since cursor is at 0 ("cap-001") and cache is empty, resolvingID should be set.
+	// Then: the first bead is being resolved
 	if m.resolvingID != "cap-001" {
 		t.Errorf("resolvingID = %q, want %q", m.resolvingID, "cap-001")
 	}
@@ -268,17 +314,17 @@ func TestModel_BeadListTriggersResolve(t *testing.T) {
 }
 
 func TestModel_CursorMoveTriggersResolve(t *testing.T) {
+	// Given: a model with first bead already resolved
 	m, resolver := newResolverModel(90, 40)
-
-	// Deliver initial resolve result.
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
 	resolver.calls = 0
 
-	// Move cursor down → should trigger resolve for cap-002.
+	// When: cursor moves down to cap-002
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
 
+	// Then: a resolve is triggered for cap-002
 	if m.detailID != "cap-002" {
 		t.Errorf("detailID = %q, want %q", m.detailID, "cap-002")
 	}
@@ -291,20 +337,19 @@ func TestModel_CursorMoveTriggersResolve(t *testing.T) {
 }
 
 func TestModel_CacheMissTriggersResolve(t *testing.T) {
+	// Given: a model with cap-001 resolved but cap-002 not cached
 	m, resolver := newResolverModel(90, 40)
-
-	// Deliver initial resolve.
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
 	resolver.calls = 0
 
-	// Move to cap-002 (not cached).
+	// When: cursor moves to cap-002 (cache miss)
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// Then: the resolver is called for cap-002
 	if cmd == nil {
 		t.Fatal("cache miss should produce a resolve command")
 	}
-
-	// Execute the command to call the resolver.
 	msg := cmd()
 	resolved := msg.(BeadResolvedMsg)
 	if resolved.ID != "cap-002" {
@@ -316,13 +361,10 @@ func TestModel_CacheMissTriggersResolve(t *testing.T) {
 }
 
 func TestModel_CacheHitSkipsResolve(t *testing.T) {
+	// Given: a model with both cap-001 and cap-002 cached
 	m, resolver := newResolverModel(90, 40)
-
-	// Deliver initial resolve and cache it.
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
-
-	// Move to cap-002, resolve it, cache it.
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
 	msg := cmd()
@@ -330,10 +372,11 @@ func TestModel_CacheHitSkipsResolve(t *testing.T) {
 	m = updated.(Model)
 	resolver.calls = 0
 
-	// Move back to cap-001 (already cached).
+	// When: cursor moves back to cap-001 (cache hit)
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = updated.(Model)
 
+	// Then: no resolve command is produced and resolver is not called
 	if m.resolvingID != "" {
 		t.Errorf("resolvingID = %q, want empty for cached bead", m.resolvingID)
 	}
@@ -346,12 +389,15 @@ func TestModel_CacheHitSkipsResolve(t *testing.T) {
 }
 
 func TestModel_BeadResolvedMsgUpdatesCache(t *testing.T) {
+	// Given: a model resolving cap-001
 	m, _ := newResolverModel(90, 40)
 
+	// When: the resolve result arrives
 	detail := sampleDetail()
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: detail})
 	m = updated.(Model)
 
+	// Then: the detail is cached and resolving state is cleared
 	cached, ok := m.cache.Get("cap-001")
 	if !ok {
 		t.Fatal("expected cache hit after BeadResolvedMsg")
@@ -368,11 +414,14 @@ func TestModel_BeadResolvedMsgUpdatesCache(t *testing.T) {
 }
 
 func TestModel_BeadResolvedMsgError(t *testing.T) {
+	// Given: a model resolving cap-001
 	m, _ := newResolverModel(90, 40)
 
+	// When: the resolve fails with an error
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Err: fmt.Errorf("network error")})
 	m = updated.(Model)
 
+	// Then: the error is stored and resolving state is cleared
 	if m.resolveErr == nil {
 		t.Fatal("expected resolveErr to be set")
 	}
@@ -382,74 +431,70 @@ func TestModel_BeadResolvedMsgError(t *testing.T) {
 }
 
 func TestModel_StaleResolveDoesNotClearLoading(t *testing.T) {
+	// Given: a model that resolved cap-001 and is now resolving cap-003
 	m, _ := newResolverModel(90, 40)
-
-	// Initial state: resolving cap-001.
-	if m.resolvingID != "cap-001" {
-		t.Fatalf("resolvingID = %q, want %q", m.resolvingID, "cap-001")
-	}
-
-	// Deliver cap-001 resolve, then move to cap-002 (triggers new resolve).
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
-
-	// Now resolving cap-002. Move again to cap-003 (triggers another resolve).
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
-
 	if m.resolvingID != "cap-003" {
 		t.Fatalf("resolvingID = %q, want %q", m.resolvingID, "cap-003")
 	}
 
-	// Stale cap-002 result arrives — should NOT clear resolvingID since cap-003 is in flight.
+	// When: a stale cap-002 result arrives
 	updated, _ = m.Update(BeadResolvedMsg{
 		ID:     "cap-002",
 		Detail: BeadDetail{ID: "cap-002", Title: "Second task"},
 	})
 	m = updated.(Model)
 
-	// cap-002 should be cached.
+	// Then: cap-002 is cached but resolvingID still points to cap-003
 	if _, ok := m.cache.Get("cap-002"); !ok {
 		t.Fatal("stale resolve should still be cached")
 	}
-
-	// resolvingID should still be cap-003 (in flight).
 	if m.resolvingID != "cap-003" {
 		t.Errorf("resolvingID = %q, want %q after stale resolve", m.resolvingID, "cap-003")
 	}
 
-	// Now cap-003 arrives — this should clear resolvingID.
+	// When: the current cap-003 result arrives
 	updated, _ = m.Update(BeadResolvedMsg{
 		ID:     "cap-003",
 		Detail: BeadDetail{ID: "cap-003", Title: "Third task"},
 	})
 	m = updated.(Model)
+
+	// Then: resolvingID is cleared
 	if m.resolvingID != "" {
 		t.Errorf("resolvingID = %q, want empty after current resolve", m.resolvingID)
 	}
 }
 
 func TestModel_ViewRightShowsLoading(t *testing.T) {
+	// Given: a model with a bead being resolved
 	m, _ := newResolverModel(90, 40)
 
-	// After bead list load, resolving is true for first bead.
+	// When: the view is rendered
 	view := m.View()
+
+	// Then: a loading indicator is shown in the right pane
 	if !containsPlainText(view, "Loading") {
 		t.Errorf("right pane should show loading indicator, got:\n%s", stripANSI(view))
 	}
 }
 
 func TestModel_ViewRightShowsDetail(t *testing.T) {
+	// Given: a model with cap-001 resolved
 	m, _ := newResolverModel(90, 40)
-
-	// Deliver resolved detail.
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
 
+	// When: the view is rendered
 	view := m.View()
 	plain := stripANSI(view)
+
+	// Then: the detail title and description are shown
 	if !strings.Contains(plain, "First task") {
 		t.Errorf("right pane should show detail title, got:\n%s", plain)
 	}
@@ -459,59 +504,59 @@ func TestModel_ViewRightShowsDetail(t *testing.T) {
 }
 
 func TestModel_ViewRightShowsError(t *testing.T) {
+	// Given: a model where resolve failed
 	m, _ := newResolverModel(90, 40)
-
-	// Deliver error.
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Err: fmt.Errorf("network error")})
 	m = updated.(Model)
 
+	// When: the view is rendered
 	view := m.View()
 	plain := stripANSI(view)
+
+	// Then: the error message is shown
 	if !strings.Contains(plain, "network error") {
 		t.Errorf("right pane should show error message, got:\n%s", plain)
 	}
 }
 
 func TestModel_RightPaneScrollKeys(t *testing.T) {
-	m, _ := newResolverModel(90, 10) // Short height to enable scrolling.
-
-	// Deliver a large detail to ensure viewport has scrollable content.
+	// Given: a model with a large detail loaded and right pane focused
+	m, _ := newResolverModel(90, 10)
 	bigDetail := sampleDetail()
 	bigDetail.Description = strings.Repeat("Line of text\n", 50)
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: bigDetail})
 	m = updated.(Model)
-
-	// Switch to right pane.
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(Model)
 	if m.focus != PaneRight {
 		t.Fatal("expected focus on right pane after tab")
 	}
 
-	// Press down arrow — viewport should scroll.
+	// When: down arrow is pressed
 	initialOffset := m.viewport.YOffset
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
+
+	// Then: the viewport scrolls down
 	if m.viewport.YOffset <= initialOffset {
 		t.Errorf("viewport YOffset should increase after down key, got %d (was %d)", m.viewport.YOffset, initialOffset)
 	}
 }
 
 func TestModel_RefreshInvalidatesCache(t *testing.T) {
+	// Given: a model with cap-001 cached
 	m, _ := newResolverModel(90, 40)
-
-	// Resolve and cache cap-001.
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
-
 	if _, ok := m.cache.Get("cap-001"); !ok {
 		t.Fatal("expected cap-001 in cache before refresh")
 	}
 
-	// Simulate refresh: browseState emits RefreshBeadsMsg.
+	// When: a RefreshBeadsMsg is received
 	updated, cmd := m.Update(RefreshBeadsMsg{})
 	m = updated.(Model)
 
+	// Then: the cache is empty and a fetch command is returned
 	if _, ok := m.cache.Get("cap-001"); ok {
 		t.Fatal("expected cache to be empty after refresh")
 	}
@@ -562,10 +607,14 @@ func drainPipeline(t *testing.T, m Model) Model {
 }
 
 func TestModel_PipelineModeViewShowsPhases(t *testing.T) {
+	// Given: a model in pipeline mode with 3 phases
 	m := newPipelineModel(90, 40, []string{"plan", "code", "test"})
 
+	// When: the view is rendered
 	view := m.View()
 	plain := stripANSI(view)
+
+	// Then: all phase names are visible
 	for _, name := range []string{"plan", "code", "test"} {
 		if !strings.Contains(plain, name) {
 			t.Errorf("pipeline view should contain phase %q, got:\n%s", name, plain)
@@ -574,33 +623,41 @@ func TestModel_PipelineModeViewShowsPhases(t *testing.T) {
 }
 
 func TestModel_PhaseUpdateMsgRoutes(t *testing.T) {
+	// Given: a model in pipeline mode
 	m := newPipelineModel(90, 40, []string{"plan", "code"})
 
+	// When: a phase update message is received
 	updated, _ := m.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
 	m = updated.(Model)
 
+	// Then: the phase status is updated
 	if m.pipeline.phases[0].Status != PhaseRunning {
 		t.Errorf("phase 'plan' status = %q, want running", m.pipeline.phases[0].Status)
 	}
 }
 
 func TestModel_PipelineKeyRoutesLeft(t *testing.T) {
+	// Given: a model in pipeline mode with left pane focused
 	m := newPipelineModel(90, 40, []string{"plan", "code", "test"})
 
-	// Left pane focused: down key should move pipeline cursor.
+	// When: down key is pressed
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
 
+	// Then: the pipeline cursor moves
 	if m.pipeline.cursor != 1 {
 		t.Errorf("pipeline cursor = %d, want 1 after down key", m.pipeline.cursor)
 	}
 }
 
 func TestModel_PipelineQuitDoesNotQuitInPipelineMode(t *testing.T) {
+	// Given: a model in pipeline mode
 	m := newPipelineModel(90, 40, []string{"plan"})
 
-	// q should cancel the pipeline, not quit the program.
+	// When: q is pressed
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	// Then: the program does not quit (no tea.QuitMsg)
 	if cmd != nil {
 		msg := cmd()
 		if _, ok := msg.(tea.QuitMsg); ok {
@@ -610,9 +667,8 @@ func TestModel_PipelineQuitDoesNotQuitInPipelineMode(t *testing.T) {
 }
 
 func TestModel_PipelineRightPaneShowsReport(t *testing.T) {
+	// Given: a model in pipeline mode with "plan" passed
 	m := newPipelineModel(90, 40, []string{"plan", "code"})
-
-	// Mark plan as passed with a summary.
 	updated, _ := m.Update(PhaseUpdateMsg{
 		Phase:    "plan",
 		Status:   PhasePassed,
@@ -621,8 +677,11 @@ func TestModel_PipelineRightPaneShowsReport(t *testing.T) {
 	})
 	m = updated.(Model)
 
+	// When: the view is rendered
 	view := m.View()
 	plain := stripANSI(view)
+
+	// Then: the report status and summary are shown in the right pane
 	if !strings.Contains(plain, "Passed") {
 		t.Errorf("pipeline right pane should show report status, got:\n%s", plain)
 	}
@@ -632,10 +691,14 @@ func TestModel_PipelineRightPaneShowsReport(t *testing.T) {
 }
 
 func TestModel_PipelineRightPaneShowsWaiting(t *testing.T) {
+	// Given: a model in pipeline mode with all phases pending
 	m := newPipelineModel(90, 40, []string{"plan", "code"})
 
+	// When: the view is rendered
 	view := m.View()
 	plain := stripANSI(view)
+
+	// Then: "Waiting" is shown for the pending phase
 	if !strings.Contains(plain, "Waiting") {
 		t.Errorf("pipeline right pane should show 'Waiting' for pending phase, got:\n%s", plain)
 	}
@@ -653,10 +716,14 @@ func TestModel_HelpBarReflectsMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Given: a model in the specified mode
 			m := newSizedModel(90, 40)
 			m.mode = tt.mode
 
+			// When: the view is rendered
 			view := m.View()
+
+			// Then: mode-appropriate help text is shown
 			if !containsPlainText(view, tt.wantText) {
 				t.Errorf("View() should contain %q", tt.wantText)
 			}
@@ -667,21 +734,29 @@ func TestModel_HelpBarReflectsMode(t *testing.T) {
 // --- listenForEvents unit tests ---
 
 func TestListenForEvents_NilChannel(t *testing.T) {
+	// Given: a nil channel
+	// When: listenForEvents is called
 	cmd := listenForEvents(nil)
+
+	// Then: nil is returned
 	if cmd != nil {
 		t.Error("listenForEvents(nil) should return nil")
 	}
 }
 
 func TestListenForEvents_ReceivesEvent(t *testing.T) {
+	// Given: a channel with a PhaseUpdateMsg
 	ch := make(chan tea.Msg, 1)
 	ch <- PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning}
 
+	// When: listenForEvents reads from the channel
 	cmd := listenForEvents(ch)
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd")
 	}
 	msg := cmd()
+
+	// Then: the PhaseUpdateMsg is received
 	pu, ok := msg.(PhaseUpdateMsg)
 	if !ok {
 		t.Fatalf("expected PhaseUpdateMsg, got %T", msg)
@@ -692,11 +767,15 @@ func TestListenForEvents_ReceivesEvent(t *testing.T) {
 }
 
 func TestListenForEvents_ClosedChannel(t *testing.T) {
+	// Given: a closed channel
 	ch := make(chan tea.Msg)
 	close(ch)
 
+	// When: listenForEvents reads from the channel
 	cmd := listenForEvents(ch)
 	msg := cmd()
+
+	// Then: a channelClosedMsg is returned
 	if _, ok := msg.(channelClosedMsg); !ok {
 		t.Fatalf("expected channelClosedMsg, got %T", msg)
 	}
@@ -705,6 +784,7 @@ func TestListenForEvents_ClosedChannel(t *testing.T) {
 // --- dispatchPipeline unit tests ---
 
 func TestDispatchPipeline_SendsEventsAndDone(t *testing.T) {
+	// Given: a runner that emits two phase events and succeeds
 	runner := &mockRunner{
 		events: []PhaseUpdateMsg{
 			{Phase: "plan", Status: PhaseRunning},
@@ -715,9 +795,10 @@ func TestDispatchPipeline_SendsEventsAndDone(t *testing.T) {
 	ch := make(chan tea.Msg, 16)
 	ctx := context.Background()
 
+	// When: dispatchPipeline runs to completion
 	dispatchPipeline(ctx, runner, PipelineInput{BeadID: "cap-001"}, ch)
 
-	// First two messages: PhaseUpdateMsgs.
+	// Then: two PhaseUpdateMsgs are sent
 	for i, want := range []PhaseStatus{PhaseRunning, PhasePassed} {
 		msg := <-ch
 		pu, ok := msg.(PhaseUpdateMsg)
@@ -729,7 +810,7 @@ func TestDispatchPipeline_SendsEventsAndDone(t *testing.T) {
 		}
 	}
 
-	// Third message: PipelineDoneMsg.
+	// And: a PipelineDoneMsg with Success=true is sent
 	msg := <-ch
 	done, ok := msg.(PipelineDoneMsg)
 	if !ok {
@@ -739,7 +820,7 @@ func TestDispatchPipeline_SendsEventsAndDone(t *testing.T) {
 		t.Error("expected Success = true")
 	}
 
-	// Channel should be closed.
+	// And: the channel is closed
 	_, ok = <-ch
 	if ok {
 		t.Error("channel should be closed after dispatchPipeline returns")
@@ -747,11 +828,14 @@ func TestDispatchPipeline_SendsEventsAndDone(t *testing.T) {
 }
 
 func TestDispatchPipeline_SendsError(t *testing.T) {
+	// Given: a runner that returns an error
 	runner := &mockRunner{err: fmt.Errorf("pipeline failed")}
 	ch := make(chan tea.Msg, 16)
 
+	// When: dispatchPipeline runs
 	dispatchPipeline(context.Background(), runner, PipelineInput{}, ch)
 
+	// Then: a PipelineErrorMsg is sent
 	msg := <-ch
 	errMsg, ok := msg.(PipelineErrorMsg)
 	if !ok {
@@ -761,6 +845,7 @@ func TestDispatchPipeline_SendsError(t *testing.T) {
 		t.Errorf("unexpected error: %v", errMsg.Err)
 	}
 
+	// And: the channel is closed
 	_, ok = <-ch
 	if ok {
 		t.Error("channel should be closed")
@@ -770,6 +855,7 @@ func TestDispatchPipeline_SendsError(t *testing.T) {
 // --- Model dispatch wiring tests ---
 
 func TestModel_DispatchWithRunnerTransitions(t *testing.T) {
+	// Given: a model with a pipeline runner configured
 	runner := &mockRunner{output: PipelineOutput{Success: true}}
 	m := NewModel(
 		WithPipelineRunner(runner),
@@ -778,9 +864,11 @@ func TestModel_DispatchWithRunnerTransitions(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
 	m = updated.(Model)
 
+	// When: a DispatchMsg is received
 	updated, cmd := m.Update(DispatchMsg{BeadID: "cap-001"})
 	m = updated.(Model)
 
+	// Then: the model transitions to pipeline mode with cancel and event channel set
 	if m.mode != ModePipeline {
 		t.Errorf("mode = %d, want ModePipeline (%d)", m.mode, ModePipeline)
 	}
@@ -796,11 +884,14 @@ func TestModel_DispatchWithRunnerTransitions(t *testing.T) {
 }
 
 func TestModel_DispatchWithoutRunnerIgnored(t *testing.T) {
+	// Given: a model with no pipeline runner
 	m := newSizedModel(90, 40)
 
+	// When: a DispatchMsg is received
 	updated, cmd := m.Update(DispatchMsg{BeadID: "cap-001"})
 	m = updated.(Model)
 
+	// Then: the model stays in browse mode
 	if m.mode != ModeBrowse {
 		t.Errorf("mode = %d, want ModeBrowse (%d)", m.mode, ModeBrowse)
 	}
@@ -810,6 +901,7 @@ func TestModel_DispatchWithoutRunnerIgnored(t *testing.T) {
 }
 
 func TestModel_DispatchResetsState(t *testing.T) {
+	// Given: a model with stale pipeline state from a previous run
 	runner := &mockRunner{output: PipelineOutput{Success: true}}
 	m := NewModel(
 		WithPipelineRunner(runner),
@@ -821,9 +913,11 @@ func TestModel_DispatchResetsState(t *testing.T) {
 	m.pipelineOutput = &PipelineOutput{}
 	m.pipelineErr = fmt.Errorf("old error")
 
+	// When: a new DispatchMsg is received
 	updated, _ = m.Update(DispatchMsg{BeadID: "cap-001"})
 	m = updated.(Model)
 
+	// Then: focus, output, and error are reset
 	if m.focus != PaneLeft {
 		t.Error("dispatch should reset focus to left pane")
 	}
@@ -838,13 +932,16 @@ func TestModel_DispatchResetsState(t *testing.T) {
 // --- Channel message handler tests ---
 
 func TestModel_ChannelClosedTransitionsToSummary(t *testing.T) {
+	// Given: a model in pipeline mode with a cancel function
 	m := newSizedModel(90, 40)
 	m.mode = ModePipeline
 	m.cancelPipeline = func() {}
 
+	// When: channelClosedMsg is received
 	updated, _ := m.Update(channelClosedMsg{})
 	m = updated.(Model)
 
+	// Then: the model transitions to summary mode with cleanup
 	if m.mode != ModeSummary {
 		t.Errorf("mode = %d, want ModeSummary (%d)", m.mode, ModeSummary)
 	}
@@ -857,13 +954,16 @@ func TestModel_ChannelClosedTransitionsToSummary(t *testing.T) {
 }
 
 func TestModel_PipelineDoneStoresOutput(t *testing.T) {
+	// Given: a model in pipeline mode
 	m := newSizedModel(90, 40)
 	m.mode = ModePipeline
 
+	// When: PipelineDoneMsg is received
 	output := PipelineOutput{Success: true}
 	updated, _ := m.Update(PipelineDoneMsg{Output: output})
 	m = updated.(Model)
 
+	// Then: the pipeline output is stored
 	if m.pipelineOutput == nil {
 		t.Fatal("pipelineOutput should be set")
 	}
@@ -873,12 +973,15 @@ func TestModel_PipelineDoneStoresOutput(t *testing.T) {
 }
 
 func TestModel_PipelineErrorStoresErr(t *testing.T) {
+	// Given: a model in pipeline mode
 	m := newSizedModel(90, 40)
 	m.mode = ModePipeline
 
+	// When: PipelineErrorMsg is received
 	updated, _ := m.Update(PipelineErrorMsg{Err: fmt.Errorf("boom")})
 	m = updated.(Model)
 
+	// Then: the pipeline error is stored
 	if m.pipelineErr == nil {
 		t.Fatal("pipelineErr should be set")
 	}
@@ -887,26 +990,32 @@ func TestModel_PipelineErrorStoresErr(t *testing.T) {
 // --- Abort tests ---
 
 func TestModel_PipelineQuitCancels(t *testing.T) {
+	// Given: a model in pipeline mode with a cancel function
 	var cancelled bool
 	m := newSizedModel(90, 40)
 	m.mode = ModePipeline
 	m.cancelPipeline = func() { cancelled = true }
 
+	// When: q is pressed
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 
+	// Then: the pipeline cancel function is called
 	if !cancelled {
 		t.Error("q in pipeline mode should cancel the pipeline")
 	}
 }
 
 func TestModel_PipelineCtrlCCancels(t *testing.T) {
+	// Given: a model in pipeline mode with a cancel function
 	var cancelled bool
 	m := newSizedModel(90, 40)
 	m.mode = ModePipeline
 	m.cancelPipeline = func() { cancelled = true }
 
+	// When: ctrl+c is pressed
 	m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 
+	// Then: the pipeline cancel function is called
 	if !cancelled {
 		t.Error("ctrl+c in pipeline mode should cancel the pipeline")
 	}
@@ -915,6 +1024,7 @@ func TestModel_PipelineCtrlCCancels(t *testing.T) {
 // --- Integration test: full pipeline flow ---
 
 func TestModel_PipelineFullFlow(t *testing.T) {
+	// Given: a model with a runner that runs one phase successfully
 	runner := &mockRunner{
 		events: []PhaseUpdateMsg{
 			{Phase: "plan", Status: PhaseRunning},
@@ -929,17 +1039,15 @@ func TestModel_PipelineFullFlow(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
 	m = updated.(Model)
 
-	// Dispatch starts the pipeline.
+	// When: pipeline is dispatched and all events are drained
 	updated, _ = m.Update(DispatchMsg{BeadID: "cap-001"})
 	m = updated.(Model)
-
 	if m.mode != ModePipeline {
 		t.Fatal("should be in pipeline mode after dispatch")
 	}
-
-	// Drain all events through the channel pump.
 	m = drainPipeline(t, m)
 
+	// Then: the model is in summary mode with successful output
 	if m.mode != ModeSummary {
 		t.Errorf("mode = %d, want ModeSummary after pipeline completes", m.mode)
 	}
@@ -952,6 +1060,7 @@ func TestModel_PipelineFullFlow(t *testing.T) {
 }
 
 func TestModel_PipelineFullFlowError(t *testing.T) {
+	// Given: a model with a runner that fails
 	runner := &mockRunner{
 		events: []PhaseUpdateMsg{
 			{Phase: "plan", Status: PhaseRunning},
@@ -965,11 +1074,12 @@ func TestModel_PipelineFullFlowError(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
 	m = updated.(Model)
 
+	// When: pipeline is dispatched and all events are drained
 	updated, _ = m.Update(DispatchMsg{BeadID: "cap-001"})
 	m = updated.(Model)
-
 	m = drainPipeline(t, m)
 
+	// Then: the model is in summary mode with an error
 	if m.mode != ModeSummary {
 		t.Errorf("mode = %d, want ModeSummary after pipeline error", m.mode)
 	}
@@ -979,22 +1089,22 @@ func TestModel_PipelineFullFlowError(t *testing.T) {
 }
 
 func TestModel_PhaseUpdateReschedulesListener(t *testing.T) {
+	// Given: a model in pipeline mode with an event channel
 	m := newSizedModel(90, 40)
 	m.mode = ModePipeline
 	m.pipeline = newPipelineState([]string{"plan"})
-
-	// Set up a channel to verify rescheduling.
 	ch := make(chan tea.Msg, 1)
 	ch <- PhaseUpdateMsg{Phase: "plan", Status: PhasePassed}
 	m.eventCh = ch
 
+	// When: a PhaseUpdateMsg is processed
 	updated, cmd := m.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
 	m = updated.(Model)
 
+	// Then: the phase is updated and a listener reschedule command is returned
 	if m.pipeline.phases[0].Status != PhaseRunning {
 		t.Errorf("phase status = %q, want running", m.pipeline.phases[0].Status)
 	}
-	// cmd should be non-nil (batch of pipeline update + listener reschedule).
 	if cmd == nil {
 		t.Error("PhaseUpdateMsg should return a command to reschedule listener")
 	}

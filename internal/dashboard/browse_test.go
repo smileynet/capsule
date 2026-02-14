@@ -27,21 +27,29 @@ func sampleBeads() []BeadSummary {
 }
 
 func TestBrowse_LoadingState(t *testing.T) {
+	// Given: a fresh browse state with no beads loaded
 	bs := newBrowseState()
+
+	// When: the view is rendered
 	view := bs.View(40, 20)
 	plain := stripANSI(view)
+
+	// Then: a loading indicator is shown
 	if !strings.Contains(plain, "Loading") {
 		t.Errorf("loading view should contain 'Loading', got:\n%s", plain)
 	}
 }
 
 func TestBrowse_BeadsLoadedView(t *testing.T) {
+	// Given: a browse state with loaded beads
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
+	// When: the view is rendered
 	view := bs.View(60, 20)
 	plain := stripANSI(view)
 
+	// Then: each bead's ID and title appear in the view
 	for _, b := range sampleBeads() {
 		if !strings.Contains(plain, b.ID) {
 			t.Errorf("view should contain bead ID %q, got:\n%s", b.ID, plain)
@@ -53,55 +61,70 @@ func TestBrowse_BeadsLoadedView(t *testing.T) {
 }
 
 func TestBrowse_CursorDefaultsToZero(t *testing.T) {
+	// Given: a browse state with loaded beads
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
+	// Then: the cursor starts at position 0
 	if bs.cursor != 0 {
 		t.Errorf("cursor = %d, want 0", bs.cursor)
 	}
 }
 
 func TestBrowse_CursorDown(t *testing.T) {
+	// Given: a browse state with loaded beads at cursor 0
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
+	// When: down key is pressed
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// Then: the cursor moves to position 1
 	if bs.cursor != 1 {
 		t.Errorf("after down: cursor = %d, want 1", bs.cursor)
 	}
 }
 
 func TestBrowse_CursorUp(t *testing.T) {
+	// Given: a browse state with cursor moved to position 1
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
-
-	// Move down first, then up.
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: up key is pressed
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyUp})
+
+	// Then: the cursor returns to position 0
 	if bs.cursor != 0 {
 		t.Errorf("after down+up: cursor = %d, want 0", bs.cursor)
 	}
 }
 
 func TestBrowse_CursorWrapsDown(t *testing.T) {
+	// Given: a browse state with loaded beads
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
-	// Move past last item.
+	// When: down is pressed past the last item
 	for range len(sampleBeads()) {
 		bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
+
+	// Then: the cursor wraps to position 0
 	if bs.cursor != 0 {
 		t.Errorf("after wrapping down: cursor = %d, want 0", bs.cursor)
 	}
 }
 
 func TestBrowse_CursorWrapsUp(t *testing.T) {
+	// Given: a browse state with cursor at position 0
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
-	// Move up from zero wraps to last.
+	// When: up is pressed from position 0
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyUp})
+
+	// Then: the cursor wraps to the last item
 	want := len(sampleBeads()) - 1
 	if bs.cursor != want {
 		t.Errorf("after wrapping up: cursor = %d, want %d", bs.cursor, want)
@@ -109,41 +132,52 @@ func TestBrowse_CursorWrapsUp(t *testing.T) {
 }
 
 func TestBrowse_CursorMarker(t *testing.T) {
+	// Given: a browse state with loaded beads
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
+	// When: the view is rendered
 	view := bs.View(60, 20)
 	plain := stripANSI(view)
+
+	// Then: the cursor marker is visible
 	if !strings.Contains(plain, CursorMarker) {
 		t.Errorf("view should contain cursor marker %q, got:\n%s", CursorMarker, plain)
 	}
 }
 
 func TestBrowse_VimKeys(t *testing.T) {
+	// Given: a browse state with loaded beads
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
-	// j moves down.
+	// When: j is pressed
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+
+	// Then: the cursor moves down
 	if bs.cursor != 1 {
 		t.Errorf("after j: cursor = %d, want 1", bs.cursor)
 	}
 
-	// k moves up.
+	// When: k is pressed
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+
+	// Then: the cursor moves up
 	if bs.cursor != 0 {
 		t.Errorf("after k: cursor = %d, want 0", bs.cursor)
 	}
 }
 
 func TestBrowse_EnterDispatchesSelectedBead(t *testing.T) {
+	// Given: a browse state with cursor on the second bead
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
-
-	// Move to second item and press enter.
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: enter is pressed
 	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
+	// Then: a DispatchMsg is produced with the selected bead ID
 	if cmd == nil {
 		t.Fatal("enter should produce a command")
 	}
@@ -158,11 +192,15 @@ func TestBrowse_EnterDispatchesSelectedBead(t *testing.T) {
 }
 
 func TestBrowse_ErrorDisplay(t *testing.T) {
+	// Given: a browse state that received an error
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Err: fmt.Errorf("connection failed")})
 
+	// When: the view is rendered
 	view := bs.View(60, 20)
 	plain := stripANSI(view)
+
+	// Then: the error message and retry hint are shown
 	if !strings.Contains(plain, "connection failed") {
 		t.Errorf("error view should contain error message, got:\n%s", plain)
 	}
@@ -172,21 +210,29 @@ func TestBrowse_ErrorDisplay(t *testing.T) {
 }
 
 func TestBrowse_EmptyList(t *testing.T) {
+	// Given: a browse state that received an empty bead list
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: []BeadSummary{}})
 
+	// When: the view is rendered
 	view := bs.View(60, 20)
 	plain := stripANSI(view)
+
+	// Then: a "No ready beads" message is shown
 	if !strings.Contains(plain, "No ready beads") {
 		t.Errorf("empty list view should contain 'No ready beads', got:\n%s", plain)
 	}
 }
 
 func TestBrowse_RefreshReloads(t *testing.T) {
+	// Given: a browse state with loaded beads
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
+	// When: r is pressed to refresh
 	bs, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Then: loading state is set and a RefreshBeadsMsg command is returned
 	if cmd == nil {
 		t.Fatal("r should produce a refresh command")
 	}
@@ -200,8 +246,13 @@ func TestBrowse_RefreshReloads(t *testing.T) {
 }
 
 func TestBrowse_InitReturnsCmd(t *testing.T) {
+	// Given: a lister with sample beads
 	lister := &stubLister{beads: sampleBeads()}
+
+	// When: initBrowse is called
 	cmd := initBrowse(lister)
+
+	// Then: a BeadListMsg with 3 beads is produced
 	if cmd == nil {
 		t.Fatal("initBrowse should return a non-nil command")
 	}
@@ -216,8 +267,13 @@ func TestBrowse_InitReturnsCmd(t *testing.T) {
 }
 
 func TestBrowse_InitReturnsError(t *testing.T) {
+	// Given: a lister that returns an error
 	lister := &stubLister{err: fmt.Errorf("db down")}
+
+	// When: initBrowse is called
 	cmd := initBrowse(lister)
+
+	// Then: a BeadListMsg with an error is produced
 	msg := cmd().(BeadListMsg)
 	if msg.Err == nil {
 		t.Fatal("initBrowse with error lister should produce BeadListMsg with Err")
@@ -225,11 +281,15 @@ func TestBrowse_InitReturnsError(t *testing.T) {
 }
 
 func TestBrowse_PriorityBadgesInView(t *testing.T) {
+	// Given: a browse state with beads of different priorities
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
+	// When: the view is rendered
 	view := bs.View(60, 20)
 	plain := stripANSI(view)
+
+	// Then: priority badges P1 and P2 are visible
 	if !strings.Contains(plain, "P1") {
 		t.Errorf("view should contain priority badge P1, got:\n%s", plain)
 	}
@@ -239,11 +299,15 @@ func TestBrowse_PriorityBadgesInView(t *testing.T) {
 }
 
 func TestBrowse_TypeInView(t *testing.T) {
+	// Given: a browse state with beads of different types
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
+	// When: the view is rendered
 	view := bs.View(80, 20)
 	plain := stripANSI(view)
+
+	// Then: bead types are visible
 	if !strings.Contains(plain, "[task]") {
 		t.Errorf("view should contain bead type [task], got:\n%s", plain)
 	}
@@ -253,9 +317,13 @@ func TestBrowse_TypeInView(t *testing.T) {
 }
 
 func TestBrowse_KeysIgnoredDuringLoading(t *testing.T) {
+	// Given: a browse state still in loading (no beads received)
 	bs := newBrowseState()
-	// Still in loading state, keys should be no-ops.
+
+	// When: down key is pressed during loading
 	bs, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// Then: no command is produced and cursor stays at 0
 	if cmd != nil {
 		t.Error("key during loading should not produce a command")
 	}
@@ -271,11 +339,15 @@ func TestBrowse_SelectedID(t *testing.T) {
 		wantID string
 	}{
 		{
+			// Given: a browse state still loading
+			// Then: SelectedID returns empty
 			name:   "loading returns empty",
 			setup:  newBrowseState,
 			wantID: "",
 		},
 		{
+			// Given: a browse state with an empty bead list
+			// Then: SelectedID returns empty
 			name: "empty list returns empty",
 			setup: func() browseState {
 				bs := newBrowseState()
@@ -285,6 +357,8 @@ func TestBrowse_SelectedID(t *testing.T) {
 			wantID: "",
 		},
 		{
+			// Given: a browse state with loaded beads and cursor at 0
+			// Then: SelectedID returns the first bead
 			name: "first bead selected by default",
 			setup: func() browseState {
 				bs := newBrowseState()
@@ -294,6 +368,8 @@ func TestBrowse_SelectedID(t *testing.T) {
 			wantID: "cap-001",
 		},
 		{
+			// Given: a browse state with cursor moved down once
+			// Then: SelectedID returns the second bead
 			name: "second bead after cursor down",
 			setup: func() browseState {
 				bs := newBrowseState()
@@ -315,11 +391,14 @@ func TestBrowse_SelectedID(t *testing.T) {
 }
 
 func TestBrowse_ErrorThenRetry(t *testing.T) {
+	// Given: a browse state that received an error
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Err: fmt.Errorf("timeout")})
 
-	// Press r to retry.
+	// When: r is pressed to retry
 	bs, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Then: loading state is set and a RefreshBeadsMsg command is returned
 	if cmd == nil {
 		t.Fatal("r in error state should produce a retry command")
 	}
