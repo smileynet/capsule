@@ -28,4 +28,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Left pane: navigable bead list with ID, priority badge (P0-P4), title, and type
   - Right pane: resolved bead detail with hierarchy, description, and acceptance criteria
   - Tab focus switching, cursor navigation (arrow/vim keys), refresh ('r'), and quit ('q')
+- Pipeline mode in dashboard: dispatch pipelines from bead list and watch phase progress in real time (`internal/dashboard`)
+  - Left pane: phase list with status indicators (spinner, checkmark, cross), auto-follow, retry counters, and duration
+  - Right pane: per-phase reports with summary, files changed, duration, and feedback (on failure)
+  - Channel-based event bridging between pipeline goroutine and Bubble Tea model
+  - Summary mode on completion: pass/fail result with phase count and timing, any-key return to browse
+  - Graceful abort with q/Ctrl+C during pipeline execution
   - TTY detection with clear error message when run without a terminal
