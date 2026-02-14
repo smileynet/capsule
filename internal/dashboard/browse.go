@@ -138,6 +138,11 @@ func (bs browseState) View(width, height int) string {
 		b.WriteString(PriorityBadge(bead.Priority))
 		b.WriteByte(' ')
 		b.WriteString(bead.Title)
+		if bead.Type != "" {
+			b.WriteString(" [")
+			b.WriteString(bead.Type)
+			b.WriteByte(']')
+		}
 	}
 	return b.String()
 }

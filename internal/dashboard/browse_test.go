@@ -237,6 +237,20 @@ func TestBrowse_PriorityBadgesInView(t *testing.T) {
 	}
 }
 
+func TestBrowse_TypeInView(t *testing.T) {
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+
+	view := bs.View(80, 20)
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "[task]") {
+		t.Errorf("view should contain bead type [task], got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "[feature]") {
+		t.Errorf("view should contain bead type [feature], got:\n%s", plain)
+	}
+}
+
 func TestBrowse_KeysIgnoredDuringLoading(t *testing.T) {
 	bs := newBrowseState()
 	// Still in loading state, keys should be no-ops.
