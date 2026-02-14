@@ -518,6 +518,62 @@ func TestModel_RefreshInvalidatesCache(t *testing.T) {
 	}
 }
 
+func newPipelineModel(w, h int, phases []string) Model {
+	m := NewModel()
+	m.mode = ModePipeline
+	m.pipeline = newPipelineState(phases)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return updated.(Model)
+}
+
+func TestModel_PipelineModeViewShowsPhases(t *testing.T) {
+	m := newPipelineModel(90, 40, []string{"plan", "code", "test"})
+
+	view := m.View()
+	plain := stripANSI(view)
+	for _, name := range []string{"plan", "code", "test"} {
+		if !strings.Contains(plain, name) {
+			t.Errorf("pipeline view should contain phase %q, got:\n%s", name, plain)
+		}
+	}
+}
+
+func TestModel_PhaseUpdateMsgRoutes(t *testing.T) {
+	m := newPipelineModel(90, 40, []string{"plan", "code"})
+
+	updated, _ := m.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+	m = updated.(Model)
+
+	if m.pipeline.phases[0].Status != PhaseRunning {
+		t.Errorf("phase 'plan' status = %q, want running", m.pipeline.phases[0].Status)
+	}
+}
+
+func TestModel_PipelineKeyRoutesLeft(t *testing.T) {
+	m := newPipelineModel(90, 40, []string{"plan", "code", "test"})
+
+	// Left pane focused: down key should move pipeline cursor.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+
+	if m.pipeline.cursor != 1 {
+		t.Errorf("pipeline cursor = %d, want 1 after down key", m.pipeline.cursor)
+	}
+}
+
+func TestModel_PipelineQuitDoesNotQuitInPipelineMode(t *testing.T) {
+	m := newPipelineModel(90, 40, []string{"plan"})
+
+	// q should not quit in pipeline mode (it's "abort" but needs dispatch wiring).
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Error("q should not quit in pipeline mode")
+		}
+	}
+}
+
 func TestModel_HelpBarReflectsMode(t *testing.T) {
 	tests := []struct {
 		name     string

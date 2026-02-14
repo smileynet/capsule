@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -26,6 +27,7 @@ type Model struct {
 	viewport viewport.Model
 	help     help.Model
 	browse   browseState
+	pipeline pipelineState
 	lister   BeadLister
 
 	resolver    BeadResolver
@@ -150,6 +152,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case PhaseUpdateMsg:
+		var cmd tea.Cmd
+		m.pipeline, cmd = m.pipeline.Update(msg)
+		return m, cmd
+
+	case spinner.TickMsg:
+		if m.mode == ModePipeline {
+			var cmd tea.Cmd
+			m.pipeline, cmd = m.pipeline.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -175,12 +190,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Mode-specific keys.
-	if m.mode == ModeBrowse && m.focus == PaneLeft {
+	switch {
+	case m.mode == ModeBrowse && m.focus == PaneLeft:
 		var cmd tea.Cmd
 		m.browse, cmd = m.browse.Update(msg)
 		m, resolveCmd := m.maybeResolve()
 		return m, tea.Batch(cmd, resolveCmd)
-	} else if m.mode == ModeBrowse && m.focus == PaneRight {
+
+	case m.mode == ModeBrowse && m.focus == PaneRight:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case m.mode == ModePipeline && m.focus == PaneLeft:
+		var cmd tea.Cmd
+		m.pipeline, cmd = m.pipeline.Update(msg)
+		return m, cmd
+
+	case m.mode == ModePipeline && m.focus == PaneRight:
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
@@ -258,7 +285,8 @@ func (m Model) View() string {
 func (m Model) viewLeft() string {
 	switch m.mode {
 	case ModePipeline:
-		return "Pipeline phases"
+		leftWidth, _ := PaneWidths(m.width)
+		return m.pipeline.View(leftWidth-borderChrome, m.contentHeight())
 	case ModeSummary:
 		return "Summary"
 	default:
