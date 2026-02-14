@@ -251,7 +251,7 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 
 	// Post-pipeline lifecycle: merge → cleanup → close bead.
 	// Best-effort: pipeline success is the hard requirement.
-	r.runPostPipeline(w, wt, bd)
+	postPipeline(w, r.BeadID, wt, bd)
 	return nil
 }
 
@@ -287,11 +287,10 @@ func (r *RunCmd) resolveBeadContext(w io.Writer, bd beadResolver) worklog.BeadCo
 	return beadCtx
 }
 
-// runPostPipeline performs merge, cleanup, and bead closing after a successful pipeline.
-// Failures print warnings but don't affect the exit code.
-func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
-	id := r.BeadID
-
+// postPipeline performs merge, cleanup, and bead closing after a successful pipeline.
+// Callable from both RunCmd and DashboardCmd. Failures print warnings to w but are
+// otherwise best-effort.
+func postPipeline(w io.Writer, beadID string, wt mergeOps, bd beadResolver) {
 	// Detect main branch.
 	mainBranch, err := wt.DetectMainBranch()
 	if err != nil {
@@ -300,25 +299,25 @@ func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
 	}
 
 	// Merge to main.
-	commitMsg := fmt.Sprintf("%s: pipeline complete", id)
-	err = wt.MergeToMain(id, mainBranch, commitMsg)
+	commitMsg := fmt.Sprintf("%s: pipeline complete", beadID)
+	err = wt.MergeToMain(beadID, mainBranch, commitMsg)
 	if err != nil {
 		if errors.Is(err, worktree.ErrMergeConflict) {
-			_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", id, mainBranch)
+			_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", beadID, mainBranch)
 			_, _ = fmt.Fprintf(w, "  To fix:\n")
 			_, _ = fmt.Fprintf(w, "    git checkout %s\n", mainBranch)
-			_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", id)
+			_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", beadID)
 			_, _ = fmt.Fprintf(w, "    # resolve conflicts, then:\n")
-			_, _ = fmt.Fprintf(w, "    capsule clean %s\n", id)
+			_, _ = fmt.Fprintf(w, "    capsule clean %s\n", beadID)
 			return
 		}
 		_, _ = fmt.Fprintf(w, "warning: merge failed: %v\n", err)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", id, mainBranch)
+	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", beadID, mainBranch)
 
 	// Cleanup: remove worktree and branch.
-	if err := wt.Remove(id, true); err != nil {
+	if err := wt.Remove(beadID, true); err != nil {
 		_, _ = fmt.Fprintf(w, "warning: cleanup failed: %v\n", err)
 	}
 	if err := wt.Prune(); err != nil {
@@ -326,13 +325,13 @@ func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
 	}
 
 	// Close bead.
-	if err := bd.Close(id); err != nil {
+	if err := bd.Close(beadID); err != nil {
 		_, _ = fmt.Fprintf(w, "warning: bead close failed: %v\n", err)
 	} else {
-		_, _ = fmt.Fprintf(w, "Closed %s\n", id)
+		_, _ = fmt.Fprintf(w, "Closed %s\n", beadID)
 	}
 
-	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", id)
+	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", beadID)
 }
 
 // AbortCmd aborts a running capsule by removing the worktree.
@@ -424,13 +423,25 @@ func (d *DashboardCmd) Run() error {
 		return fmt.Errorf("dashboard: requires a terminal (TTY)")
 	}
 
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("dashboard: %w", err)
+	}
+
 	bdClient := bead.NewClient(".")
 	lister := &beadListerAdapter{client: bdClient}
 	resolver := &beadResolverAdapter{client: bdClient}
+	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+
+	ppFunc := func(beadID string) error {
+		postPipeline(io.Discard, beadID, wtMgr, bdClient)
+		return nil
+	}
 
 	m := dashboard.NewModel(
 		dashboard.WithBeadLister(lister),
 		dashboard.WithBeadResolver(resolver),
+		dashboard.WithPostPipelineFunc(ppFunc),
 	)
 
 	prog := tea.NewProgram(m, tea.WithAltScreen())
