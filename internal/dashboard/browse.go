@@ -110,9 +110,10 @@ func (bs browseState) SelectedID() string {
 }
 
 // View renders the browse pane content for the given dimensions.
-func (bs browseState) View(width, height int) string {
+// spinnerView is the current spinner frame (may be empty when spinner is inactive).
+func (bs browseState) View(width, height int, spinnerView string) string {
 	if bs.loading {
-		return "Loading beads..."
+		return fmt.Sprintf("%s Loading beads...", spinnerView)
 	}
 
 	if bs.err != nil {
@@ -120,7 +121,7 @@ func (bs browseState) View(width, height int) string {
 	}
 
 	if len(bs.beads) == 0 {
-		return "No ready beads"
+		return "No ready beads — press r to refresh"
 	}
 
 	var b strings.Builder

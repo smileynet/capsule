@@ -31,12 +31,29 @@ func TestBrowse_LoadingState(t *testing.T) {
 	bs := newBrowseState()
 
 	// When: the view is rendered
-	view := bs.View(40, 20)
+	view := bs.View(40, 20, "")
 	plain := stripANSI(view)
 
 	// Then: a loading indicator is shown
 	if !strings.Contains(plain, "Loading") {
 		t.Errorf("loading view should contain 'Loading', got:\n%s", plain)
+	}
+}
+
+func TestBrowse_LoadingShowsSpinner(t *testing.T) {
+	// Given: a browse state in loading with a spinner frame
+	bs := newBrowseState()
+
+	// When: the view is rendered with a spinner frame
+	view := bs.View(40, 20, "⣾")
+	plain := stripANSI(view)
+
+	// Then: the spinner frame appears alongside the loading text
+	if !strings.Contains(plain, "⣾") {
+		t.Errorf("loading view should contain spinner frame, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Loading beads...") {
+		t.Errorf("loading view should contain 'Loading beads...', got:\n%s", plain)
 	}
 }
 
@@ -46,7 +63,7 @@ func TestBrowse_BeadsLoadedView(t *testing.T) {
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
 	// When: the view is rendered
-	view := bs.View(60, 20)
+	view := bs.View(60, 20, "")
 	plain := stripANSI(view)
 
 	// Then: each bead's ID and title appear in the view
@@ -137,7 +154,7 @@ func TestBrowse_CursorMarker(t *testing.T) {
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
 	// When: the view is rendered
-	view := bs.View(60, 20)
+	view := bs.View(60, 20, "")
 	plain := stripANSI(view)
 
 	// Then: the cursor marker is visible
@@ -197,7 +214,7 @@ func TestBrowse_ErrorDisplay(t *testing.T) {
 	bs, _ = bs.Update(BeadListMsg{Err: fmt.Errorf("connection failed")})
 
 	// When: the view is rendered
-	view := bs.View(60, 20)
+	view := bs.View(60, 20, "")
 	plain := stripANSI(view)
 
 	// Then: the error message and retry hint are shown
@@ -215,12 +232,15 @@ func TestBrowse_EmptyList(t *testing.T) {
 	bs, _ = bs.Update(BeadListMsg{Beads: []BeadSummary{}})
 
 	// When: the view is rendered
-	view := bs.View(60, 20)
+	view := bs.View(60, 20, "")
 	plain := stripANSI(view)
 
-	// Then: a "No ready beads" message is shown
+	// Then: a "No ready beads" message with refresh hint is shown
 	if !strings.Contains(plain, "No ready beads") {
 		t.Errorf("empty list view should contain 'No ready beads', got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "press r to refresh") {
+		t.Errorf("empty list view should contain refresh hint, got:\n%s", plain)
 	}
 }
 
@@ -286,7 +306,7 @@ func TestBrowse_PriorityBadgesInView(t *testing.T) {
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
 	// When: the view is rendered
-	view := bs.View(60, 20)
+	view := bs.View(60, 20, "")
 	plain := stripANSI(view)
 
 	// Then: priority badges P1 and P2 are visible
@@ -304,7 +324,7 @@ func TestBrowse_TypeInView(t *testing.T) {
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
 
 	// When: the view is rendered
-	view := bs.View(80, 20)
+	view := bs.View(80, 20, "")
 	plain := stripANSI(view)
 
 	// Then: bead types are visible

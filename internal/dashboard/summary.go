@@ -59,17 +59,10 @@ func (m Model) returnToBrowse() (Model, tea.Cmd) {
 		})
 	}
 
-	// Refresh bead list.
+	// Refresh bead list with spinner animation.
 	if m.lister != nil {
-		cmds = append(cmds, initBrowse(m.lister))
+		cmds = append(cmds, initBrowse(m.lister), m.browseSpinner.Tick)
 	}
 
-	switch len(cmds) {
-	case 0:
-		return m, nil
-	case 1:
-		return m, cmds[0]
-	default:
-		return m, tea.Batch(cmds...)
-	}
+	return m, tea.Batch(cmds...)
 }

@@ -1,6 +1,12 @@
 package dashboard
 
-import "strings"
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // containsText is a test alias for strings.Contains.
 func containsText(s, sub string) bool {
@@ -32,4 +38,29 @@ func stripANSI(s string) string {
 // containsPlainText checks if s contains sub after stripping ANSI escapes.
 func containsPlainText(s, sub string) bool {
 	return strings.Contains(stripANSI(s), sub)
+}
+
+// execBatch executes a tea.Cmd, handling both single commands and batch
+// commands. It returns all resulting messages. Spinner ticks are skipped
+// to avoid infinite recursion.
+func execBatch(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var msgs []tea.Msg
+		for _, c := range batch {
+			if c != nil {
+				result := c()
+				// Skip spinner ticks to avoid recursion.
+				if _, isTick := result.(spinner.TickMsg); !isTick {
+					msgs = append(msgs, result)
+				}
+			}
+		}
+		return msgs
+	}
+	return []tea.Msg{msg}
 }

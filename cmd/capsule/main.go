@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"time"
@@ -421,6 +422,10 @@ type teaRunner interface {
 func (d *DashboardCmd) Run() error {
 	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
 		return fmt.Errorf("dashboard: requires a terminal (TTY)")
+	}
+
+	if _, err := exec.LookPath("bd"); err != nil {
+		return fmt.Errorf("dashboard: bd is not installed (required for bead management)")
 	}
 
 	cfg, err := loadConfig()

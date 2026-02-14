@@ -138,13 +138,19 @@ func TestSummary_AnyKeyTriggersRefresh(t *testing.T) {
 	// When: any key is pressed
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 
-	// Then: a BeadListMsg refresh command is produced
+	// Then: a refresh command is produced (batch includes fetch + spinner tick)
 	if cmd == nil {
 		t.Fatal("returning to browse should produce a refresh command")
 	}
-	msg := cmd()
-	if _, ok := msg.(BeadListMsg); !ok {
-		t.Fatalf("command produced %T, want BeadListMsg", msg)
+	msgs := execBatch(t, cmd)
+	var foundRefresh bool
+	for _, msg := range msgs {
+		if _, ok := msg.(BeadListMsg); ok {
+			foundRefresh = true
+		}
+	}
+	if !foundRefresh {
+		t.Fatal("batch should contain BeadListMsg for bead list refresh")
 	}
 }
 
@@ -292,13 +298,22 @@ func TestSummary_ReturnToBrowseWithoutPostPipelineProducesRefreshOnly(t *testing
 	// When: any key is pressed
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 
-	// Then: only a refresh command is produced (not a batch)
+	// Then: a refresh command batch is produced (fetch + spinner tick, no postPipeline)
 	if cmd == nil {
 		t.Fatal("expected refresh command")
 	}
-	msg := cmd()
-	if _, ok := msg.(BeadListMsg); !ok {
-		t.Fatalf("command produced %T, want BeadListMsg (not batch)", msg)
+	msgs := execBatch(t, cmd)
+	var foundRefresh bool
+	for _, msg := range msgs {
+		if _, ok := msg.(BeadListMsg); ok {
+			foundRefresh = true
+		}
+		if _, ok := msg.(PostPipelineDoneMsg); ok {
+			t.Error("should not fire PostPipelineFunc without PostPipelineFunc configured")
+		}
+	}
+	if !foundRefresh {
+		t.Fatal("batch should contain BeadListMsg for bead list refresh")
 	}
 }
 

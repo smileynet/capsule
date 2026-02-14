@@ -21,15 +21,16 @@ const borderChrome = 2
 // Model is the root Bubble Tea model for the dashboard TUI.
 // It manages a two-pane layout with mode-based routing and focus management.
 type Model struct {
-	mode     Mode
-	focus    Focus
-	width    int
-	height   int
-	viewport viewport.Model
-	help     help.Model
-	browse   browseState
-	pipeline pipelineState
-	lister   BeadLister
+	mode          Mode
+	focus         Focus
+	width         int
+	height        int
+	viewport      viewport.Model
+	help          help.Model
+	browse        browseState
+	browseSpinner spinner.Model
+	pipeline      pipelineState
+	lister        BeadLister
 
 	resolver    BeadResolver
 	cache       *Cache
@@ -47,16 +48,24 @@ type Model struct {
 	dispatchedBeadID string
 }
 
+// newBrowseSpinner returns a spinner for browse mode loading states.
+func newBrowseSpinner() spinner.Model {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	return s
+}
+
 // NewModel creates a dashboard Model in browse mode with left-pane focus.
 // If a BeadLister is provided, Init will fire an async fetch for the bead list.
 func NewModel(opts ...ModelOption) Model {
 	m := Model{
-		mode:     ModeBrowse,
-		focus:    PaneLeft,
-		viewport: viewport.New(0, 0),
-		help:     help.New(),
-		browse:   newBrowseState(),
-		cache:    NewCache(),
+		mode:          ModeBrowse,
+		focus:         PaneLeft,
+		viewport:      viewport.New(0, 0),
+		help:          help.New(),
+		browse:        newBrowseState(),
+		browseSpinner: newBrowseSpinner(),
+		cache:         NewCache(),
 	}
 	for _, o := range opts {
 		o(&m)
@@ -168,10 +177,10 @@ func formatBeadDetail(d BeadDetail) string {
 }
 
 // Init returns the initial command. If a BeadLister was provided,
-// it fires an async fetch for the bead list.
+// it fires an async fetch for the bead list with spinner animation.
 func (m Model) Init() tea.Cmd {
 	if m.lister != nil {
-		return initBrowse(m.lister)
+		return tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
 	}
 	return nil
 }
@@ -214,7 +223,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RefreshBeadsMsg:
 		m.cache.Invalidate()
 		if m.lister != nil {
-			return m, initBrowse(m.lister)
+			return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
 		}
 		return m, nil
 
@@ -245,9 +254,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.mode == ModePipeline {
+		switch {
+		case m.mode == ModePipeline:
 			var cmd tea.Cmd
 			m.pipeline, cmd = m.pipeline.Update(msg)
+			return m, cmd
+		case m.mode == ModeBrowse && (m.browse.loading || m.resolvingID != ""):
+			var cmd tea.Cmd
+			m.browseSpinner, cmd = m.browseSpinner.Update(msg)
 			return m, cmd
 		}
 		return m, nil
@@ -353,7 +367,7 @@ func (m Model) maybeResolve() (Model, tea.Cmd) {
 	if m.resolver != nil {
 		m.resolvingID = selected
 		m.resolveErr = nil
-		return m, resolveBeadCmd(m.resolver, selected)
+		return m, tea.Batch(resolveBeadCmd(m.resolver, selected), m.browseSpinner.Tick)
 	}
 	return m, nil
 }
@@ -407,7 +421,7 @@ func (m Model) viewLeft() string {
 	case ModePipeline, ModeSummary:
 		return m.pipeline.View(w, h)
 	default:
-		return m.browse.View(w, h)
+		return m.browse.View(w, h, m.browseSpinner.View())
 	}
 }
 
@@ -425,13 +439,13 @@ func (m Model) viewRight() string {
 }
 
 // viewBrowseDetail renders the right pane in browse mode:
-// loading indicator, error message, or resolved detail viewport.
+// loading spinner, error message, or resolved detail viewport.
 func (m Model) viewBrowseDetail() string {
 	if m.resolvingID != "" {
-		return fmt.Sprintf("Loading %s...", m.resolvingID)
+		return fmt.Sprintf("%s Loading %s...", m.browseSpinner.View(), m.resolvingID)
 	}
 	if m.resolveErr != nil {
-		return fmt.Sprintf("Error: %s\n\nPress r to retry", m.resolveErr)
+		return fmt.Sprintf("Could not load bead detail\n\n%s", m.resolveErr)
 	}
 	if m.detailID == "" {
 		return "Select a bead"

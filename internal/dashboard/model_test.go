@@ -291,10 +291,8 @@ func newResolverModel(w, h int) (Model, *stubResolver) {
 	m := NewModel(WithBeadLister(lister), WithBeadResolver(resolver))
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m = updated.(Model)
-	// Deliver the bead list.
-	cmd := m.Init()
-	msg := cmd()
-	updated, _ = m.Update(msg)
+	// Deliver the bead list directly (bypasses Init batch).
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
 	m = updated.(Model)
 	return m, resolver
 }
@@ -346,14 +344,22 @@ func TestModel_CacheMissTriggersResolve(t *testing.T) {
 	// When: cursor moves to cap-002 (cache miss)
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 
-	// Then: the resolver is called for cap-002
+	// Then: a resolve command is produced
 	if cmd == nil {
 		t.Fatal("cache miss should produce a resolve command")
 	}
-	msg := cmd()
-	resolved := msg.(BeadResolvedMsg)
-	if resolved.ID != "cap-002" {
-		t.Errorf("resolved ID = %q, want %q", resolved.ID, "cap-002")
+	msgs := execBatch(t, cmd)
+	var found bool
+	for _, msg := range msgs {
+		if resolved, ok := msg.(BeadResolvedMsg); ok {
+			found = true
+			if resolved.ID != "cap-002" {
+				t.Errorf("resolved ID = %q, want %q", resolved.ID, "cap-002")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected BeadResolvedMsg in batch")
 	}
 	if resolver.calls != 1 {
 		t.Errorf("resolver.calls = %d, want 1", resolver.calls)
@@ -365,11 +371,13 @@ func TestModel_CacheHitSkipsResolve(t *testing.T) {
 	m, resolver := newResolverModel(90, 40)
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
+	// Move to cap-002 and deliver its resolve result.
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
-	msg := cmd()
-	updated, _ = m.Update(msg)
-	m = updated.(Model)
+	for _, msg := range execBatch(t, cmd) {
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+	}
 	resolver.calls = 0
 
 	// When: cursor moves back to cap-001 (cache hit)
@@ -513,7 +521,10 @@ func TestModel_ViewRightShowsError(t *testing.T) {
 	view := m.View()
 	plain := stripANSI(view)
 
-	// Then: the error message is shown
+	// Then: the error header and message are shown
+	if !strings.Contains(plain, "Could not load bead detail") {
+		t.Errorf("right pane should show 'Could not load bead detail', got:\n%s", plain)
+	}
 	if !strings.Contains(plain, "network error") {
 		t.Errorf("right pane should show error message, got:\n%s", plain)
 	}
@@ -1107,5 +1118,86 @@ func TestModel_PhaseUpdateReschedulesListener(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("PhaseUpdateMsg should return a command to reschedule listener")
+	}
+}
+
+// --- Browse spinner tests ---
+
+func TestModel_SpinnerTickRoutesBrowseLoading(t *testing.T) {
+	// Given: a model in browse mode with bead list loading
+	m := NewModel(WithBeadLister(&stubLister{beads: sampleBeads()}))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	// browse is loading by default (newBrowseState sets loading=true)
+
+	// When: a spinner tick is received
+	_, cmd := m.Update(m.browseSpinner.Tick())
+	// Then: a tick command is returned (spinner keeps animating)
+	if cmd == nil {
+		t.Error("spinner tick should return a command during browse loading")
+	}
+}
+
+func TestModel_SpinnerTickRoutesBrowseResolving(t *testing.T) {
+	// Given: a model in browse mode resolving a bead (loading done)
+	m, _ := newResolverModel(90, 40)
+	// After newResolverModel, resolvingID is "cap-001" (loading right pane)
+
+	// When: a spinner tick is received
+	_, cmd := m.Update(m.browseSpinner.Tick())
+
+	// Then: a tick command is returned (spinner keeps animating)
+	if cmd == nil {
+		t.Error("spinner tick should return a command during resolve loading")
+	}
+}
+
+func TestModel_SpinnerTickIgnoredWhenIdle(t *testing.T) {
+	// Given: a model in browse mode with nothing loading
+	m, _ := newResolverModel(90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+
+	// When: a spinner tick is received (no loading, no resolving)
+	_, cmd := m.Update(m.browseSpinner.Tick())
+
+	// Then: no command is returned (spinner stops)
+	if cmd != nil {
+		t.Error("spinner tick should not return a command when idle")
+	}
+}
+
+func TestModel_InitReturnsBatchWithSpinner(t *testing.T) {
+	// Given: a model with a BeadLister
+	m := NewModel(WithBeadLister(&stubLister{beads: sampleBeads()}))
+
+	// When: Init is called
+	cmd := m.Init()
+
+	// Then: a non-nil command is returned (batch of fetch + spinner tick)
+	if cmd == nil {
+		t.Fatal("Init with lister should return a batch command")
+	}
+}
+
+func TestModel_ResolveErrorNavigable(t *testing.T) {
+	// Given: a model with cap-001 resolve failed
+	m, _ := newResolverModel(90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Err: fmt.Errorf("network error")})
+	m = updated.(Model)
+
+	// When: cursor moves down (navigating bead list despite error)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+
+	// Then: navigation works and a new resolve is triggered for cap-002
+	if m.browse.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 after down key", m.browse.cursor)
+	}
+	if m.detailID != "cap-002" {
+		t.Errorf("detailID = %q, want %q after navigating", m.detailID, "cap-002")
+	}
+	if cmd == nil {
+		t.Error("navigating after error should trigger resolve for new bead")
 	}
 }
