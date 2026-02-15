@@ -109,21 +109,28 @@ fi
 echo "[2/5] Mission Briefing section"
 # Given: a rendered worklog template
 # When: checking for Mission Briefing section
-# Then: section exists with epic, feature, and task context
+# Then: section exists with epic, feature, task context, and acceptance criteria
 BRIEFING_OK=true
 if ! echo "$RENDERED" | grep -qi "Mission Briefing"; then
     fail "Missing 'Mission Briefing' section header"
     BRIEFING_OK=false
 fi
-# Should contain epic, feature, and task context within the briefing
 for field in "Epic" "Feature" "Task"; do
     if ! echo "$RENDERED" | grep -qi "$field"; then
         fail "Mission Briefing missing $field context"
         BRIEFING_OK=false
     fi
 done
+if ! echo "$RENDERED" | grep -qi "Acceptance Criteria"; then
+    fail "Mission Briefing missing 'Acceptance Criteria' section"
+    BRIEFING_OK=false
+fi
+if ! echo "$RENDERED" | grep -qF "Returns nil for valid emails"; then
+    fail "Mission Briefing missing acceptance criteria content"
+    BRIEFING_OK=false
+fi
 if [ "$BRIEFING_OK" = true ]; then
-    pass "Mission Briefing section with epic/feature/task context"
+    pass "Mission Briefing section with epic/feature/task context and acceptance criteria"
 fi
 
 # ---------- Test 3: Phase entry sections ----------
