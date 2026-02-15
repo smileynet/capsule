@@ -8,10 +8,10 @@ Always use `jq -r '.field // empty'` for optional fields. Use `-e` for required 
 
 ```bash
 # Good: null-safe optional field
-TITLE=$(echo "$JSON" | jq -r '.[0].title // empty')
+TITLE=$(printf '%s\n' "$JSON" | jq -r '.[0].title // empty')
 
 # Good: required field — fails if missing
-TITLE=$(echo "$JSON" | jq -e -r '.[0].title') || { echo "missing title" >&2; exit 1; }
+TITLE=$(printf '%s\n' "$JSON" | jq -e -r '.[0].title') || { echo "missing title" >&2; exit 1; }
 
 # Bad: grep/sed on JSON
 TITLE=$(echo "$JSON" | grep '"title"' | sed 's/.*: "\(.*\)"/\1/')

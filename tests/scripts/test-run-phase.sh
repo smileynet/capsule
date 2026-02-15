@@ -246,8 +246,8 @@ export MOCK_CLAUDE_RESPONSE='Some logs
 # When: run-phase.sh is invoked
 OUTPUT=$("$RUN_PHASE" test-writer "$WORKTREE" 2>/dev/null) || true
 # Then: parsed signal JSON is printed to stdout
-if echo "$OUTPUT" | jq -e '.status' >/dev/null 2>&1; then
-    STATUS=$(echo "$OUTPUT" | jq -r '.status')
+if printf '%s\n' "$OUTPUT" | jq -e '.status' >/dev/null 2>&1; then
+    STATUS=$(printf '%s\n' "$OUTPUT" | jq -r '.status')
     if [ "$STATUS" = "PASS" ]; then
         pass "Parsed signal JSON accessible in stdout"
     else
