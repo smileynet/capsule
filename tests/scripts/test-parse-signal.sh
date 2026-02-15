@@ -159,9 +159,9 @@ fi
 # ---------- Test 9: Validate required fields - missing feedback ----------
 echo "[9/9] Reject JSON missing required 'feedback' field"
 # Given: JSON missing the required 'feedback' field
-BAD_JSON='{"status":"PASS","files_changed":[],"summary":"done"}'
+NO_FEEDBACK_JSON='{"status":"PASS","files_changed":[],"summary":"done"}'
 # When: piped through parse-signal.sh
-RESULT=$(echo "$BAD_JSON" | "$PARSE_SCRIPT" 2>&1) || true
+RESULT=$(echo "$NO_FEEDBACK_JSON" | "$PARSE_SCRIPT" 2>&1) || true
 # Then: ERROR signal is returned
 STATUS=$(echo "$RESULT" | jq -r '.status')
 if [ "$STATUS" = "ERROR" ]; then

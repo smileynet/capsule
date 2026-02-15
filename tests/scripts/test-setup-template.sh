@@ -13,22 +13,21 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
-# Prerequisites: required tools installed
+# --- Prerequisite checks ---
 for cmd in git bd; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "ERROR: $cmd is required but not installed"
+        echo "ERROR: $cmd is required but not installed" >&2
         exit 1
     fi
 done
 
-# Prerequisite: setup script exists
 if [ ! -f "$SETUP_SCRIPT" ]; then
-    echo "ERROR: scripts/setup-template.sh not found"
+    echo "ERROR: scripts/setup-template.sh not found" >&2
     exit 1
 fi
 
 if [ ! -x "$SETUP_SCRIPT" ]; then
-    echo "ERROR: scripts/setup-template.sh is not executable"
+    echo "ERROR: scripts/setup-template.sh is not executable" >&2
     exit 1
 fi
 
