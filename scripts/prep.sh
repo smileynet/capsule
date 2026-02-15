@@ -71,7 +71,7 @@ BEAD_JSON=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null) || {
     exit 1
 }
 
-TASK_TITLE=$(echo "$BEAD_JSON" | jq -r '.[0].title // empty')
+TASK_TITLE=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].title // empty')
 if [ -z "$TASK_TITLE" ]; then
     echo "ERROR: Bead '$BEAD_ID' has no title (malformed or missing)" >&2
     exit 1
@@ -100,8 +100,8 @@ if [ -d "$WORKTREE_DIR" ]; then
 fi
 
 # --- Extract bead context ---
-TASK_DESCRIPTION=$(echo "$BEAD_JSON" | jq -r '.[0].description // empty')
-TASK_AC=$(echo "$BEAD_JSON" | jq -r '.[0].acceptance_criteria // empty')
+TASK_DESCRIPTION=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].description // empty')
+TASK_AC=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].acceptance_criteria // empty')
 
 # Walk up the parent chain to find feature and epic
 source "$SCRIPT_DIR/lib/resolve-parent-chain.sh"

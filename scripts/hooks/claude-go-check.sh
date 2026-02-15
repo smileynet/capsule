@@ -7,7 +7,7 @@
 # to see build/vet errors and self-corrects.
 
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(printf '%s\n' "$INPUT" | jq -r '.tool_input.file_path // empty')
 
 # Exit early for non-Go files or missing files
 [[ "$FILE_PATH" == *.go ]] && [[ -f "$FILE_PATH" ]] || exit 0
