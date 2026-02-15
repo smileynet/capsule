@@ -20,23 +20,55 @@ if [ ! -f "$TEMPLATE" ]; then
     exit 1
 fi
 
-# Helper: render template by replacing {{PLACEHOLDER}} with env var values.
-# Converts {{VAR}} → ${VAR} then uses envsubst for safe multi-line handling.
+# Helper: render Go text/template by substituting {{.Field}} placeholders
+# and evaluating {{if .Field}}...{{end}} conditionals via awk.
 render_template() {
-    # Convert {{PLACEHOLDER}} to ${PLACEHOLDER} syntax, then envsubst
-    sed 's/{{/\${/g; s/}}/}/g' "$TEMPLATE" | \
-        EPIC_ID="${EPIC_ID:-}" \
-        EPIC_TITLE="${EPIC_TITLE:-}" \
-        EPIC_GOAL="${EPIC_GOAL:-}" \
-        FEATURE_ID="${FEATURE_ID:-}" \
-        FEATURE_TITLE="${FEATURE_TITLE:-}" \
-        FEATURE_GOAL="${FEATURE_GOAL:-}" \
-        TASK_ID="${TASK_ID:-}" \
-        TASK_TITLE="${TASK_TITLE:-}" \
-        TASK_DESCRIPTION="${TASK_DESCRIPTION:-}" \
-        ACCEPTANCE_CRITERIA="${ACCEPTANCE_CRITERIA:-}" \
-        TIMESTAMP="${TIMESTAMP:-}" \
-        envsubst '${EPIC_ID} ${EPIC_TITLE} ${EPIC_GOAL} ${FEATURE_ID} ${FEATURE_TITLE} ${FEATURE_GOAL} ${TASK_ID} ${TASK_TITLE} ${TASK_DESCRIPTION} ${ACCEPTANCE_CRITERIA} ${TIMESTAMP}'
+    awk \
+        -v EpicID="${EPIC_ID:-}" \
+        -v EpicTitle="${EPIC_TITLE:-}" \
+        -v EpicGoal="${EPIC_GOAL:-}" \
+        -v FeatureID="${FEATURE_ID:-}" \
+        -v FeatureTitle="${FEATURE_TITLE:-}" \
+        -v FeatureGoal="${FEATURE_GOAL:-}" \
+        -v TaskID="${TASK_ID:-}" \
+        -v TaskTitle="${TASK_TITLE:-}" \
+        -v TaskDescription="${TASK_DESCRIPTION:-}" \
+        -v AcceptanceCriteria="${ACCEPTANCE_CRITERIA:-}" \
+        -v Timestamp="${TIMESTAMP:-}" \
+    '
+    BEGIN {
+        f[".EpicID"]             = EpicID
+        f[".EpicTitle"]          = EpicTitle
+        f[".EpicGoal"]           = EpicGoal
+        f[".FeatureID"]          = FeatureID
+        f[".FeatureTitle"]       = FeatureTitle
+        f[".FeatureGoal"]        = FeatureGoal
+        f[".TaskID"]             = TaskID
+        f[".TaskTitle"]          = TaskTitle
+        f[".TaskDescription"]    = TaskDescription
+        f[".AcceptanceCriteria"] = AcceptanceCriteria
+        f[".Timestamp"]          = Timestamp
+        skip = 0
+    }
+    /\{\{end\}\}/ { skip = 0 }
+    /\{\{if \./ {
+        s = $0; sub(/.*\{\{if /, "", s); sub(/\}\}.*/, "", s)
+        if (s != "" && f[s] == "") { skip = 1 }
+        next
+    }
+    /\{\{end\}\}/ { next }
+    skip { next }
+    {
+        line = $0
+        while (match(line, /\{\{\.[-_a-zA-Z0-9]+\}\}/)) {
+            token = substr(line, RSTART, RLENGTH)
+            key = substr(token, 3, length(token) - 4)
+            val = (key in f) ? f[key] : ""
+            line = substr(line, 1, RSTART - 1) val substr(line, RSTART + RLENGTH)
+        }
+        print line
+    }
+    ' "$TEMPLATE"
 }
 
 echo "=== t-1.2.1: worklog.md.template ==="
@@ -45,7 +77,7 @@ echo ""
 # ---------- Test 1: Render with complete sample data ----------
 echo "[1/5] Render with complete sample data"
 # Given: complete sample data for all placeholders
-# When: template is rendered with envsubst
+# When: template is rendered via awk
 # Then: all placeholder values appear in output
 EPIC_ID="demo-1"
 EPIC_TITLE="Demo Capsule Feature Set"
@@ -187,13 +219,13 @@ TASK_DESCRIPTION="Implement ValidateEmail(email string) error"
 # E2: Consistent placeholder naming convention
 echo "[E2] Consistent placeholder naming"
 # Given: the raw template file
-# When: extracting all {{PLACEHOLDER}} tokens
-# Then: all use UPPER_SNAKE_CASE naming
+# When: extracting all {{.Field}} tokens
+# Then: all use Go text/template .CamelCase or control flow (if/end)
 RAW_TEMPLATE=$(cat "$TEMPLATE")
-# All placeholders should match {{UPPER_SNAKE_CASE}}
-BAD_PLACEHOLDERS=$(echo "$RAW_TEMPLATE" | grep -oP '\{\{[^}]+\}\}' | grep -v '^{{[A-Z_]*}}$' || true)
+# Valid patterns: {{.CamelCase}}, {{if .CamelCase}}, {{end}}
+BAD_PLACEHOLDERS=$(echo "$RAW_TEMPLATE" | grep -oP '\{\{[^}]+\}\}' | grep -vE '^\{\{(\.[A-Z][a-zA-Z]*|if \.[A-Z][a-zA-Z]*|end)\}\}$' || true)
 if [ -z "$BAD_PLACEHOLDERS" ]; then
-    pass "All placeholders use UPPER_SNAKE_CASE naming"
+    pass "All placeholders use Go text/template .CamelCase naming"
 else
     fail "Inconsistent placeholder naming: $BAD_PLACEHOLDERS"
 fi

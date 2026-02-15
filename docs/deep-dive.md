@@ -168,10 +168,10 @@ Worktree preserved at .capsule/worktrees/demo-001.1.1 for manual inspection.
 | Aspect | Detail |
 |--------|--------|
 | **Input** | Bead ID, project directory |
-| **Process** | 1. Validate bead exists via `bd show --json` 2. Extract title, description, acceptance criteria 3. Walk parent chain (task → feature → epic) via `lib/resolve-parent-chain.sh` 4. Create git worktree on branch `capsule-<bead-id>` from HEAD 5. Instantiate worklog from `templates/worklog.md.template` via `envsubst` |
+| **Process** | 1. Validate bead exists via `bd show --json` 2. Extract title, description, acceptance criteria 3. Walk parent chain (task → feature → epic) via `lib/resolve-parent-chain.sh` 4. Create git worktree on branch `capsule-<bead-id>` from HEAD 5. Instantiate worklog from `templates/worklog.md.template` via awk |
 | **Output** | Git worktree at `.capsule/worktrees/<bead-id>/`, `worklog.md` with mission briefing |
 | **Expects** | Bead exists with a title; worktree does not already exist |
-| **Requires** | `git`, `bd`, `jq`, `envsubst` |
+| **Requires** | `git`, `bd`, `jq` |
 
 **Parent chain resolution** (`lib/resolve-parent-chain.sh`):
 1. Extract `.[0].parent` field (primary) or first `parent-child` dependency (fallback)

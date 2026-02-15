@@ -34,4 +34,4 @@ bash tests/scripts/test-worklog-template.sh
 
 ## Known Limitations
 
-- Worklog uses envsubst-based rendering, limiting placeholders to environment-safe strings
+- Worklog shell renderer uses `awk -v` which interprets C escape sequences (`\n`, `\t`) in values

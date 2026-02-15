@@ -29,7 +29,7 @@ capsule/
 │   ├── merge.md                # Stage and commit in worktree
 │   └── summary.md              # Post-pipeline narrative summary
 ├── templates/
-│   ├── worklog.md.template     # Worklog template (envsubst)
+│   ├── worklog.md.template     # Worklog template (Go text/template syntax)
 │   ├── demo-brownfield/           # Go template (1 epic, 1 feature, 2 tasks)
 │   │   ├── AGENTS.md           # Project conventions (required)
 │   │   ├── issues.jsonl        # Bead fixtures (required)
@@ -122,7 +122,7 @@ prep.sh <bead-id> [--project-dir=DIR]
 | `bead-id`      | yes      | —       | The bead to prepare           |
 | `--project-dir` | no       | `.`     | Project root directory        |
 
-**Prerequisites:** `git`, `bd`, `jq`, `envsubst`
+**Prerequisites:** `git`, `bd`, `jq`
 
 **Behavior:**
 
@@ -132,11 +132,11 @@ prep.sh <bead-id> [--project-dir=DIR]
 4. Walks parent chain to find feature and epic ancestors
 5. Creates git worktree on branch `capsule-<bead-id>` from HEAD
 6. Creates `.capsule/logs/` directory if not present
-7. Instantiates worklog from `templates/worklog.md.template` via `envsubst`
+7. Instantiates worklog from `templates/worklog.md.template` via awk
 
 **Template variables:**
 
-The template file uses `{{VAR}}` delimiters (double curly braces). The shell implementation converts these to `${VAR}` via sed before piping to `envsubst`. For the Go rewrite, use native Go template syntax (`{{.Var}}`).
+The template file uses Go `text/template` syntax (`{{.Var}}` for fields, `{{if .Var}}...{{end}}` for conditionals). The shell implementation renders these via awk; the Go code uses `text/template` natively.
 
 | Variable               | Source                          |
 |------------------------|---------------------------------|
@@ -734,7 +734,7 @@ On abort, the worktree is preserved for manual inspection.
 
 1. `prep.sh` reads the bead's metadata via `bd show <bead-id> --json`
 2. Walks the parent chain to find feature and epic ancestors
-3. Instantiates `templates/worklog.md.template` via `envsubst` with bead context
+3. Instantiates `templates/worklog.md.template` via awk with bead context
 4. Places the worklog at `.capsule/worktrees/<bead-id>/worklog.md`
 
 ### Population
@@ -842,7 +842,7 @@ Every script validates its dependencies before executing:
 | Script           | Required commands              |
 |------------------|-------------------------------|
 | setup-template.sh| git, bd                       |
-| prep.sh          | git, bd, jq, envsubst        |
+| prep.sh          | git, bd, jq                  |
 | parse-signal.sh  | jq                           |
 | run-phase.sh     | claude, jq                   |
 | run-pipeline.sh  | jq (+ subscripts)            |
