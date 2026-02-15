@@ -83,17 +83,17 @@ fi
 echo "[4/7] bd show has full metadata"
 # Given: a project directory with beads initialized
 # When: running bd show on a task bead
-# Then: output contains title, description, and parent reference
+# Then: output contains title, description, acceptance criteria, and parent reference
 SHOW_OUTPUT=$(cd "$PROJECT_DIR" && bd show demo-1.1.1 2>&1)
 SHOW_OK=true
-for field in "Validate email format" "DESCRIPTION" "demo-1.1"; do
+for field in "Validate email format" "DESCRIPTION" "ACCEPTANCE CRITERIA" "ValidateEmail returns nil for valid emails" "demo-1.1"; do
     if ! echo "$SHOW_OUTPUT" | grep -q "$field"; then
         fail "bd show demo-1.1.1 missing expected content: $field"
         SHOW_OK=false
     fi
 done
 if [ "$SHOW_OK" = true ]; then
-    pass "bd show has title, description, and parent reference"
+    pass "bd show has title, description, acceptance criteria, and parent reference"
 fi
 
 # ---------- Test 5: Deterministic state across runs ----------
