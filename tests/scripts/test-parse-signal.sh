@@ -33,7 +33,7 @@ echo "=== cap-8ax.3.1: parse-signal.sh ==="
 echo ""
 
 # ---------- Test 1: Parse valid JSON signal from clean input ----------
-echo "[1/8] Parse valid JSON signal from clean input"
+echo "[1/9] Parse valid JSON signal from clean input"
 # Given: a valid JSON signal with all required fields
 VALID_JSON='{"status":"PASS","feedback":"All tests pass","files_changed":["src/main.go"],"summary":"Tests green"}'
 # When: piped through parse-signal.sh
@@ -48,7 +48,7 @@ else
 fi
 
 # ---------- Test 2: Parse JSON from mixed output (text before signal) ----------
-echo "[2/8] Parse JSON from mixed output"
+echo "[2/9] Parse JSON from mixed output"
 # Given: output with text before the JSON signal
 MIXED_OUTPUT="Reading worklog.md...
 Found 3 acceptance criteria.
@@ -67,7 +67,7 @@ else
 fi
 
 # ---------- Test 3: Handle missing JSON (no JSON in output) ----------
-echo "[3/8] Handle missing JSON - returns ERROR signal"
+echo "[3/9] Handle missing JSON - returns ERROR signal"
 # Given: plain text output with no JSON
 NO_JSON_OUTPUT="This is just plain text output
 with no JSON anywhere
@@ -84,7 +84,7 @@ else
 fi
 
 # ---------- Test 4: Extract last JSON block when multiple exist ----------
-echo "[4/8] Extract last JSON block from multiple"
+echo "[4/9] Extract last JSON block from multiple"
 # Given: output with two valid JSON signal blocks
 MULTI_JSON="Some log output
 {\"status\":\"NEEDS_WORK\",\"feedback\":\"first attempt\",\"files_changed\":[],\"summary\":\"first\"}
@@ -102,7 +102,7 @@ else
 fi
 
 # ---------- Test 5: Validate required fields - missing status ----------
-echo "[5/8] Reject JSON missing required 'status' field"
+echo "[5/9] Reject JSON missing required 'status' field"
 # Given: JSON missing the required 'status' field
 BAD_JSON='{"feedback":"ok","files_changed":[],"summary":"done"}'
 # When: piped through parse-signal.sh
@@ -116,7 +116,7 @@ else
 fi
 
 # ---------- Test 6: Validate status value - invalid status ----------
-echo "[6/8] Reject invalid status value"
+echo "[6/9] Reject invalid status value"
 # Given: JSON with an invalid status value
 BAD_STATUS='{"status":"UNKNOWN","feedback":"ok","files_changed":[],"summary":"done"}'
 # When: piped through parse-signal.sh
@@ -130,7 +130,7 @@ else
 fi
 
 # ---------- Test 7: Validate files_changed is array ----------
-echo "[7/8] Reject non-array files_changed"
+echo "[7/9] Reject non-array files_changed"
 # Given: JSON with files_changed as a string instead of array
 BAD_FILES='{"status":"PASS","feedback":"ok","files_changed":"not-an-array","summary":"done"}'
 # When: piped through parse-signal.sh
@@ -144,7 +144,7 @@ else
 fi
 
 # ---------- Test 8: Handle empty input ----------
-echo "[8/8] Handle empty input"
+echo "[8/9] Handle empty input"
 # Given: empty input (no content at all)
 # When: piped through parse-signal.sh
 RESULT=$(echo "" | "$PARSE_SCRIPT" 2>&1) || true
@@ -154,6 +154,20 @@ if [ "$STATUS" = "ERROR" ]; then
     pass "Empty input returns ERROR status"
 else
     fail "Expected ERROR for empty input, got '$STATUS'"
+fi
+
+# ---------- Test 9: Validate required fields - missing feedback ----------
+echo "[9/9] Reject JSON missing required 'feedback' field"
+# Given: JSON missing the required 'feedback' field
+BAD_JSON='{"status":"PASS","files_changed":[],"summary":"done"}'
+# When: piped through parse-signal.sh
+RESULT=$(echo "$BAD_JSON" | "$PARSE_SCRIPT" 2>&1) || true
+# Then: ERROR signal is returned
+STATUS=$(echo "$RESULT" | jq -r '.status')
+if [ "$STATUS" = "ERROR" ]; then
+    pass "Missing 'feedback' field returns ERROR"
+else
+    fail "Expected ERROR for missing feedback, got '$STATUS'"
 fi
 
 # ---------- Edge Cases ----------

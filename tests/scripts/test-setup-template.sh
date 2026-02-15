@@ -65,11 +65,16 @@ else
     fail "git log shows no commits"
 fi
 
-# ---------- Test 3: bd ready lists the 2 task beads ----------
-echo "[3/7] bd ready lists task beads"
+# ---------- Test 3: .beads/ directory exists and bd ready lists the 2 task beads ----------
+echo "[3/7] .beads/ directory exists and bd ready lists task beads"
 # Given: a project directory created by setup-template.sh
-# When: running bd ready in the project
-# Then: 2 task beads are listed
+# When: checking for .beads/ directory and running bd ready
+# Then: .beads/ directory exists and 2 task beads are listed
+if [ -d "$PROJECT_DIR/.beads" ]; then
+    pass ".beads/ directory exists"
+else
+    fail ".beads/ directory not found in project"
+fi
 READY_OUTPUT=$(cd "$PROJECT_DIR" && bd ready 2>&1)
 TASK_COUNT=$(echo "$READY_OUTPUT" | grep -c "demo-1\.1\." || true)
 if [ "$TASK_COUNT" -eq 2 ]; then
