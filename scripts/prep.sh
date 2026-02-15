@@ -125,6 +125,13 @@ GIT_WT_ERR=$( (cd "$PROJECT_DIR" && git worktree add -b "$BRANCH_NAME" "$WORKTRE
     exit 1
 }
 
+# --- Cleanup trap: remove worktree if subsequent steps fail ---
+cleanup_worktree() {
+    (cd "$PROJECT_DIR" && git worktree remove --force "$WORKTREE_DIR" 2>/dev/null) || rm -rf "$WORKTREE_DIR"
+    (cd "$PROJECT_DIR" && git branch -D "$BRANCH_NAME" 2>/dev/null) || true
+}
+trap cleanup_worktree ERR
+
 # --- Create .capsule/logs directory ---
 mkdir -p "$PROJECT_DIR/.capsule/logs"
 
@@ -201,6 +208,9 @@ skip { next }
     print line
 }
 ' "$TEMPLATE" > "$WORKTREE_DIR/worklog.md"
+
+# --- Clear cleanup trap: worktree setup succeeded ---
+trap - ERR
 
 # --- Context quality report ---
 echo "Context:"

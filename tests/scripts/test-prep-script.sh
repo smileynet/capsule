@@ -222,6 +222,54 @@ else
     fail "Second bead worktree not created at $WORKTREE_DIR_2"
 fi
 
+# E4: Template instantiation failure cleans up worktree
+echo "[E4] Template failure cleans up worktree"
+# Given: a valid bead and a fresh test environment
+# When: the worklog template is unreadable (simulating awk failure)
+# Then: prep.sh exits non-zero and the worktree directory is removed
+#
+# Uses a separate test environment so template chmod doesn't affect other tests.
+# Subshell + EXIT trap guarantees template permissions are restored.
+# Note: assumes non-root execution (chmod 000 must block reads).
+TEMPLATE_FILE="$REPO_ROOT/templates/worklog.md.template"
+
+E4_PROJECT=$("$SETUP_SCRIPT")
+E4_WORKTREE="$E4_PROJECT/.capsule/worktrees/$BEAD_ID"
+E4_BRANCH="capsule-$BEAD_ID"
+
+# Run in subshell to guarantee template permission restore
+E4_RESULT=$(
+    trap 'chmod 644 "$TEMPLATE_FILE"; rm -rf "$E4_PROJECT"' EXIT
+    chmod 000 "$TEMPLATE_FILE"
+    if "$PREP_SCRIPT" "$BEAD_ID" --project-dir="$E4_PROJECT" >/dev/null 2>&1; then
+        echo "UNEXPECTED_SUCCESS"
+    elif [ -d "$E4_WORKTREE" ]; then
+        echo "WORKTREE_LEFT_BEHIND"
+    elif (cd "$E4_PROJECT" && git rev-parse --verify "$E4_BRANCH" >/dev/null 2>&1); then
+        echo "BRANCH_LEFT_BEHIND"
+    else
+        echo "CLEANED_UP"
+    fi
+)
+
+case "$E4_RESULT" in
+    CLEANED_UP)
+        pass "Worktree and branch cleaned up after template failure"
+        ;;
+    WORKTREE_LEFT_BEHIND)
+        fail "Worktree directory should be removed on template failure, but still exists"
+        ;;
+    BRANCH_LEFT_BEHIND)
+        fail "Branch should be removed on template failure, but still exists"
+        ;;
+    UNEXPECTED_SUCCESS)
+        fail "prep.sh should exit non-zero when template is unreadable"
+        ;;
+    *)
+        fail "Unexpected E4 result: $E4_RESULT"
+        ;;
+esac
+
 echo ""
 echo "==========================================="
 echo "RESULTS: $PASS passed, $FAIL failed"
