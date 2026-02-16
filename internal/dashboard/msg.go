@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/smileynet/capsule/internal/prompt"
 )
 
 // Mode represents the current dashboard view mode.
@@ -75,8 +77,9 @@ type PhaseReport struct {
 
 // PipelineInput is the input to start a pipeline run.
 type PipelineInput struct {
-	BeadID   string
-	Provider string
+	BeadID         string
+	Provider       string
+	SiblingContext []prompt.SiblingContext // Completed sibling tasks for cross-run context.
 }
 
 // PipelineOutput is the result of a completed pipeline run.

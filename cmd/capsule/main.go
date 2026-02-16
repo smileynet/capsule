@@ -548,9 +548,10 @@ func (a *dashboardPipelineAdapter) RunPipeline(ctx context.Context, input dashbo
 	beadCtx, _ := a.bdClient.Resolve(input.BeadID)
 
 	orchInput := orchestrator.PipelineInput{
-		BeadID: input.BeadID,
-		Title:  beadCtx.TaskTitle,
-		Bead:   beadCtx,
+		BeadID:         input.BeadID,
+		Title:          beadCtx.TaskTitle,
+		Bead:           beadCtx,
+		SiblingContext: input.SiblingContext,
 	}
 
 	output, err := orch.RunPipeline(ctx, orchInput)
@@ -767,9 +768,12 @@ func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input
 	}
 
 	// Convert orchestrator input to dashboard input.
-	dashInput := dashboard.PipelineInput{BeadID: input.BeadID}
+	dashInput := dashboard.PipelineInput{
+		BeadID:         input.BeadID,
+		SiblingContext: input.SiblingContext,
+	}
 
-	// Collect phase updates to reconstruct PhaseResults.
+	// Collect phase updates emitted by the pipeline adapter callback.
 	var lastUpdates []orchestrator.StatusUpdate
 	statusFn := func(msg dashboard.PhaseUpdateMsg) {
 		lastUpdates = append(lastUpdates, orchestrator.StatusUpdate{
@@ -815,6 +819,9 @@ func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input
 
 // dashboardCampaignCallback implements campaign.Callback by converting
 // campaign lifecycle events to dashboard tea.Msg types.
+//
+// taskIndex and taskTotal are mutated during callback invocations.
+// This struct must only be called from the campaign runner goroutine.
 type dashboardCampaignCallback struct {
 	statusFn  func(tea.Msg)
 	taskIndex int
@@ -847,15 +854,15 @@ func (c *dashboardCampaignCallback) OnTaskStart(beadID string) {
 }
 
 func (c *dashboardCampaignCallback) OnTaskComplete(result campaign.TaskResult) {
-	var dur time.Duration
+	var totalDuration time.Duration
 	for _, pr := range result.PhaseResults {
-		dur += pr.Duration
+		totalDuration += pr.Duration
 	}
 	c.statusFn(dashboard.CampaignTaskDoneMsg{
 		BeadID:   result.BeadID,
 		Index:    c.taskIndex,
 		Success:  result.Status == campaign.TaskCompleted,
-		Duration: dur,
+		Duration: totalDuration,
 	})
 	c.taskIndex++
 }

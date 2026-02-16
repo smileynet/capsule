@@ -14,7 +14,9 @@ import (
 
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/campaign"
+	"github.com/smileynet/capsule/internal/dashboard"
 	"github.com/smileynet/capsule/internal/orchestrator"
+	"github.com/smileynet/capsule/internal/prompt"
 	"github.com/smileynet/capsule/internal/provider"
 	"github.com/smileynet/capsule/internal/tui"
 	"github.com/smileynet/capsule/internal/worklog"
@@ -1025,6 +1027,45 @@ func TestFeature_CleanCommand(t *testing.T) {
 			t.Errorf("error = %q, want to contain 'prune'", err)
 		}
 	})
+}
+
+func TestDashboardCampaignPipelineRunner_PropagatesSiblingContext(t *testing.T) {
+	// Given: a dashboardCampaignPipelineRunner with a pipelineFn that captures input
+	var captured dashboard.PipelineInput
+	pipelineFn := func(_ context.Context, input dashboard.PipelineInput, _ func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+		captured = input
+		return dashboard.PipelineOutput{Success: true}, nil
+	}
+	runner := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+
+	// When: RunPipeline is called with orchestrator input containing SiblingContext
+	input := orchestrator.PipelineInput{
+		BeadID: "cap-task",
+		SiblingContext: []prompt.SiblingContext{
+			{BeadID: "cap-sibling", Title: "Login", Summary: "Built login", FilesChanged: []string{"auth.go"}},
+		},
+	}
+	_, err := runner.RunPipeline(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then: the SiblingContext is propagated to the dashboard PipelineInput
+	if len(captured.SiblingContext) != 1 {
+		t.Fatalf("SiblingContext len = %d, want 1", len(captured.SiblingContext))
+	}
+	if captured.SiblingContext[0].BeadID != "cap-sibling" {
+		t.Errorf("SiblingContext[0].BeadID = %q, want %q", captured.SiblingContext[0].BeadID, "cap-sibling")
+	}
+	if captured.SiblingContext[0].Title != "Login" {
+		t.Errorf("SiblingContext[0].Title = %q, want %q", captured.SiblingContext[0].Title, "Login")
+	}
+	if captured.SiblingContext[0].Summary != "Built login" {
+		t.Errorf("SiblingContext[0].Summary = %q, want %q", captured.SiblingContext[0].Summary, "Built login")
+	}
+	if len(captured.SiblingContext[0].FilesChanged) != 1 || captured.SiblingContext[0].FilesChanged[0] != "auth.go" {
+		t.Errorf("SiblingContext[0].FilesChanged = %v, want [auth.go]", captured.SiblingContext[0].FilesChanged)
+	}
 }
 
 func TestPostPipeline_MergesAndClosesBead(t *testing.T) {
