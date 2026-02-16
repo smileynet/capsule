@@ -42,18 +42,70 @@ func (m Model) viewSummaryRight() string {
 
 // returnToBrowseAfterAbort transitions from pipeline mode to browse mode
 // after an abort. Unlike returnToBrowse, it skips post-pipeline lifecycle
-// since the pipeline was cancelled.
+// and sticky cursor restore since the pipeline was cancelled.
 func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
 	m.aborting = false
 	m.dispatchedBeadID = ""
+	m.browse.showClosed = false
+	m.browse.readyBeads = nil
 	m.cache.Invalidate()
+	m.pendingResolveID = ""
 
 	if m.lister != nil {
 		return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
 	}
 	return m, nil
+}
+
+// returnToBrowseFromCampaign transitions from campaign summary to browse mode.
+// Skips postPipeline since campaigns handle their own lifecycle.
+func (m Model) returnToBrowseFromCampaign() (Model, tea.Cmd) {
+	m.mode = ModeBrowse
+	m.focus = PaneLeft
+	m.browse.showClosed = false
+	m.browse.readyBeads = nil
+	m.cache.Invalidate()
+	m.pendingResolveID = ""
+	m.lastDispatchedID = m.dispatchedBeadID
+	m.campaignDone = nil
+	m.dispatchedBeadID = ""
+
+	if m.lister != nil {
+		return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
+	}
+	return m, nil
+}
+
+// viewCampaignSummaryRight renders the right pane in campaign summary mode.
+func (m Model) viewCampaignSummaryRight() string {
+	done := m.campaignDone
+	if done == nil {
+		return ""
+	}
+
+	var b strings.Builder
+
+	switch {
+	case m.campaignErr != nil:
+		fmt.Fprintf(&b, "%s  Campaign Error\n", pipeFailedStyle.Render("✗"))
+		fmt.Fprintf(&b, "\nError: %s", m.campaignErr)
+		if done.TotalTasks > 0 {
+			fmt.Fprintf(&b, "\n\n%d/%d tasks passed", done.Passed, done.TotalTasks)
+		}
+	case done.Failed == 0:
+		fmt.Fprintf(&b, "%s  Campaign Passed\n", pipePassedStyle.Render("✓"))
+		fmt.Fprintf(&b, "\n%d/%d tasks passed", done.Passed, done.TotalTasks)
+	default:
+		fmt.Fprintf(&b, "%s  Campaign Failed\n", pipeFailedStyle.Render("✗"))
+		fmt.Fprintf(&b, "\n%d/%d tasks passed, %d failed", done.Passed, done.TotalTasks, done.Failed)
+	}
+	if done.Skipped > 0 {
+		fmt.Fprintf(&b, ", %d skipped", done.Skipped)
+	}
+
+	return b.String()
 }
 
 // returnToBrowse transitions from summary mode back to browse mode,
@@ -62,7 +114,11 @@ func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 func (m Model) returnToBrowse() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
+	m.browse.showClosed = false
+	m.browse.readyBeads = nil
 	m.cache.Invalidate()
+	m.pendingResolveID = ""
+	m.lastDispatchedID = m.dispatchedBeadID
 
 	var cmds []tea.Cmd
 

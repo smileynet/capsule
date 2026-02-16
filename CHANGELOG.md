@@ -43,3 +43,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Empty bead list: "No ready beads" message with refresh hint
   - Given-When-Then structural comments on all dashboard test files
   - Smoke test for dashboard pipeline mode
+- Campaign mode in dashboard TUI (cap-fj8.1)
+  - Select a feature or epic bead to discover and run its ready child tasks sequentially
+  - Campaign view with task queue, inline phase nesting for the active task, and collapsed pass/fail lines for completed tasks
+  - Right pane shows phase report for cursor-selected phase (same as pipeline mode)
+  - Campaign summary after all tasks complete
+  - Abort campaign with q/Ctrl+C; double-press force quits
+  - Error surfacing to dashboard UI with campaign error messages
+  - SiblingContext propagation through the campaign bridge
+  - Empty/unknown bead type defaults to single pipeline (safe fallback)
+- Campaign completed task inspection (cap-fj8.3)
+  - Navigate to completed tasks within a campaign using cursor/vim keys
+  - Expand completed tasks to view their phase reports (progressive disclosure)
+  - Right pane shows phase-level summaries, files changed, and feedback for inspected tasks
+  - Phase results carried from pipeline completion messages and stored per-task for later review
+- History view with archived pipeline results (cap-fj8.2)
+  - Toggle between ready and closed beads with `h` key
+  - Archive reader loads pipeline results from `.capsule/logs/` for closed beads
+  - Closed bead detail view shows archived phase reports and summaries
+  - `Closed()` method on bead client for retrieving closed beads
+- Pipeline context and responsiveness improvements (cap-fj8.4)
+  - Bead header line (ID + title) at top of pipeline and campaign views
+  - Elapsed time ticker updates every second for running phases
+  - Debounced bead resolution prevents right-pane thrash during rapid cursor scrolling
+  - Sticky cursor restores position to previously run bead after returning from pipeline/campaign
+  - Post-pipeline status line shows merge/close result for 5 seconds
+- Dashboard hardening bug fixes (cap-fj8.5, cap-fj8.6, cap-fj8.7)
+  - Null byte check in validateBeadID prevents path traversal
+  - Defensive slice copy in applyBeadList prevents aliasing bugs
+  - Plain priority labels in closed view prevent nested ANSI escape codes

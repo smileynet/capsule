@@ -9,19 +9,20 @@ type browseKeys struct {
 	Enter   key.Binding
 	Tab     key.Binding
 	Refresh key.Binding
+	History key.Binding
 	Quit    key.Binding
 }
 
 // ShortHelp returns the browse mode bindings for the help bar.
 func (k browseKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Enter, k.Tab, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Enter, k.Tab, k.Refresh, k.History, k.Quit}
 }
 
 // FullHelp returns the browse mode bindings grouped for expanded help.
 func (k browseKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter},
-		{k.Tab, k.Refresh, k.Quit},
+		{k.Tab, k.Refresh, k.History, k.Quit},
 	}
 }
 
@@ -84,6 +85,10 @@ func BrowseKeyMap() browseKeys {
 			key.WithKeys("r"),
 			key.WithHelp("r", "refresh"),
 		),
+		History: key.NewBinding(
+			key.WithKeys("h"),
+			key.WithHelp("h", "history"),
+		),
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
 			key.WithHelp("q", "quit"),
@@ -94,6 +99,49 @@ func BrowseKeyMap() browseKeys {
 // PipelineKeyMap returns the key bindings for pipeline mode.
 func PipelineKeyMap() pipelineKeys {
 	return pipelineKeys{
+		Up: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "down"),
+		),
+		Tab: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "switch pane"),
+		),
+		Quit: key.NewBinding(
+			key.WithKeys("q", "ctrl+c"),
+			key.WithHelp("q", "abort"),
+		),
+	}
+}
+
+// campaignKeys holds key bindings for campaign mode.
+type campaignKeys struct {
+	Up   key.Binding
+	Down key.Binding
+	Tab  key.Binding
+	Quit key.Binding
+}
+
+// ShortHelp returns the campaign mode bindings for the help bar.
+func (k campaignKeys) ShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Down, k.Tab, k.Quit}
+}
+
+// FullHelp returns the campaign mode bindings grouped for expanded help.
+func (k campaignKeys) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down},
+		{k.Tab, k.Quit},
+	}
+}
+
+// CampaignKeyMap returns the key bindings for campaign mode.
+func CampaignKeyMap() campaignKeys {
+	return campaignKeys{
 		Up: key.NewBinding(
 			key.WithKeys("up", "k"),
 			key.WithHelp("↑/k", "up"),

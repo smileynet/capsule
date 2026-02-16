@@ -1,6 +1,6 @@
 # Context: Dashboard TUI Enhancements
 
-**Status:** finalized
+**Status:** archived
 **Created:** 2026-02-15
 **Updated:** 2026-02-15
 **Epic:** cap-fj8

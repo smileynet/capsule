@@ -6,15 +6,21 @@ package dashboard
 import (
 	"context"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/smileynet/capsule/internal/prompt"
 )
 
 // Mode represents the current dashboard view mode.
 type Mode int
 
 const (
-	ModeBrowse   Mode = iota // Browsing bead list with detail pane.
-	ModePipeline             // Pipeline running with phase list and reports.
-	ModeSummary              // Pipeline complete, showing result summary.
+	ModeBrowse          Mode = iota // Browsing bead list with detail pane.
+	ModePipeline                    // Pipeline running with phase list and reports.
+	ModeSummary                     // Pipeline complete, showing result summary.
+	ModeCampaign                    // Campaign running with task queue and inline phases.
+	ModeCampaignSummary             // Campaign complete, showing aggregate results.
 )
 
 // Focus represents which pane has keyboard focus.
@@ -71,8 +77,9 @@ type PhaseReport struct {
 
 // PipelineInput is the input to start a pipeline run.
 type PipelineInput struct {
-	BeadID   string
-	Provider string
+	BeadID         string
+	Provider       string
+	SiblingContext []prompt.SiblingContext // Completed sibling tasks for cross-run context.
 }
 
 // PipelineOutput is the result of a completed pipeline run.
@@ -84,9 +91,10 @@ type PipelineOutput struct {
 
 // --- Consumer-side interfaces ---
 
-// BeadLister fetches the list of ready beads.
+// BeadLister fetches bead lists for the browse pane.
 type BeadLister interface {
 	Ready() ([]BeadSummary, error)
+	Closed(limit int) ([]BeadSummary, error)
 }
 
 // BeadResolver fetches full detail for a single bead.
@@ -101,14 +109,20 @@ type PipelineRunner interface {
 
 // PostPipelineFunc runs post-pipeline lifecycle (merge, cleanup, close bead).
 // Called in a background goroutine after a pipeline completes and the user
-// returns to browse mode. Errors are surfaced via PostPipelineDoneMsg but
-// not displayed in the UI.
+// returns to browse mode. Results are surfaced via PostPipelineDoneMsg and
+// shown as a transient status line in the UI.
 type PostPipelineFunc func(beadID string) error
 
 // --- tea.Msg types ---
 
 // BeadListMsg carries the result of a BeadLister.Ready() call.
 type BeadListMsg struct {
+	Beads []BeadSummary
+	Err   error
+}
+
+// ClosedBeadListMsg carries the result of a BeadLister.Closed() call.
+type ClosedBeadListMsg struct {
 	Beads []BeadSummary
 	Err   error
 }
@@ -144,20 +158,108 @@ type PipelineErrorMsg struct {
 
 // DispatchMsg signals the user has selected a bead to run a pipeline on.
 type DispatchMsg struct {
-	BeadID string
+	BeadID    string
+	BeadType  string
+	BeadTitle string
 }
 
 // RefreshBeadsMsg signals that the bead list should be reloaded.
 // browseState emits this on 'r'; Model.Update intercepts it and calls initBrowse.
 type RefreshBeadsMsg struct{}
 
+// ToggleHistoryMsg signals that the browse pane should switch to closed beads.
+// browseState emits this on 'h'; Model.Update intercepts it and fetches closed beads.
+type ToggleHistoryMsg struct{}
+
 // PostPipelineDoneMsg signals that post-pipeline lifecycle completed.
-// Best-effort: the UI does not display errors from post-pipeline.
+// Displayed as a transient status line that auto-clears after statusLineDuration.
 type PostPipelineDoneMsg struct {
 	BeadID string
 	Err    error
 }
 
+// elapsedTickMsg is sent every second to update the elapsed time display
+// for running pipeline phases.
+type elapsedTickMsg struct{}
+
+// resolveDebounceMsg fires after the debounce delay. If pendingResolveID
+// still matches ID, the actual resolve is dispatched.
+type resolveDebounceMsg struct {
+	ID string
+}
+
+// statusClearMsg signals that the transient status line should be cleared.
+type statusClearMsg struct{}
+
 // channelClosedMsg signals that the pipeline event channel has been closed,
 // indicating the pipeline goroutine has finished.
 type channelClosedMsg struct{}
+
+// --- Campaign types ---
+
+// CampaignTaskStatus represents the state of a task within a campaign.
+type CampaignTaskStatus string
+
+const (
+	CampaignTaskPending CampaignTaskStatus = "pending"
+	CampaignTaskRunning CampaignTaskStatus = "running"
+	CampaignTaskPassed  CampaignTaskStatus = "passed"
+	CampaignTaskFailed  CampaignTaskStatus = "failed"
+	CampaignTaskSkipped CampaignTaskStatus = "skipped"
+)
+
+// CampaignTaskInfo describes a child task in a campaign.
+type CampaignTaskInfo struct {
+	BeadID   string
+	Title    string
+	Priority int
+}
+
+// --- Campaign tea.Msg types ---
+
+// CampaignStartMsg signals that a campaign has been discovered and is starting.
+type CampaignStartMsg struct {
+	ParentID    string
+	ParentTitle string
+	Tasks       []CampaignTaskInfo
+}
+
+// CampaignTaskStartMsg signals that a specific task within a campaign is starting.
+type CampaignTaskStartMsg struct {
+	BeadID string
+	Index  int
+	Total  int
+}
+
+// CampaignTaskDoneMsg signals that a specific task within a campaign has completed.
+type CampaignTaskDoneMsg struct {
+	BeadID       string
+	Index        int
+	Success      bool
+	Duration     time.Duration
+	PhaseReports []PhaseReport
+}
+
+// CampaignDoneMsg signals that the entire campaign has completed.
+type CampaignDoneMsg struct {
+	ParentID   string
+	TotalTasks int
+	Passed     int
+	Failed     int
+	Skipped    int
+}
+
+// CampaignErrorMsg signals that the campaign runner returned an error.
+type CampaignErrorMsg struct {
+	Err error
+}
+
+// CampaignRunner dispatches and runs a campaign (sequential child pipelines).
+type CampaignRunner interface {
+	RunCampaign(
+		ctx context.Context,
+		parentID string,
+		statusFn func(tea.Msg),
+		pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error),
+	) error
+}

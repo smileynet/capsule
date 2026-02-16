@@ -14,7 +14,9 @@ import (
 
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/campaign"
+	"github.com/smileynet/capsule/internal/dashboard"
 	"github.com/smileynet/capsule/internal/orchestrator"
+	"github.com/smileynet/capsule/internal/prompt"
 	"github.com/smileynet/capsule/internal/provider"
 	"github.com/smileynet/capsule/internal/tui"
 	"github.com/smileynet/capsule/internal/worklog"
@@ -1025,6 +1027,256 @@ func TestFeature_CleanCommand(t *testing.T) {
 			t.Errorf("error = %q, want to contain 'prune'", err)
 		}
 	})
+}
+
+func TestDashboardCampaignPipelineRunner_PropagatesSiblingContext(t *testing.T) {
+	// Given: a dashboardCampaignPipelineRunner with a pipelineFn that captures input
+	var captured dashboard.PipelineInput
+	pipelineFn := func(_ context.Context, input dashboard.PipelineInput, _ func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+		captured = input
+		return dashboard.PipelineOutput{Success: true}, nil
+	}
+	runner := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+
+	// When: RunPipeline is called with orchestrator input containing SiblingContext
+	input := orchestrator.PipelineInput{
+		BeadID: "cap-task",
+		SiblingContext: []prompt.SiblingContext{
+			{BeadID: "cap-sibling", Title: "Login", Summary: "Built login", FilesChanged: []string{"auth.go"}},
+		},
+	}
+	_, err := runner.RunPipeline(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then: the SiblingContext is propagated to the dashboard PipelineInput
+	if len(captured.SiblingContext) != 1 {
+		t.Fatalf("SiblingContext len = %d, want 1", len(captured.SiblingContext))
+	}
+	if captured.SiblingContext[0].BeadID != "cap-sibling" {
+		t.Errorf("SiblingContext[0].BeadID = %q, want %q", captured.SiblingContext[0].BeadID, "cap-sibling")
+	}
+	if captured.SiblingContext[0].Title != "Login" {
+		t.Errorf("SiblingContext[0].Title = %q, want %q", captured.SiblingContext[0].Title, "Login")
+	}
+	if captured.SiblingContext[0].Summary != "Built login" {
+		t.Errorf("SiblingContext[0].Summary = %q, want %q", captured.SiblingContext[0].Summary, "Built login")
+	}
+	if len(captured.SiblingContext[0].FilesChanged) != 1 || captured.SiblingContext[0].FilesChanged[0] != "auth.go" {
+		t.Errorf("SiblingContext[0].FilesChanged = %v, want [auth.go]", captured.SiblingContext[0].FilesChanged)
+	}
+}
+
+func TestDashboardCampaignPipelineRunner_ConvertsPhaseReports(t *testing.T) {
+	// Given: a pipelineFn that returns PhaseReports in its output
+	pipelineFn := func(_ context.Context, _ dashboard.PipelineInput, _ func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+		return dashboard.PipelineOutput{
+			Success: true,
+			PhaseReports: []dashboard.PhaseReport{
+				{
+					PhaseName:    "plan",
+					Status:       dashboard.PhasePassed,
+					Summary:      "planned changes",
+					Feedback:     "looks good",
+					FilesChanged: []string{"main.go"},
+					Duration:     2 * time.Second,
+				},
+				{
+					PhaseName: "code",
+					Status:    dashboard.PhasePassed,
+					Summary:   "implemented",
+					Duration:  5 * time.Second,
+				},
+			},
+		}, nil
+	}
+	runner := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+
+	// When: RunPipeline is called
+	output, err := runner.RunPipeline(context.Background(), orchestrator.PipelineInput{BeadID: "cap-conv"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then: PhaseReports are converted to PhaseResults in the output
+	if !output.Completed {
+		t.Error("Completed = false, want true")
+	}
+	if len(output.PhaseResults) != 2 {
+		t.Fatalf("PhaseResults len = %d, want 2", len(output.PhaseResults))
+	}
+	first := output.PhaseResults[0]
+	if first.PhaseName != "plan" {
+		t.Errorf("PhaseResults[0].PhaseName = %q, want %q", first.PhaseName, "plan")
+	}
+	if first.Signal.Status != provider.StatusPass {
+		t.Errorf("PhaseResults[0].Signal.Status = %q, want %q", first.Signal.Status, provider.StatusPass)
+	}
+	if first.Signal.Summary != "planned changes" {
+		t.Errorf("PhaseResults[0].Signal.Summary = %q, want %q", first.Signal.Summary, "planned changes")
+	}
+	if first.Signal.Feedback != "looks good" {
+		t.Errorf("PhaseResults[0].Signal.Feedback = %q, want %q", first.Signal.Feedback, "looks good")
+	}
+	if len(first.Signal.FilesChanged) != 1 || first.Signal.FilesChanged[0] != "main.go" {
+		t.Errorf("PhaseResults[0].Signal.FilesChanged = %v, want [main.go]", first.Signal.FilesChanged)
+	}
+	if first.Duration != 2*time.Second {
+		t.Errorf("PhaseResults[0].Duration = %v, want 2s", first.Duration)
+	}
+	second := output.PhaseResults[1]
+	if second.PhaseName != "code" {
+		t.Errorf("PhaseResults[1].PhaseName = %q, want %q", second.PhaseName, "code")
+	}
+	if second.Signal.Status != provider.StatusPass {
+		t.Errorf("PhaseResults[1].Signal.Status = %q, want %q", second.Signal.Status, provider.StatusPass)
+	}
+	if second.Signal.Summary != "implemented" {
+		t.Errorf("PhaseResults[1].Signal.Summary = %q, want %q", second.Signal.Summary, "implemented")
+	}
+	if second.Duration != 5*time.Second {
+		t.Errorf("PhaseResults[1].Duration = %v, want 5s", second.Duration)
+	}
+}
+
+func TestDashboardCampaignPipelineRunner_MapsPhaseStatusToProviderStatus(t *testing.T) {
+	// Given: a pipelineFn that returns reports with each dashboard.PhaseStatus
+	tests := []struct {
+		dashStatus dashboard.PhaseStatus
+		wantStatus provider.Status
+	}{
+		{dashboard.PhasePassed, provider.StatusPass},
+		{dashboard.PhaseFailed, provider.StatusNeedsWork},
+		{dashboard.PhaseError, provider.StatusError},
+		{dashboard.PhaseSkipped, provider.StatusSkip},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.dashStatus), func(t *testing.T) {
+			pipelineFn := func(_ context.Context, _ dashboard.PipelineInput, _ func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+				return dashboard.PipelineOutput{
+					Success: true,
+					PhaseReports: []dashboard.PhaseReport{
+						{
+							PhaseName: "test-phase",
+							Status:    tt.dashStatus,
+							Summary:   "summary",
+						},
+					},
+				}, nil
+			}
+			runner := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+
+			// When: RunPipeline converts the report
+			output, err := runner.RunPipeline(context.Background(), orchestrator.PipelineInput{BeadID: "cap-map"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Then: the provider.Status matches the expected mapping
+			got := output.PhaseResults[0].Signal.Status
+			if got != tt.wantStatus {
+				t.Errorf("dashboard.%s → provider.Status = %q, want %q", tt.dashStatus, got, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestDashboardCampaignCallback_OnTaskComplete_MapsPhaseReports(t *testing.T) {
+	// Given: a dashboardCampaignCallback that captures sent messages
+	var captured []tea.Msg
+	cb := &dashboardCampaignCallback{
+		statusFn:  func(msg tea.Msg) { captured = append(captured, msg) },
+		taskIndex: 0,
+		taskTotal: 2,
+	}
+
+	// When: OnTaskComplete is called with a TaskResult containing PhaseResults
+	result := campaign.TaskResult{
+		BeadID: "cap-001",
+		Status: campaign.TaskCompleted,
+		PhaseResults: []orchestrator.PhaseResult{
+			{
+				PhaseName: "plan",
+				Signal: provider.Signal{
+					Status:       provider.StatusPass,
+					Summary:      "planned",
+					FilesChanged: []string{"main.go"},
+					Feedback:     "ok",
+				},
+				Duration: 2 * time.Second,
+			},
+			{
+				PhaseName: "code",
+				Signal: provider.Signal{
+					Status:  provider.StatusPass,
+					Summary: "coded",
+				},
+				Duration: 3 * time.Second,
+			},
+		},
+	}
+	cb.OnTaskComplete(result)
+
+	// Then: the CampaignTaskDoneMsg includes mapped PhaseReports
+	if len(captured) != 1 {
+		t.Fatalf("captured %d messages, want 1", len(captured))
+	}
+	doneMsg, ok := captured[0].(dashboard.CampaignTaskDoneMsg)
+	if !ok {
+		t.Fatalf("captured message is %T, want CampaignTaskDoneMsg", captured[0])
+	}
+	if len(doneMsg.PhaseReports) != 2 {
+		t.Fatalf("PhaseReports len = %d, want 2", len(doneMsg.PhaseReports))
+	}
+	if doneMsg.PhaseReports[0].PhaseName != "plan" {
+		t.Errorf("PhaseReports[0].PhaseName = %q, want %q", doneMsg.PhaseReports[0].PhaseName, "plan")
+	}
+	if doneMsg.PhaseReports[0].Status != dashboard.PhasePassed {
+		t.Errorf("PhaseReports[0].Status = %q, want %q", doneMsg.PhaseReports[0].Status, dashboard.PhasePassed)
+	}
+	if doneMsg.PhaseReports[0].Summary != "planned" {
+		t.Errorf("PhaseReports[0].Summary = %q, want %q", doneMsg.PhaseReports[0].Summary, "planned")
+	}
+	if doneMsg.PhaseReports[0].Feedback != "ok" {
+		t.Errorf("PhaseReports[0].Feedback = %q, want %q", doneMsg.PhaseReports[0].Feedback, "ok")
+	}
+	if len(doneMsg.PhaseReports[0].FilesChanged) != 1 || doneMsg.PhaseReports[0].FilesChanged[0] != "main.go" {
+		t.Errorf("PhaseReports[0].FilesChanged = %v, want [main.go]", doneMsg.PhaseReports[0].FilesChanged)
+	}
+	if doneMsg.PhaseReports[0].Duration != 2*time.Second {
+		t.Errorf("PhaseReports[0].Duration = %v, want 2s", doneMsg.PhaseReports[0].Duration)
+	}
+	if doneMsg.PhaseReports[1].PhaseName != "code" {
+		t.Errorf("PhaseReports[1].PhaseName = %q, want %q", doneMsg.PhaseReports[1].PhaseName, "code")
+	}
+}
+
+func TestDashboardCampaignCallback_OnTaskComplete_EmptyPhaseResults(t *testing.T) {
+	// Given: a callback with no phase results in the task
+	var captured []tea.Msg
+	cb := &dashboardCampaignCallback{
+		statusFn:  func(msg tea.Msg) { captured = append(captured, msg) },
+		taskIndex: 0,
+		taskTotal: 1,
+	}
+
+	// When: OnTaskComplete is called with an empty PhaseResults
+	result := campaign.TaskResult{
+		BeadID: "cap-empty",
+		Status: campaign.TaskCompleted,
+	}
+	cb.OnTaskComplete(result)
+
+	// Then: PhaseReports is nil (no panic)
+	doneMsg, ok := captured[0].(dashboard.CampaignTaskDoneMsg)
+	if !ok {
+		t.Fatalf("captured message is %T, want CampaignTaskDoneMsg", captured[0])
+	}
+	if doneMsg.PhaseReports != nil {
+		t.Errorf("PhaseReports should be nil for empty PhaseResults, got %v", doneMsg.PhaseReports)
+	}
 }
 
 func TestPostPipeline_MergesAndClosesBead(t *testing.T) {

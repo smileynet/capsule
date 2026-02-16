@@ -21,13 +21,16 @@ type phaseEntry struct {
 
 // pipelineState manages the phase list, cursor, reports, and auto-follow for pipeline mode.
 type pipelineState struct {
-	phases     []phaseEntry
-	cursor     int
-	autoFollow bool
-	spinner    spinner.Model
-	running    bool
-	reports    map[string]*PhaseReport
-	aborting   bool
+	phases         []phaseEntry
+	cursor         int
+	autoFollow     bool
+	spinner        spinner.Model
+	running        bool
+	reports        map[string]*PhaseReport
+	aborting       bool
+	beadID         string    // Bead ID shown in header (optional).
+	beadTitle      string    // Bead title shown in header (optional).
+	phaseStartedAt time.Time // Timestamp when the current running phase started.
 }
 
 // newPipelineState creates a pipelineState for the given phase names.
@@ -47,11 +50,23 @@ func newPipelineState(phaseNames []string) pipelineState {
 	}
 }
 
+// elapsedTickCmd returns a tea.Cmd that fires an elapsedTickMsg after one second.
+func elapsedTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return elapsedTickMsg{}
+	})
+}
+
 // Update processes messages for the pipeline state.
 func (ps pipelineState) Update(msg tea.Msg) (pipelineState, tea.Cmd) {
 	switch msg := msg.(type) {
 	case PhaseUpdateMsg:
 		return ps.handlePhaseUpdate(msg), nil
+	case elapsedTickMsg:
+		if ps.running {
+			return ps, elapsedTickCmd()
+		}
+		return ps, nil
 	case tea.KeyMsg:
 		return ps.handleKey(msg), nil
 	case spinner.TickMsg:
@@ -78,6 +93,7 @@ func (ps pipelineState) handlePhaseUpdate(msg PhaseUpdateMsg) pipelineState {
 			switch msg.Status {
 			case PhaseRunning:
 				ps.running = true
+				ps.phaseStartedAt = time.Now()
 				if ps.autoFollow {
 					ps.cursor = i
 				}
@@ -128,6 +144,7 @@ var (
 	pipeSkippedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	pipeDurationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	pipeRetryStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	pipeHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
 func pipeIndicator(status PhaseStatus, spinnerView string) string {
@@ -165,6 +182,13 @@ func (ps pipelineState) View(width, height int) string {
 	}
 
 	var b strings.Builder
+
+	// Bead header: muted ID + title line above the phase list.
+	if ps.beadID != "" {
+		b.WriteString(pipeHeaderStyle.Render(ps.beadID + "  " + ps.beadTitle))
+		b.WriteByte('\n')
+	}
+
 	for i, phase := range ps.phases {
 		if i > 0 {
 			b.WriteByte('\n')
@@ -187,6 +211,11 @@ func (ps pipelineState) View(width, height int) string {
 
 		if phase.Attempt > 1 {
 			fmt.Fprintf(&b, " %s", pipeRetryStyle.Render(fmt.Sprintf("(%d/%d)", phase.Attempt, phase.MaxRetry)))
+		}
+
+		if phase.Status == PhaseRunning && !ps.phaseStartedAt.IsZero() && !ps.aborting {
+			elapsed := int(time.Since(ps.phaseStartedAt).Seconds())
+			fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("(%ds)", elapsed)))
 		}
 
 		if phase.Duration > 0 {

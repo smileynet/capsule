@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -17,6 +18,18 @@ const helpBarHeight = 1
 
 // borderChrome is the number of lines consumed by top + bottom borders.
 const borderChrome = 2
+
+// archiveSeparator is the visual divider between bead detail and archived data.
+const archiveSeparator = "───────────────────────────────"
+
+// resolveDebounce is the delay before dispatching an async resolve
+// after the cursor moves to a bead not in cache. This prevents visual
+// thrash when the user scrolls quickly through the bead list.
+const resolveDebounce = 150 * time.Millisecond
+
+// statusLineDuration is how long the transient status message is shown
+// before being cleared automatically.
+const statusLineDuration = 5 * time.Second
 
 // Model is the root Bubble Tea model for the dashboard TUI.
 // It manages a two-pane layout with mode-based routing and focus management.
@@ -32,11 +45,12 @@ type Model struct {
 	pipeline      pipelineState
 	lister        BeadLister
 
-	resolver    BeadResolver
-	cache       *Cache
-	detailID    string // ID currently displayed in right pane
-	resolvingID string // ID of the bead currently being resolved ("" = idle)
-	resolveErr  error  // last resolve error (nil on success)
+	resolver         BeadResolver
+	cache            *Cache
+	detailID         string // ID currently displayed in right pane
+	resolvingID      string // ID of the bead currently being resolved ("" = idle)
+	resolveErr       error  // last resolve error (nil on success)
+	pendingResolveID string // ID awaiting debounce expiry ("" = no pending debounce)
 
 	runner           PipelineRunner
 	phaseNames       []string
@@ -46,7 +60,17 @@ type Model struct {
 	pipelineErr      error
 	postPipeline     PostPipelineFunc
 	dispatchedBeadID string
+	lastDispatchedID string // Preserved across returnToBrowse so cursor snaps on next BeadListMsg.
 	aborting         bool
+
+	campaign       campaignState
+	campaignRunner CampaignRunner
+	campaignDone   *CampaignDoneMsg // set on CampaignDoneMsg or synthesized on channel close
+	campaignErr    error            // set on CampaignErrorMsg from runner failure
+
+	archive ArchiveReader
+
+	statusMsg string // Transient status shown between panes and help bar; cleared by statusClearMsg.
 }
 
 // newBrowseSpinner returns a spinner for browse mode loading states.
@@ -103,6 +127,17 @@ func WithPostPipelineFunc(fn PostPipelineFunc) ModelOption {
 	return func(m *Model) { m.postPipeline = fn }
 }
 
+// WithCampaignRunner sets the CampaignRunner used to dispatch campaigns.
+func WithCampaignRunner(r CampaignRunner) ModelOption {
+	return func(m *Model) { m.campaignRunner = r }
+}
+
+// WithArchiveReader sets the ArchiveReader used to fetch archived pipeline
+// results for closed beads.
+func WithArchiveReader(ar ArchiveReader) ModelOption {
+	return func(m *Model) { m.archive = ar }
+}
+
 // listenForEvents returns a tea.Cmd that reads one message from ch.
 // On channel close, it returns channelClosedMsg. Returns nil if ch is nil.
 func listenForEvents(ch <-chan tea.Msg) tea.Cmd {
@@ -143,6 +178,28 @@ func dispatchPipeline(ctx context.Context, runner PipelineRunner, input Pipeline
 	}
 }
 
+// dispatchCampaign runs a campaign in the calling goroutine, bridging
+// status events to ch. It closes ch when done.
+func dispatchCampaign(ctx context.Context, cr CampaignRunner, pr PipelineRunner, parentID string, ch chan<- tea.Msg) {
+	defer close(ch)
+	statusFn := func(msg tea.Msg) {
+		select {
+		case ch <- msg:
+		case <-ctx.Done():
+		}
+	}
+	var pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error)
+	if pr != nil {
+		pipelineFn = pr.RunPipeline
+	}
+	if err := cr.RunCampaign(ctx, parentID, statusFn, pipelineFn); err != nil {
+		select {
+		case ch <- CampaignErrorMsg{Err: err}:
+		case <-ctx.Done():
+		}
+	}
+}
+
 // resolveBeadCmd returns a tea.Cmd that calls resolver.Resolve(id)
 // and wraps the result in a BeadResolvedMsg.
 func resolveBeadCmd(resolver BeadResolver, id string) tea.Cmd {
@@ -177,6 +234,41 @@ func formatBeadDetail(d BeadDetail) string {
 	return b.String()
 }
 
+// renderDetailContent formats a bead detail for the viewport. In closed mode
+// with an archive reader, it appends archived summary and worklog data.
+func (m Model) renderDetailContent(d BeadDetail) string {
+	if !m.browse.showClosed || m.archive == nil {
+		return formatBeadDetail(d)
+	}
+	summary, _ := m.archive.ReadSummary(d.ID)
+	worklog, _ := m.archive.ReadWorklog(d.ID)
+	return formatClosedBeadDetail(d, summary, worklog)
+}
+
+// formatClosedBeadDetail renders a closed bead's detail with archived summary
+// and worklog below a separator. If both summary and worklog are empty, renders
+// as a normal bead detail without a separator.
+func formatClosedBeadDetail(d BeadDetail, summary, worklog string) string {
+	base := formatBeadDetail(d)
+	if summary == "" && worklog == "" {
+		return base
+	}
+
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n\n" + archiveSeparator + "\n")
+
+	if summary != "" {
+		fmt.Fprintf(&b, "\n%s", summary)
+	}
+
+	if worklog != "" {
+		fmt.Fprintf(&b, "\n\nWorklog:\n%s", worklog)
+	}
+
+	return b.String()
+}
+
 // Init returns the initial command. If a BeadLister was provided,
 // it fires an async fetch for the bead list with spinner animation.
 func (m Model) Init() tea.Cmd {
@@ -200,7 +292,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case BeadListMsg:
 		m.browse, _ = m.browse.Update(msg)
+		if m.lastDispatchedID != "" {
+			for i, b := range m.browse.beads {
+				if b.ID == m.lastDispatchedID {
+					m.browse.cursor = i
+					break
+				}
+			}
+			m.lastDispatchedID = ""
+		}
 		return m.maybeResolve()
+
+	case resolveDebounceMsg:
+		if msg.ID != m.pendingResolveID {
+			return m, nil
+		}
+		m.pendingResolveID = ""
+		m.resolvingID = msg.ID
+		m.resolveErr = nil
+		return m, tea.Batch(resolveBeadCmd(m.resolver, msg.ID), m.browseSpinner.Tick)
 
 	case BeadResolvedMsg:
 		isCurrent := msg.ID == m.resolvingID
@@ -216,22 +326,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cache.Set(msg.ID, &msg.Detail)
 		if isCurrent {
 			m.resolveErr = nil
-			m.viewport.SetContent(formatBeadDetail(msg.Detail))
+			m.viewport.SetContent(m.renderDetailContent(msg.Detail))
 			m.viewport.GotoTop()
 		}
 		return m, nil
 
 	case RefreshBeadsMsg:
 		m.cache.Invalidate()
+		m.pendingResolveID = ""
+		m.resolvingID = ""
+		m.resolveErr = nil
 		if m.lister != nil {
 			return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
 		}
 		return m, nil
 
+	case ToggleHistoryMsg:
+		if m.lister != nil {
+			return m, tea.Batch(initClosedBrowse(m.lister), m.browseSpinner.Tick)
+		}
+		return m, nil
+
+	case ClosedBeadListMsg:
+		m.browse, _ = m.browse.Update(msg)
+		return m.maybeResolve()
+
 	case DispatchMsg:
 		return m.handleDispatch(msg)
 
+	case CampaignStartMsg:
+		title := msg.ParentTitle
+		if title == "" {
+			title = m.campaign.parentTitle // Preserve title set during dispatch.
+		}
+		m.campaign = newCampaignState(msg.ParentID, title, msg.Tasks)
+		return m, listenForEvents(m.eventCh)
+
+	case CampaignTaskStartMsg, CampaignTaskDoneMsg:
+		var cmd tea.Cmd
+		m.campaign, cmd = m.campaign.Update(msg)
+		return m, tea.Batch(cmd, listenForEvents(m.eventCh))
+
+	case CampaignDoneMsg:
+		m.campaignDone = &msg
+		return m, listenForEvents(m.eventCh)
+
+	case CampaignErrorMsg:
+		m.campaignErr = msg.Err
+		return m, listenForEvents(m.eventCh)
+
 	case PhaseUpdateMsg:
+		if m.mode == ModeCampaign {
+			var cmd tea.Cmd
+			m.campaign, cmd = m.campaign.Update(msg)
+			return m, tea.Batch(cmd, listenForEvents(m.eventCh))
+		}
 		var cmd tea.Cmd
 		m.pipeline, cmd = m.pipeline.Update(msg)
 		return m, tea.Batch(cmd, listenForEvents(m.eventCh))
@@ -245,7 +394,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 
 	case PostPipelineDoneMsg:
-		// Post-pipeline is best-effort; no UI update needed.
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("%s: post-pipeline failed: %s", msg.BeadID, msg.Err)
+		} else {
+			m.statusMsg = fmt.Sprintf("%s: post-pipeline complete", msg.BeadID)
+		}
+		return m, tea.Tick(statusLineDuration, func(time.Time) tea.Msg {
+			return statusClearMsg{}
+		})
+
+	case statusClearMsg:
+		m.statusMsg = ""
 		return m, nil
 
 	case channelClosedMsg:
@@ -254,21 +413,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.aborting {
 			return m.returnToBrowseAfterAbort()
 		}
+		if m.mode == ModeCampaign {
+			if m.campaignDone == nil {
+				m.campaignDone = &CampaignDoneMsg{
+					ParentID:   m.campaign.parentID,
+					TotalTasks: len(m.campaign.tasks),
+					Passed:     m.campaign.completed,
+					Failed:     m.campaign.failed,
+				}
+			}
+			m.mode = ModeCampaignSummary
+			return m, nil
+		}
 		m.mode = ModeSummary
 		return m, nil
 
+	case elapsedTickMsg:
+		var cmd tea.Cmd
+		switch m.mode {
+		case ModePipeline:
+			m.pipeline, cmd = m.pipeline.Update(msg)
+		case ModeCampaign:
+			m.campaign, cmd = m.campaign.Update(msg)
+		default:
+			return m, nil
+		}
+		return m, cmd
+
 	case spinner.TickMsg:
+		var cmd tea.Cmd
 		switch {
 		case m.mode == ModePipeline:
-			var cmd tea.Cmd
 			m.pipeline, cmd = m.pipeline.Update(msg)
-			return m, cmd
+		case m.mode == ModeCampaign:
+			m.campaign, cmd = m.campaign.Update(msg)
 		case m.mode == ModeBrowse && (m.browse.loading || m.resolvingID != ""):
-			var cmd tea.Cmd
 			m.browseSpinner, cmd = m.browseSpinner.Update(msg)
-			return m, cmd
+		default:
+			return m, nil
 		}
-		return m, nil
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -279,9 +463,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes key messages with global and mode-specific routing.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Summary mode: any key returns to browse with cache refresh.
+	// Summary modes: any key returns to browse with cache refresh.
 	if m.mode == ModeSummary {
 		return m.returnToBrowse()
+	}
+	if m.mode == ModeCampaignSummary {
+		return m.returnToBrowseFromCampaign()
 	}
 
 	// Global keys.
@@ -290,11 +477,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.mode == ModeBrowse:
 			return m, tea.Quit
-		case m.mode == ModePipeline && m.aborting:
+		case (m.mode == ModePipeline || m.mode == ModeCampaign) && m.aborting:
 			return m, tea.Quit
 		case m.mode == ModePipeline && m.cancelPipeline != nil:
 			m.aborting = true
 			m.pipeline.aborting = true
+			m.cancelPipeline()
+			return m, nil
+		case m.mode == ModeCampaign && m.cancelPipeline != nil:
+			m.aborting = true
+			m.campaign.pipeline.aborting = true
 			m.cancelPipeline()
 			return m, nil
 		}
@@ -309,7 +501,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeBrowse {
 			m.browse.loading = true
 			m.browse.err = nil
+			m.browse.showClosed = false
+			m.browse.readyBeads = nil
 			return m, func() tea.Msg { return RefreshBeadsMsg{} }
+		}
+	case "h":
+		if m.mode == ModeBrowse && !m.browse.loading {
+			var cmd tea.Cmd
+			m.browse, cmd = m.browse.Update(msg)
+			return m, cmd
 		}
 	}
 
@@ -335,13 +535,31 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
+
+	case m.mode == ModeCampaign && m.focus == PaneLeft:
+		var cmd tea.Cmd
+		m.campaign, cmd = m.campaign.Update(msg)
+		return m, cmd
+
+	case m.mode == ModeCampaign && m.focus == PaneRight:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
 }
 
-// handleDispatch transitions to pipeline mode and starts the pipeline goroutine.
+// handleDispatch branches on BeadType: feature/epic → campaign, else → pipeline.
 func (m Model) handleDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
+	if (msg.BeadType == "feature" || msg.BeadType == "epic") && m.campaignRunner != nil {
+		return m.handleCampaignDispatch(msg)
+	}
+	return m.handlePipelineDispatch(msg)
+}
+
+// handlePipelineDispatch transitions to pipeline mode and starts the pipeline goroutine.
+func (m Model) handlePipelineDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		return m, nil
 	}
@@ -352,18 +570,40 @@ func (m Model) handleDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.mode = ModePipeline
 	m.focus = PaneLeft
 	m.pipeline = newPipelineState(m.phaseNames)
+	m.pipeline.beadID = msg.BeadID
+	m.pipeline.beadTitle = msg.BeadTitle
 	m.pipelineOutput = nil
 	m.pipelineErr = nil
 	m.aborting = false
 	m.dispatchedBeadID = msg.BeadID
 	input := PipelineInput{BeadID: msg.BeadID}
 	go dispatchPipeline(ctx, m.runner, input, ch)
-	return m, tea.Batch(m.pipeline.spinner.Tick, listenForEvents(ch))
+	return m, tea.Batch(m.pipeline.spinner.Tick, elapsedTickCmd(), listenForEvents(ch))
+}
+
+// handleCampaignDispatch transitions to campaign mode and starts the campaign goroutine.
+func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelPipeline = cancel
+	ch := make(chan tea.Msg, 16)
+	m.eventCh = ch
+	m.mode = ModeCampaign
+	m.focus = PaneLeft
+	m.campaign = newCampaignState(msg.BeadID, msg.BeadTitle, nil)
+	m.pipelineOutput = nil
+	m.pipelineErr = nil
+	m.aborting = false
+	m.campaignDone = nil
+	m.campaignErr = nil
+	m.dispatchedBeadID = msg.BeadID
+	go dispatchCampaign(ctx, m.campaignRunner, m.runner, msg.BeadID, ch)
+	return m, tea.Batch(m.campaign.pipeline.spinner.Tick, elapsedTickCmd(), listenForEvents(ch))
 }
 
 // maybeResolve checks if the selected bead changed and triggers a resolve
-// if needed. On cache hit, the viewport is updated immediately. On cache miss,
-// an async resolveBeadCmd is returned.
+// if needed. On cache hit, the viewport is updated immediately (bypassing
+// debounce). On cache miss, a debounce tick is started; the actual resolve
+// is dispatched only when the tick fires with a matching pendingResolveID.
 func (m Model) maybeResolve() (Model, tea.Cmd) {
 	selected := m.browse.SelectedID()
 	if selected == "" || selected == m.detailID {
@@ -374,15 +614,19 @@ func (m Model) maybeResolve() (Model, tea.Cmd) {
 	if detail, ok := m.cache.Get(selected); ok {
 		m.resolvingID = ""
 		m.resolveErr = nil
-		m.viewport.SetContent(formatBeadDetail(*detail))
+		m.pendingResolveID = ""
+		m.viewport.SetContent(m.renderDetailContent(*detail))
 		m.viewport.GotoTop()
 		return m, nil
 	}
 
 	if m.resolver != nil {
-		m.resolvingID = selected
+		m.pendingResolveID = selected
 		m.resolveErr = nil
-		return m, tea.Batch(resolveBeadCmd(m.resolver, selected), m.browseSpinner.Tick)
+		id := selected
+		return m, tea.Tick(resolveDebounce, func(time.Time) tea.Msg {
+			return resolveDebounceMsg{ID: id}
+		})
 	}
 	return m, nil
 }
@@ -421,8 +665,12 @@ func (m Model) View() string {
 	leftPane := leftStyle.Render(m.viewLeft())
 	rightPane := rightStyle.Render(m.viewRight())
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-	helpView := m.help.View(HelpBindings(m.mode))
+	helpView := m.help.View(HelpBindings(m.mode, m.browse.showClosed))
 
+	if m.statusMsg != "" {
+		statusLine := pipeHeaderStyle.Render(m.statusMsg)
+		return lipgloss.JoinVertical(lipgloss.Left, panes, statusLine, helpView)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, panes, helpView)
 }
 
@@ -435,6 +683,8 @@ func (m Model) viewLeft() string {
 	switch m.mode {
 	case ModePipeline, ModeSummary:
 		return m.pipeline.View(w, h)
+	case ModeCampaign, ModeCampaignSummary:
+		return m.campaign.View(w, h)
 	default:
 		return m.browse.View(w, h, m.browseSpinner.View())
 	}
@@ -448,6 +698,11 @@ func (m Model) viewRight() string {
 		return m.pipeline.ViewReport(rightWidth-borderChrome, m.contentHeight())
 	case ModeSummary:
 		return m.viewSummaryRight()
+	case ModeCampaign:
+		_, rightWidth := PaneWidths(m.width)
+		return m.campaign.ViewReport(rightWidth-borderChrome, m.contentHeight())
+	case ModeCampaignSummary:
+		return m.viewCampaignSummaryRight()
 	default:
 		return m.viewBrowseDetail()
 	}
