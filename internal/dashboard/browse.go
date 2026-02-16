@@ -173,13 +173,17 @@ func (bs browseState) View(width, height int, spinnerView string) string {
 			b.WriteString("  ")
 		}
 
-		line := bead.ID + " " + PriorityBadge(bead.Priority) + " " + bead.Title
-		if bead.Type != "" {
-			line += " [" + bead.Type + "]"
-		}
 		if bs.showClosed {
+			line := fmt.Sprintf("%s P%d %s", bead.ID, bead.Priority, bead.Title)
+			if bead.Type != "" {
+				line += " [" + bead.Type + "]"
+			}
 			b.WriteString(mutedText.Render(line))
 		} else {
+			line := bead.ID + " " + PriorityBadge(bead.Priority) + " " + bead.Title
+			if bead.Type != "" {
+				line += " [" + bead.Type + "]"
+			}
 			b.WriteString(line)
 		}
 	}

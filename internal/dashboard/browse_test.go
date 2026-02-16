@@ -616,6 +616,26 @@ func TestBrowse_ToggleBackCopiesBeads(t *testing.T) {
 	}
 }
 
+func TestBrowse_ClosedViewUsesPlainPriorityLabel(t *testing.T) {
+	// Given: a single closed bead with a known priority
+	bead := BeadSummary{ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task"}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: []BeadSummary{bead}})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	bs, _ = bs.Update(ClosedBeadListMsg{Beads: []BeadSummary{bead}})
+
+	// When: the view is rendered in closed mode
+	view := bs.View(80, 20, "")
+
+	// Then: the closed view renders a plain "P2" label inside mutedText (no nested ANSI badges)
+	expectedLine := fmt.Sprintf("%s P%d %s [%s]", bead.ID, bead.Priority, bead.Title, bead.Type)
+	expectedMuted := mutedText.Render(expectedLine)
+	if !strings.Contains(view, expectedMuted) {
+		t.Errorf("closed view should contain mutedText.Render of plain line\nwant substring: %q\ngot view:       %q",
+			expectedMuted, view)
+	}
+}
+
 func TestBrowse_ErrorThenRetry(t *testing.T) {
 	// Given: a browse state that received an error
 	bs := newBrowseState()
