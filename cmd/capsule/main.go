@@ -819,6 +819,23 @@ func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input
 	}, nil
 }
 
+// providerStatusToDashboard maps a provider.Status to the corresponding
+// dashboard.PhaseStatus. Unknown statuses map to dashboard.PhaseError.
+func providerStatusToDashboard(s provider.Status) dashboard.PhaseStatus {
+	switch s {
+	case provider.StatusPass:
+		return dashboard.PhasePassed
+	case provider.StatusNeedsWork:
+		return dashboard.PhaseFailed
+	case provider.StatusError:
+		return dashboard.PhaseError
+	case provider.StatusSkip:
+		return dashboard.PhaseSkipped
+	default:
+		return dashboard.PhaseError
+	}
+}
+
 // dashboardStatusToProvider maps a dashboard.PhaseStatus to the corresponding
 // provider.Status. Unknown statuses map to provider.StatusError.
 func dashboardStatusToProvider(s dashboard.PhaseStatus) provider.Status {
@@ -877,11 +894,28 @@ func (c *dashboardCampaignCallback) OnTaskComplete(result campaign.TaskResult) {
 	for _, pr := range result.PhaseResults {
 		totalDuration += pr.Duration
 	}
+
+	var reports []dashboard.PhaseReport
+	if len(result.PhaseResults) > 0 {
+		reports = make([]dashboard.PhaseReport, len(result.PhaseResults))
+		for i, pr := range result.PhaseResults {
+			reports[i] = dashboard.PhaseReport{
+				PhaseName:    pr.PhaseName,
+				Status:       providerStatusToDashboard(pr.Signal.Status),
+				Summary:      pr.Signal.Summary,
+				Feedback:     pr.Signal.Feedback,
+				FilesChanged: pr.Signal.FilesChanged,
+				Duration:     pr.Duration,
+			}
+		}
+	}
+
 	c.statusFn(dashboard.CampaignTaskDoneMsg{
-		BeadID:   result.BeadID,
-		Index:    c.taskIndex,
-		Success:  result.Status == campaign.TaskCompleted,
-		Duration: totalDuration,
+		BeadID:       result.BeadID,
+		Index:        c.taskIndex,
+		Success:      result.Status == campaign.TaskCompleted,
+		Duration:     totalDuration,
+		PhaseReports: reports,
 	})
 	c.taskIndex++
 }

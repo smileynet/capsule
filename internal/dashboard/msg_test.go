@@ -122,6 +122,48 @@ func TestCampaignTaskDoneMsg_Fields(t *testing.T) {
 	}
 }
 
+func TestCampaignTaskDoneMsg_PhaseReports(t *testing.T) {
+	// Given: a CampaignTaskDoneMsg with phase reports
+	reports := []PhaseReport{
+		{PhaseName: "plan", Status: PhasePassed, Summary: "planned", Duration: 2 * time.Second},
+		{PhaseName: "code", Status: PhasePassed, Summary: "coded", FilesChanged: []string{"main.go"}, Duration: 3 * time.Second},
+	}
+	msg := CampaignTaskDoneMsg{
+		BeadID:       "cap-001",
+		Index:        0,
+		Success:      true,
+		Duration:     5 * time.Second,
+		PhaseReports: reports,
+	}
+
+	// Then: PhaseReports are accessible
+	if len(msg.PhaseReports) != 2 {
+		t.Fatalf("PhaseReports len = %d, want 2", len(msg.PhaseReports))
+	}
+	if msg.PhaseReports[0].PhaseName != "plan" {
+		t.Errorf("PhaseReports[0].PhaseName = %q, want %q", msg.PhaseReports[0].PhaseName, "plan")
+	}
+	if msg.PhaseReports[1].Summary != "coded" {
+		t.Errorf("PhaseReports[1].Summary = %q, want %q", msg.PhaseReports[1].Summary, "coded")
+	}
+}
+
+func TestCampaignTaskDoneMsg_EmptyPhaseReports(t *testing.T) {
+	// Given: a CampaignTaskDoneMsg with no phase reports
+	msg := CampaignTaskDoneMsg{
+		BeadID:       "cap-001",
+		Index:        0,
+		Success:      true,
+		Duration:     1 * time.Second,
+		PhaseReports: nil,
+	}
+
+	// Then: PhaseReports is nil (no panic)
+	if msg.PhaseReports != nil {
+		t.Errorf("PhaseReports should be nil, got %v", msg.PhaseReports)
+	}
+}
+
 func TestCampaignDoneMsg_Fields(t *testing.T) {
 	// Given: a CampaignDoneMsg with results including skipped tasks
 	msg := CampaignDoneMsg{

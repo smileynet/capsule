@@ -17,7 +17,8 @@ type campaignState struct {
 	tasks         []CampaignTaskInfo
 	taskStatuses  []CampaignTaskStatus
 	taskDurations []time.Duration
-	currentIdx    int // -1 = no task running
+	taskReports   map[string][]PhaseReport // Phase reports keyed by bead ID.
+	currentIdx    int                      // -1 = no task running
 	pipeline      pipelineState
 	completed     int
 	failed        int
@@ -35,6 +36,7 @@ func newCampaignState(parentID, parentTitle string, tasks []CampaignTaskInfo) ca
 		tasks:         tasks,
 		taskStatuses:  statuses,
 		taskDurations: make([]time.Duration, len(tasks)),
+		taskReports:   make(map[string][]PhaseReport),
 		currentIdx:    -1,
 		pipeline:      newPipelineState(nil),
 	}
@@ -78,6 +80,9 @@ func (cs campaignState) handleTaskDone(msg CampaignTaskDoneMsg) campaignState {
 			cs.failed++
 		}
 		cs.taskDurations[msg.Index] = msg.Duration
+	}
+	if len(msg.PhaseReports) > 0 {
+		cs.taskReports[msg.BeadID] = msg.PhaseReports
 	}
 	return cs
 }

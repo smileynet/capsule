@@ -97,6 +97,110 @@ func TestCampaign_TaskDoneMsg_Success(t *testing.T) {
 	}
 }
 
+func TestCampaign_TaskDoneMsg_StoresPhaseReports(t *testing.T) {
+	// Given: a campaign with first task running
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+
+	// When: first task completes with phase reports
+	reports := []PhaseReport{
+		{PhaseName: "plan", Status: PhasePassed, Summary: "planned", Duration: 2 * time.Second},
+		{PhaseName: "code", Status: PhasePassed, Summary: "coded", FilesChanged: []string{"main.go"}, Duration: 3 * time.Second},
+	}
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:       "cap-001",
+		Index:        0,
+		Success:      true,
+		Duration:     5 * time.Second,
+		PhaseReports: reports,
+	})
+
+	// Then: phase reports are stored for the task
+	stored := cs.taskReports["cap-001"]
+	if len(stored) != 2 {
+		t.Fatalf("taskReports[cap-001] len = %d, want 2", len(stored))
+	}
+	if stored[0].PhaseName != "plan" {
+		t.Errorf("stored[0].PhaseName = %q, want %q", stored[0].PhaseName, "plan")
+	}
+	if stored[1].Summary != "coded" {
+		t.Errorf("stored[1].Summary = %q, want %q", stored[1].Summary, "coded")
+	}
+}
+
+func TestCampaign_TaskDoneMsg_EmptyPhaseReports(t *testing.T) {
+	// Given: a campaign with first task running
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+
+	// When: task completes with no phase reports
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  true,
+		Duration: 1 * time.Second,
+	})
+
+	// Then: no panic and no reports stored for task
+	stored := cs.taskReports["cap-001"]
+	if len(stored) != 0 {
+		t.Errorf("taskReports[cap-001] should be empty, got %d", len(stored))
+	}
+}
+
+func TestCampaign_TaskDoneMsg_MultipleTasksStoreIndependently(t *testing.T) {
+	// Given: a campaign with multiple tasks
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: first task completes with reports
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:       "cap-001",
+		Index:        0,
+		Success:      true,
+		Duration:     2 * time.Second,
+		PhaseReports: []PhaseReport{{PhaseName: "plan", Status: PhasePassed}},
+	})
+
+	// And: second task completes with different reports
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-002", Index: 1, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:       "cap-002",
+		Index:        1,
+		Success:      true,
+		Duration:     3 * time.Second,
+		PhaseReports: []PhaseReport{{PhaseName: "code", Status: PhasePassed}, {PhaseName: "test", Status: PhasePassed}},
+	})
+
+	// Then: each task's reports are stored independently
+	if len(cs.taskReports["cap-001"]) != 1 {
+		t.Errorf("taskReports[cap-001] len = %d, want 1", len(cs.taskReports["cap-001"]))
+	}
+	if len(cs.taskReports["cap-002"]) != 2 {
+		t.Errorf("taskReports[cap-002] len = %d, want 2", len(cs.taskReports["cap-002"]))
+	}
+}
+
+func TestCampaign_TaskDoneMsg_UnknownIndexIgnored(t *testing.T) {
+	// Given: a campaign with tasks
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: a done message arrives with an out-of-range index
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:       "cap-unknown",
+		Index:        99,
+		Success:      true,
+		Duration:     1 * time.Second,
+		PhaseReports: []PhaseReport{{PhaseName: "plan", Status: PhasePassed}},
+	})
+
+	// Then: no panic, reports still stored by bead ID
+	stored := cs.taskReports["cap-unknown"]
+	if len(stored) != 1 {
+		t.Errorf("taskReports[cap-unknown] len = %d, want 1", len(stored))
+	}
+}
+
 func TestCampaign_TaskDoneMsg_Failure(t *testing.T) {
 	// Given: a campaign with first task running
 	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())

@@ -218,10 +218,11 @@ type CampaignTaskStartMsg struct {
 
 // CampaignTaskDoneMsg signals that a specific task within a campaign has completed.
 type CampaignTaskDoneMsg struct {
-	BeadID   string
-	Index    int
-	Success  bool
-	Duration time.Duration
+	BeadID       string
+	Index        int
+	Success      bool
+	Duration     time.Duration
+	PhaseReports []PhaseReport
 }
 
 // CampaignDoneMsg signals that the entire campaign has completed.

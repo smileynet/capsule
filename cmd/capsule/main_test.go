@@ -1183,6 +1183,102 @@ func TestDashboardCampaignPipelineRunner_MapsPhaseStatusToProviderStatus(t *test
 	}
 }
 
+func TestDashboardCampaignCallback_OnTaskComplete_MapsPhaseReports(t *testing.T) {
+	// Given: a dashboardCampaignCallback that captures sent messages
+	var captured []tea.Msg
+	cb := &dashboardCampaignCallback{
+		statusFn:  func(msg tea.Msg) { captured = append(captured, msg) },
+		taskIndex: 0,
+		taskTotal: 2,
+	}
+
+	// When: OnTaskComplete is called with a TaskResult containing PhaseResults
+	result := campaign.TaskResult{
+		BeadID: "cap-001",
+		Status: campaign.TaskCompleted,
+		PhaseResults: []orchestrator.PhaseResult{
+			{
+				PhaseName: "plan",
+				Signal: provider.Signal{
+					Status:       provider.StatusPass,
+					Summary:      "planned",
+					FilesChanged: []string{"main.go"},
+					Feedback:     "ok",
+				},
+				Duration: 2 * time.Second,
+			},
+			{
+				PhaseName: "code",
+				Signal: provider.Signal{
+					Status:  provider.StatusPass,
+					Summary: "coded",
+				},
+				Duration: 3 * time.Second,
+			},
+		},
+	}
+	cb.OnTaskComplete(result)
+
+	// Then: the CampaignTaskDoneMsg includes mapped PhaseReports
+	if len(captured) != 1 {
+		t.Fatalf("captured %d messages, want 1", len(captured))
+	}
+	doneMsg, ok := captured[0].(dashboard.CampaignTaskDoneMsg)
+	if !ok {
+		t.Fatalf("captured message is %T, want CampaignTaskDoneMsg", captured[0])
+	}
+	if len(doneMsg.PhaseReports) != 2 {
+		t.Fatalf("PhaseReports len = %d, want 2", len(doneMsg.PhaseReports))
+	}
+	if doneMsg.PhaseReports[0].PhaseName != "plan" {
+		t.Errorf("PhaseReports[0].PhaseName = %q, want %q", doneMsg.PhaseReports[0].PhaseName, "plan")
+	}
+	if doneMsg.PhaseReports[0].Status != dashboard.PhasePassed {
+		t.Errorf("PhaseReports[0].Status = %q, want %q", doneMsg.PhaseReports[0].Status, dashboard.PhasePassed)
+	}
+	if doneMsg.PhaseReports[0].Summary != "planned" {
+		t.Errorf("PhaseReports[0].Summary = %q, want %q", doneMsg.PhaseReports[0].Summary, "planned")
+	}
+	if doneMsg.PhaseReports[0].Feedback != "ok" {
+		t.Errorf("PhaseReports[0].Feedback = %q, want %q", doneMsg.PhaseReports[0].Feedback, "ok")
+	}
+	if len(doneMsg.PhaseReports[0].FilesChanged) != 1 || doneMsg.PhaseReports[0].FilesChanged[0] != "main.go" {
+		t.Errorf("PhaseReports[0].FilesChanged = %v, want [main.go]", doneMsg.PhaseReports[0].FilesChanged)
+	}
+	if doneMsg.PhaseReports[0].Duration != 2*time.Second {
+		t.Errorf("PhaseReports[0].Duration = %v, want 2s", doneMsg.PhaseReports[0].Duration)
+	}
+	if doneMsg.PhaseReports[1].PhaseName != "code" {
+		t.Errorf("PhaseReports[1].PhaseName = %q, want %q", doneMsg.PhaseReports[1].PhaseName, "code")
+	}
+}
+
+func TestDashboardCampaignCallback_OnTaskComplete_EmptyPhaseResults(t *testing.T) {
+	// Given: a callback with no phase results in the task
+	var captured []tea.Msg
+	cb := &dashboardCampaignCallback{
+		statusFn:  func(msg tea.Msg) { captured = append(captured, msg) },
+		taskIndex: 0,
+		taskTotal: 1,
+	}
+
+	// When: OnTaskComplete is called with an empty PhaseResults
+	result := campaign.TaskResult{
+		BeadID: "cap-empty",
+		Status: campaign.TaskCompleted,
+	}
+	cb.OnTaskComplete(result)
+
+	// Then: PhaseReports is nil (no panic)
+	doneMsg, ok := captured[0].(dashboard.CampaignTaskDoneMsg)
+	if !ok {
+		t.Fatalf("captured message is %T, want CampaignTaskDoneMsg", captured[0])
+	}
+	if doneMsg.PhaseReports != nil {
+		t.Errorf("PhaseReports should be nil for empty PhaseResults, got %v", doneMsg.PhaseReports)
+	}
+}
+
 func TestPostPipeline_MergesAndClosesBead(t *testing.T) {
 	// Given: mock worktree and bead resolver that succeed
 	var buf bytes.Buffer
