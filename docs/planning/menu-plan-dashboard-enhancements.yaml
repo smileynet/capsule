@@ -1,0 +1,211 @@
+# docs/planning/menu-plan-dashboard-enhancements.yaml
+# Epic: Dashboard TUI Enhancements (cap-fj8)
+# Smart dispatch, run inspection, and UX polish
+
+phases:
+  - id: phase-1
+    title: "Phase 1: Smart Dispatch & Campaign Mode"
+    description: "Type-aware routing in dashboard: tasks run single pipeline, features/epics auto-dispatch to campaign mode with inline task queue"
+    duration: "4-6 sessions"
+
+    features:
+      - id: feature-1.1
+        bead: cap-fj8.1
+        title: "Campaign mode in dashboard TUI"
+        priority: 2
+        user_story: "As a developer, I want the dashboard to automatically run child tasks when I select a feature or epic, so I don't have to run each task individually"
+        acceptance_criteria:
+          - "Selecting a task bead runs a single pipeline (unchanged behavior)"
+          - "Selecting a feature bead discovers its ready child tasks and runs them sequentially"
+          - "Selecting an epic bead discovers its ready child tasks and runs them sequentially"
+          - "Campaign view shows task queue with inline phase nesting for the running task"
+          - "Completed tasks show as single line with pass/fail indicator and duration"
+          - "Right pane shows phase report for cursor-selected phase (same as pipeline mode)"
+          - "User can abort campaign with q/ctrl+c"
+          - "Campaign summary shows after all tasks complete"
+          - "Bead type with empty/unknown value defaults to single pipeline (safe fallback)"
+        tracer_strategy:
+          minimal_flow: "Select feature → discover children → run first child pipeline → show phases → task completes → run next → campaign summary"
+          layers: "msg types → browse dispatch → campaign state → model routing → CLI adapter"
+          expansion: "Campaign state persistence, validation phases, discovery filing (existing campaign features, wired through)"
+
+        tasks:
+          - bead: cap-fj8.1.1
+            title: "Add campaign types and CampaignRunner interface to dashboard"
+            priority: 2
+            tracer: "Foundation — defines the type system all other tasks depend on"
+            deliverable: "msg.go with campaign types + browse.go passing BeadType"
+            tdd: true
+
+          - bead: cap-fj8.1.2
+            title: "Implement campaignState with inline phase nesting"
+            priority: 2
+            depends_on: ["cap-fj8.1.1"]
+            tracer: "View layer — proves the campaign UI renders correctly"
+            deliverable: "campaign.go with campaignState + tests in campaign_test.go"
+            tdd: true
+
+          - bead: cap-fj8.1.3
+            title: "Add campaign key bindings and help"
+            priority: 2
+            depends_on: ["cap-fj8.1.1"]
+            tracer: "Discoverability — proves help bar works for new modes"
+            deliverable: "Campaign key bindings with tests"
+            tdd: true
+
+          - bead: cap-fj8.1.4
+            title: "Wire campaign dispatch into dashboard model"
+            priority: 2
+            depends_on: ["cap-fj8.1.2", "cap-fj8.1.3"]
+            tracer: "Integration — proves the full dashboard flow works end-to-end in tests"
+            deliverable: "Model routing with campaign dispatch + tests"
+            tdd: true
+
+          - bead: cap-fj8.1.5
+            title: "Build dashboard campaign adapter and wire into CLI"
+            priority: 2
+            depends_on: ["cap-fj8.1.4"]
+            tracer: "End-to-end — proves real campaign runs through dashboard"
+            deliverable: "CLI wiring — capsule dashboard can run campaigns"
+            tdd: false
+
+  - id: phase-2
+    title: "Phase 2: Run Inspection & History"
+    description: "Browse and inspect completed pipeline runs: history toggle, archived worklogs, summaries, and campaign task inspection"
+    duration: "3-4 sessions"
+
+    features:
+      - id: feature-2.1
+        bead: cap-fj8.2
+        title: "History view with archived pipeline results"
+        priority: 2
+        blocks: ["cap-fj8.1"]
+        user_story: "As a developer, I want to browse completed beads and see their pipeline results in the dashboard, so I can review past work without leaving the TUI"
+        acceptance_criteria:
+          - "Pressing h in browse mode toggles between ready beads and closed beads"
+          - "Closed beads displayed with muted styling and [closed] tag"
+          - "Selecting a closed bead shows its detail + archived summary + worklog excerpt in right pane"
+          - "Most recent 50 closed beads shown (most recent first)"
+          - "Pressing h again returns to ready beads view"
+          - "Help bar updates to show 'h: history' or 'h: ready' based on current view"
+        tracer_strategy:
+          minimal_flow: "Press h → fetch closed beads → display list → select one → show archived detail"
+          layers: "bead client → dashboard lister → browse state → archive reader → detail rendering"
+          expansion: "Full phase output log viewing, search/filter within history"
+
+        tasks:
+          - bead: cap-fj8.2.1
+            title: "Add Closed() method to bead client"
+            priority: 2
+            tracer: "Data layer — proves we can fetch closed beads from bd CLI"
+            deliverable: "bead.Client.Closed() with tests"
+            tdd: true
+
+          - bead: cap-fj8.2.2
+            title: "Create archive reader for pipeline results"
+            priority: 2
+            tracer: "Data layer — proves we can read archived worklog and summary files"
+            deliverable: "archive.go with FileArchiveReader + tests"
+            tdd: true
+
+          - bead: cap-fj8.2.3
+            title: "Implement browse history toggle"
+            priority: 2
+            depends_on: ["cap-fj8.2.1", "cap-fj8.2.2"]
+            tracer: "View layer — proves history toggle works in the TUI"
+            deliverable: "History toggle in browse mode with tests"
+            tdd: true
+
+          - bead: cap-fj8.2.4
+            title: "Show archived results in closed bead detail view"
+            priority: 2
+            depends_on: ["cap-fj8.2.3"]
+            tracer: "Integration — proves archived data renders in the detail pane"
+            deliverable: "Closed bead detail with archived results + CLI wiring"
+            tdd: true
+
+      - id: feature-2.2
+        bead: cap-fj8.3
+        title: "Campaign completed task inspection"
+        priority: 3
+        blocks: ["cap-fj8.1"]
+        user_story: "As a developer, I want to navigate to completed tasks within a campaign and see their phase reports, so I can review what happened during a campaign run"
+        acceptance_criteria:
+          - "In campaign mode, cursor can navigate to completed tasks"
+          - "Selecting a completed task expands its phases (progressive disclosure)"
+          - "Right pane shows phase reports for the selected completed task"
+          - "Phase results stored from CampaignTaskDoneMsg for later inspection"
+        tracer_strategy:
+          minimal_flow: "Campaign runs → task completes → user moves cursor to it → phases expand → right pane shows reports"
+          layers: "campaign messages → campaign state → view rendering"
+          expansion: "Navigate between tasks with j/k, auto-collapse on deselect"
+
+        tasks:
+          - bead: cap-fj8.3.1
+            title: "Carry phase reports in campaign task completion messages"
+            priority: 3
+            tracer: "Data flow — proves phase results survive the callback bridge"
+            deliverable: "Phase reports carried through campaign messages"
+            tdd: true
+
+          - bead: cap-fj8.3.2
+            title: "Implement completed task expansion in campaign view"
+            priority: 3
+            depends_on: ["cap-fj8.3.1"]
+            tracer: "View layer — proves progressive disclosure works for completed tasks"
+            deliverable: "Completed task inspection with phase expansion"
+            tdd: true
+
+  - id: phase-3
+    title: "Phase 3: UX Polish"
+    description: "Responsiveness and context improvements: debounced resolution, bead headers, elapsed timers, sticky cursor, post-pipeline feedback"
+    duration: "2-3 sessions"
+
+    features:
+      - id: feature-3.1
+        bead: cap-fj8.4
+        title: "Pipeline context and responsiveness improvements"
+        priority: 3
+        blocks: ["cap-fj8.2", "cap-fj8.3"]
+        user_story: "As a developer, I want the dashboard to feel responsive and always show me what's running, so I don't lose context or get distracted by visual noise"
+        acceptance_criteria:
+          - "Pipeline and campaign modes show a bead header line (ID + title) at top of left pane"
+          - "Running phases show elapsed time (updates every second)"
+          - "Rapid cursor scrolling in browse mode doesn't cause right-pane thrash (debounced)"
+          - "After returning from pipeline/campaign, cursor restores to the previously run bead"
+          - "Post-pipeline result (merge/close success/failure) shown as status line for 5 seconds"
+        tracer_strategy:
+          minimal_flow: "Run pipeline → see header + elapsed timer → return to browse → see status line → cursor on same bead"
+          layers: "pipeline state → model state → view rendering → tea.Tick timers"
+          expansion: "Grouped browse list with section headers, full ? help overlay"
+
+        tasks:
+          - bead: cap-fj8.4.1
+            title: "Add bead header to pipeline and campaign views"
+            priority: 3
+            tracer: "Context preservation — proves user always knows what's running"
+            deliverable: "Bead header in pipeline mode"
+            tdd: true
+
+          - bead: cap-fj8.4.2
+            title: "Add elapsed time ticker to running phases"
+            priority: 3
+            depends_on: ["cap-fj8.4.1"]
+            tracer: "Responsiveness — proves real-time feedback works"
+            deliverable: "Elapsed time on running phases"
+            tdd: true
+
+          - bead: cap-fj8.4.3
+            title: "Implement debounced bead resolution"
+            priority: 3
+            tracer: "Responsiveness — prevents right-pane visual thrash"
+            deliverable: "Debounced resolution with instant cache hits"
+            tdd: true
+
+          - bead: cap-fj8.4.4
+            title: "Add sticky cursor and post-pipeline status line"
+            priority: 3
+            depends_on: ["cap-fj8.4.3"]
+            tracer: "Context preservation — proves return-to-browse experience is smooth"
+            deliverable: "Sticky cursor + status line with timeout"
+            tdd: true

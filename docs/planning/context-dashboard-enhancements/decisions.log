@@ -1,0 +1,9 @@
+2026-02-15 | brainstorm | Inline phase nesting for campaign view | Avoids mode explosion antipattern; keeps campaign tasks and phases in single view
+2026-02-15 | brainstorm | History as toggle (h key) not separate mode | Reduces cognitive load; user toggles between ready/closed in browse mode
+2026-02-15 | brainstorm | Progressive disclosure for completed tasks | Only expand phases for selected task; reduces information overload
+2026-02-15 | scope | 50 closed bead limit for history | Balance between usefulness and performance; most recent first
+2026-02-15 | scope | Abort entire campaign on q/ctrl+c | Simpler than per-task abort; user can re-run to continue from checkpoint
+2026-02-15 | scope | Debounced resolution (150ms) with cache bypass | Prevents right-pane visual thrash during rapid scrolling; cached beads show instantly
+2026-02-15 | scope | Post-pipeline status line with 5s timeout | Replaces silent failure swallowing from PostPipelineDoneMsg
+2026-02-15 | scope | Dual-callback adapter for campaign in dashboard | statusFn reuses PhaseUpdateMsg for phase progress; campaignFn bridges lifecycle events as tea.Msg
+2026-02-15 | finalize | Created as cap-fj8 epic with 4 features, 15 tasks | Full hierarchy with dependencies matching menu plan
