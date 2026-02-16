@@ -80,10 +80,17 @@ func (m Model) viewCampaignSummaryRight() string {
 
 	var b strings.Builder
 
-	if done.Failed == 0 {
+	switch {
+	case m.campaignErr != nil:
+		fmt.Fprintf(&b, "%s  Campaign Error\n", pipeFailedStyle.Render("✗"))
+		fmt.Fprintf(&b, "\nError: %s", m.campaignErr)
+		if done.TotalTasks > 0 {
+			fmt.Fprintf(&b, "\n\n%d/%d tasks passed", done.Passed, done.TotalTasks)
+		}
+	case done.Failed == 0:
 		fmt.Fprintf(&b, "%s  Campaign Passed\n", pipePassedStyle.Render("✓"))
 		fmt.Fprintf(&b, "\n%d/%d tasks passed", done.Passed, done.TotalTasks)
-	} else {
+	default:
 		fmt.Fprintf(&b, "%s  Campaign Failed\n", pipeFailedStyle.Render("✗"))
 		fmt.Fprintf(&b, "\n%d/%d tasks passed, %d failed", done.Passed, done.TotalTasks, done.Failed)
 	}

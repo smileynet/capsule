@@ -1572,7 +1572,7 @@ func TestDispatchCampaign_SendsEventsAndDone(t *testing.T) {
 	}
 }
 
-func TestDispatchCampaign_ClosesChannelOnError(t *testing.T) {
+func TestDispatchCampaign_SendsErrorMsg(t *testing.T) {
 	// Given: a campaign runner that returns an error
 	cr := &mockCampaignRunner{err: fmt.Errorf("campaign failed")}
 	pr := &mockRunner{output: PipelineOutput{Success: true}}
@@ -1582,13 +1582,20 @@ func TestDispatchCampaign_ClosesChannelOnError(t *testing.T) {
 	// When: dispatchCampaign runs
 	dispatchCampaign(ctx, cr, pr, "cap-feat", ch)
 
-	// Then: the channel is closed with no spurious messages
+	// Then: a CampaignErrorMsg is sent through the channel
 	var msgs []tea.Msg
 	for msg := range ch {
 		msgs = append(msgs, msg)
 	}
-	if len(msgs) != 0 {
-		t.Errorf("expected 0 messages from failing runner, got %d", len(msgs))
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (CampaignErrorMsg), got %d", len(msgs))
+	}
+	errMsg, ok := msgs[0].(CampaignErrorMsg)
+	if !ok {
+		t.Fatalf("expected CampaignErrorMsg, got %T", msgs[0])
+	}
+	if errMsg.Err == nil || errMsg.Err.Error() != "campaign failed" {
+		t.Errorf("unexpected error: %v", errMsg.Err)
 	}
 }
 
@@ -2030,6 +2037,65 @@ func newCampaignModel(w, h int) Model {
 	m.mode = ModeCampaign
 	m.campaign = newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
 	return m
+}
+
+func TestModel_CampaignErrorMsgStoresError(t *testing.T) {
+	// Given: a model in campaign mode
+	m := newCampaignModel(90, 40)
+	// eventCh is set so listenForEvents returns a non-nil re-listen command.
+	m.eventCh = make(chan tea.Msg, 1)
+
+	// When: a CampaignErrorMsg is received
+	updated, _ := m.Update(CampaignErrorMsg{Err: fmt.Errorf("discovery failed")})
+	m = updated.(Model)
+
+	// Then: the campaign error is stored on the model
+	if m.campaignErr == nil {
+		t.Fatal("campaignErr should be set after CampaignErrorMsg")
+	}
+	if m.campaignErr.Error() != "discovery failed" {
+		t.Errorf("campaignErr = %q, want %q", m.campaignErr, "discovery failed")
+	}
+}
+
+func TestModel_CampaignErrorShownInSummary(t *testing.T) {
+	// Given: a model in campaign summary mode with an error
+	m := newCampaignModel(90, 40)
+	m.mode = ModeCampaignSummary
+	m.campaignErr = fmt.Errorf("discovery failed")
+	m.campaignDone = &CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 0}
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: the error message is shown in the summary
+	if !strings.Contains(plain, "discovery failed") {
+		t.Errorf("campaign summary should show error message, got:\n%s", plain)
+	}
+}
+
+func TestModel_CampaignChannelClosedWithoutDoneMsgGoesToCampaignSummary(t *testing.T) {
+	// Given: a model in campaign mode where the runner errored without sending CampaignDoneMsg
+	m := newCampaignModel(90, 40)
+	m.cancelPipeline = func() {}
+	// campaignDone is nil — the runner errored before sending CampaignDoneMsg
+
+	// When: channelClosedMsg is received
+	updated, _ := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: the model transitions to campaign summary (not pipeline summary)
+	if m.mode != ModeCampaignSummary {
+		t.Errorf("mode = %d, want ModeCampaignSummary (%d)", m.mode, ModeCampaignSummary)
+	}
+	// And: a synthetic campaignDone is created so the summary view can render
+	if m.campaignDone == nil {
+		t.Fatal("campaignDone should be synthesized when missing")
+	}
+	if m.campaignDone.ParentID != "cap-feat" {
+		t.Errorf("campaignDone.ParentID = %q, want %q", m.campaignDone.ParentID, "cap-feat")
+	}
 }
 
 func TestModel_ResolveErrorNavigable(t *testing.T) {

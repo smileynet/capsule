@@ -222,6 +222,11 @@ type CampaignDoneMsg struct {
 	Skipped    int
 }
 
+// CampaignErrorMsg signals that the campaign runner returned an error.
+type CampaignErrorMsg struct {
+	Err error
+}
+
 // CampaignRunner dispatches and runs a campaign (sequential child pipelines).
 type CampaignRunner interface {
 	RunCampaign(

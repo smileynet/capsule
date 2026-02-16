@@ -50,7 +50,8 @@ type Model struct {
 
 	campaign       campaignState
 	campaignRunner CampaignRunner
-	campaignDone   *CampaignDoneMsg // set when CampaignDoneMsg received, consumed on channelClosedMsg
+	campaignDone   *CampaignDoneMsg // set on CampaignDoneMsg or synthesized on channel close
+	campaignErr    error            // set on CampaignErrorMsg from runner failure
 }
 
 // newBrowseSpinner returns a spinner for browse mode loading states.
@@ -166,7 +167,12 @@ func dispatchCampaign(ctx context.Context, cr CampaignRunner, pr PipelineRunner,
 	if pr != nil {
 		pipelineFn = pr.RunPipeline
 	}
-	_ = cr.RunCampaign(ctx, parentID, statusFn, pipelineFn)
+	if err := cr.RunCampaign(ctx, parentID, statusFn, pipelineFn); err != nil {
+		select {
+		case ch <- CampaignErrorMsg{Err: err}:
+		case <-ctx.Done():
+		}
+	}
 }
 
 // resolveBeadCmd returns a tea.Cmd that calls resolver.Resolve(id)
@@ -270,6 +276,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.campaignDone = &msg
 		return m, listenForEvents(m.eventCh)
 
+	case CampaignErrorMsg:
+		m.campaignErr = msg.Err
+		return m, listenForEvents(m.eventCh)
+
 	case PhaseUpdateMsg:
 		if m.mode == ModeCampaign {
 			var cmd tea.Cmd
@@ -298,7 +308,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.aborting {
 			return m.returnToBrowseAfterAbort()
 		}
-		if m.mode == ModeCampaign && m.campaignDone != nil {
+		if m.mode == ModeCampaign {
+			if m.campaignDone == nil {
+				m.campaignDone = &CampaignDoneMsg{
+					ParentID:   m.campaign.parentID,
+					TotalTasks: len(m.campaign.tasks),
+					Passed:     m.campaign.completed,
+					Failed:     m.campaign.failed,
+				}
+			}
 			m.mode = ModeCampaignSummary
 			return m, nil
 		}
@@ -446,6 +464,7 @@ func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.pipelineErr = nil
 	m.aborting = false
 	m.campaignDone = nil
+	m.campaignErr = nil
 	m.dispatchedBeadID = msg.BeadID
 	go dispatchCampaign(ctx, m.campaignRunner, m.runner, msg.BeadID, ch)
 	return m, tea.Batch(m.campaign.pipeline.spinner.Tick, listenForEvents(ch))
