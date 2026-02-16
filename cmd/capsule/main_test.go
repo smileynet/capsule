@@ -1110,8 +1110,8 @@ func TestDashboardCampaignPipelineRunner_ConvertsPhaseReports(t *testing.T) {
 	if first.PhaseName != "plan" {
 		t.Errorf("PhaseResults[0].PhaseName = %q, want %q", first.PhaseName, "plan")
 	}
-	if first.Signal.Status != provider.Status(dashboard.PhasePassed) {
-		t.Errorf("PhaseResults[0].Signal.Status = %q, want %q", first.Signal.Status, dashboard.PhasePassed)
+	if first.Signal.Status != provider.StatusPass {
+		t.Errorf("PhaseResults[0].Signal.Status = %q, want %q", first.Signal.Status, provider.StatusPass)
 	}
 	if first.Signal.Summary != "planned changes" {
 		t.Errorf("PhaseResults[0].Signal.Summary = %q, want %q", first.Signal.Summary, "planned changes")
@@ -1129,14 +1129,57 @@ func TestDashboardCampaignPipelineRunner_ConvertsPhaseReports(t *testing.T) {
 	if second.PhaseName != "code" {
 		t.Errorf("PhaseResults[1].PhaseName = %q, want %q", second.PhaseName, "code")
 	}
-	if second.Signal.Status != provider.Status(dashboard.PhasePassed) {
-		t.Errorf("PhaseResults[1].Signal.Status = %q, want %q", second.Signal.Status, dashboard.PhasePassed)
+	if second.Signal.Status != provider.StatusPass {
+		t.Errorf("PhaseResults[1].Signal.Status = %q, want %q", second.Signal.Status, provider.StatusPass)
 	}
 	if second.Signal.Summary != "implemented" {
 		t.Errorf("PhaseResults[1].Signal.Summary = %q, want %q", second.Signal.Summary, "implemented")
 	}
 	if second.Duration != 5*time.Second {
 		t.Errorf("PhaseResults[1].Duration = %v, want 5s", second.Duration)
+	}
+}
+
+func TestDashboardCampaignPipelineRunner_MapsPhaseStatusToProviderStatus(t *testing.T) {
+	// Given: a pipelineFn that returns reports with each dashboard.PhaseStatus
+	tests := []struct {
+		dashStatus dashboard.PhaseStatus
+		wantStatus provider.Status
+	}{
+		{dashboard.PhasePassed, provider.StatusPass},
+		{dashboard.PhaseFailed, provider.StatusNeedsWork},
+		{dashboard.PhaseError, provider.StatusError},
+		{dashboard.PhaseSkipped, provider.StatusSkip},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.dashStatus), func(t *testing.T) {
+			pipelineFn := func(_ context.Context, _ dashboard.PipelineInput, _ func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+				return dashboard.PipelineOutput{
+					Success: true,
+					PhaseReports: []dashboard.PhaseReport{
+						{
+							PhaseName: "test-phase",
+							Status:    tt.dashStatus,
+							Summary:   "summary",
+						},
+					},
+				}, nil
+			}
+			runner := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+
+			// When: RunPipeline converts the report
+			output, err := runner.RunPipeline(context.Background(), orchestrator.PipelineInput{BeadID: "cap-map"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Then: the provider.Status matches the expected mapping
+			got := output.PhaseResults[0].Signal.Status
+			if got != tt.wantStatus {
+				t.Errorf("dashboard.%s → provider.Status = %q, want %q", tt.dashStatus, got, tt.wantStatus)
+			}
+		})
 	}
 }
 

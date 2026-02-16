@@ -784,7 +784,7 @@ func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input
 		results[i] = orchestrator.PhaseResult{
 			PhaseName: pr.PhaseName,
 			Signal: provider.Signal{
-				Status:       provider.Status(pr.Status),
+				Status:       dashboardStatusToProvider(pr.Status),
 				Summary:      pr.Summary,
 				FilesChanged: pr.FilesChanged,
 				Feedback:     pr.Feedback,
@@ -797,6 +797,23 @@ func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input
 		PhaseResults: results,
 		Completed:    output.Success,
 	}, nil
+}
+
+// dashboardStatusToProvider maps a dashboard.PhaseStatus to the corresponding
+// provider.Status. Unknown statuses map to provider.StatusError.
+func dashboardStatusToProvider(s dashboard.PhaseStatus) provider.Status {
+	switch s {
+	case dashboard.PhasePassed:
+		return provider.StatusPass
+	case dashboard.PhaseFailed:
+		return provider.StatusNeedsWork
+	case dashboard.PhaseError:
+		return provider.StatusError
+	case dashboard.PhaseSkipped:
+		return provider.StatusSkip
+	default:
+		return provider.StatusError
+	}
 }
 
 // dashboardCampaignCallback implements campaign.Callback by converting
