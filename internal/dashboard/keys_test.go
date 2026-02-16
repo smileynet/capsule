@@ -72,6 +72,33 @@ func TestPipelineKeys_NoEnter(t *testing.T) {
 	}
 }
 
+func TestCampaignKeys_ContainsExpected(t *testing.T) {
+	// Given: the campaign key map
+	km := CampaignKeyMap()
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: all expected navigation keys are present (same as pipeline)
+	expected := []string{"up", "down", "tab", "q"}
+	for _, want := range expected {
+		if !containsKey(allKeys, want) {
+			t.Errorf("CampaignKeyMap missing key %q, got %v", want, allKeys)
+		}
+	}
+}
+
+func TestCampaignKeys_NoEnter(t *testing.T) {
+	// Given: the campaign key map
+	km := CampaignKeyMap()
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: enter is not included (no dispatch in campaign mode)
+	if containsKey(allKeys, "enter") {
+		t.Error("CampaignKeyMap should not contain 'enter' key")
+	}
+}
+
 // collectKeys extracts all key strings from a slice of key.Binding.
 func collectKeys(bindings []key.Binding) []string {
 	var keys []string

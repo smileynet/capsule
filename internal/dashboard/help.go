@@ -8,8 +8,10 @@ func HelpBindings(mode Mode) help.KeyMap {
 	switch mode {
 	case ModePipeline:
 		return PipelineKeyMap()
-	case ModeSummary:
+	case ModeSummary, ModeCampaignSummary:
 		return SummaryKeyMap()
+	case ModeCampaign:
+		return CampaignKeyMap()
 	default:
 		return BrowseKeyMap()
 	}
