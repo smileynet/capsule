@@ -617,6 +617,70 @@ func TestSummary_StatusLine_RenderedInBrowseView(t *testing.T) {
 	}
 }
 
+// --- pendingResolveID reset tests ---
+
+func TestSummary_ReturnToBrowse_ClearsPendingResolveID(t *testing.T) {
+	// Given: a model in summary mode with a stale pendingResolveID
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeSummary
+	m.pipeline = newPipelineState([]string{"plan"})
+	m.pipeline, _ = m.pipeline.Update(PhaseUpdateMsg{Phase: "plan", Status: PhasePassed, Duration: time.Second})
+	m.pipelineOutput = &PipelineOutput{Success: true}
+	m.pendingResolveID = "stale-bead"
+
+	// When: any key is pressed to return to browse
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: pendingResolveID is cleared
+	if m.pendingResolveID != "" {
+		t.Errorf("pendingResolveID = %q, want empty after returnToBrowse", m.pendingResolveID)
+	}
+}
+
+func TestSummary_ReturnToBrowseAfterAbort_ClearsPendingResolveID(t *testing.T) {
+	// Given: a model aborting a pipeline with a stale pendingResolveID
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModePipeline
+	m.aborting = true
+	m.cancelPipeline = func() {}
+	m.pendingResolveID = "stale-bead"
+
+	// When: channelClosedMsg is received (abort completes)
+	updated, _ = m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: pendingResolveID is cleared
+	if m.pendingResolveID != "" {
+		t.Errorf("pendingResolveID = %q, want empty after returnToBrowseAfterAbort", m.pendingResolveID)
+	}
+}
+
+func TestSummary_ReturnToBrowseFromCampaign_ClearsPendingResolveID(t *testing.T) {
+	// Given: a model in campaign summary mode with a stale pendingResolveID
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+	m.pendingResolveID = "stale-bead"
+
+	// When: any key is pressed to return to browse
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: pendingResolveID is cleared
+	if m.pendingResolveID != "" {
+		t.Errorf("pendingResolveID = %q, want empty after returnToBrowseFromCampaign", m.pendingResolveID)
+	}
+}
+
 func TestSummary_StatusLine_NotRenderedWhenEmpty(t *testing.T) {
 	// Given: a model in browse mode with no status message
 	lister := &stubLister{beads: sampleBeads()}

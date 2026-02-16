@@ -588,6 +588,29 @@ func TestModel_RefreshInvalidatesCache(t *testing.T) {
 	}
 }
 
+func TestModel_RefreshClearsPendingResolveID(t *testing.T) {
+	// Given: a model with a pendingResolveID from a prior debounce
+	m, _ := newResolverModel(90, 40)
+	m.pendingResolveID = "stale-bead"
+	m.resolvingID = "in-flight"
+	m.resolveErr = fmt.Errorf("old error")
+
+	// When: a RefreshBeadsMsg is received
+	updated, _ := m.Update(RefreshBeadsMsg{})
+	m = updated.(Model)
+
+	// Then: all resolve state is cleared
+	if m.pendingResolveID != "" {
+		t.Errorf("pendingResolveID = %q, want empty after RefreshBeadsMsg", m.pendingResolveID)
+	}
+	if m.resolvingID != "" {
+		t.Errorf("resolvingID = %q, want empty after RefreshBeadsMsg", m.resolvingID)
+	}
+	if m.resolveErr != nil {
+		t.Errorf("resolveErr = %v, want nil after RefreshBeadsMsg", m.resolveErr)
+	}
+}
+
 func newPipelineModel(w, h int, phases []string) Model {
 	m := NewModel()
 	m.mode = ModePipeline

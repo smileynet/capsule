@@ -51,6 +51,7 @@ func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 	m.browse.showClosed = false
 	m.browse.readyBeads = nil
 	m.cache.Invalidate()
+	m.pendingResolveID = ""
 
 	if m.lister != nil {
 		return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
@@ -66,6 +67,7 @@ func (m Model) returnToBrowseFromCampaign() (Model, tea.Cmd) {
 	m.browse.showClosed = false
 	m.browse.readyBeads = nil
 	m.cache.Invalidate()
+	m.pendingResolveID = ""
 	m.lastDispatchedID = m.dispatchedBeadID
 	m.campaignDone = nil
 	m.dispatchedBeadID = ""
@@ -115,6 +117,7 @@ func (m Model) returnToBrowse() (Model, tea.Cmd) {
 	m.browse.showClosed = false
 	m.browse.readyBeads = nil
 	m.cache.Invalidate()
+	m.pendingResolveID = ""
 	m.lastDispatchedID = m.dispatchedBeadID
 
 	var cmds []tea.Cmd

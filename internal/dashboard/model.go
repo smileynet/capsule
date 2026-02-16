@@ -333,6 +333,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RefreshBeadsMsg:
 		m.cache.Invalidate()
+		m.pendingResolveID = ""
+		m.resolvingID = ""
+		m.resolveErr = nil
 		if m.lister != nil {
 			return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
 		}
