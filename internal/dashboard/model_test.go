@@ -1766,6 +1766,9 @@ func TestModel_CampaignQuitCancels(t *testing.T) {
 	if !m.aborting {
 		t.Error("aborting should be set after q in campaign mode")
 	}
+	if !m.campaign.pipeline.aborting {
+		t.Error("campaign pipeline aborting should be set for visual feedback")
+	}
 }
 
 func TestModel_CampaignDoublePressQForceQuits(t *testing.T) {

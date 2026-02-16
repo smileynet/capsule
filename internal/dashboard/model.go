@@ -372,6 +372,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case m.mode == ModeCampaign && m.cancelPipeline != nil:
 			m.aborting = true
+			m.campaign.pipeline.aborting = true
 			m.cancelPipeline()
 			return m, nil
 		}
