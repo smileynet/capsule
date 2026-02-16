@@ -100,7 +100,7 @@ func MinimalPhases() []PhaseDefinition {
 	}
 }
 
-// ThoroughPhases returns an extended pipeline with test quality review, lint gate, and security scan.
+// ThoroughPhases returns an extended pipeline with test quality review and lint gate.
 func ThoroughPhases() []PhaseDefinition {
 	return []PhaseDefinition{
 		{Name: "test-writer", Kind: Worker, MaxRetries: 3},

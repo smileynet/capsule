@@ -489,7 +489,6 @@ func (o *Orchestrator) ResolveRetryStrategy(phase PhaseDefinition) RetryStrategy
 	if phase.MaxRetries > 0 {
 		rs.MaxAttempts = phase.MaxRetries
 	}
-
 	return rs
 }
 

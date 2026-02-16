@@ -658,8 +658,7 @@ type mockMergeOps struct {
 	removeErr  error
 	pruneErr   error
 
-	merged  bool
-	removed bool
+	merged bool
 }
 
 func (m *mockMergeOps) MergeToMain(string, string, string) error {
@@ -672,7 +671,6 @@ func (m *mockMergeOps) DetectMainBranch() (string, error) {
 }
 
 func (m *mockMergeOps) Remove(_ string, _ bool) error {
-	m.removed = true
 	return m.removeErr
 }
 
