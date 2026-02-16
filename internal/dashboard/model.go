@@ -478,6 +478,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 
+	case m.mode == ModeCampaign && m.focus == PaneLeft:
+		var cmd tea.Cmd
+		m.campaign, cmd = m.campaign.Update(msg)
+		return m, cmd
+
 	case m.mode == ModeCampaign && m.focus == PaneRight:
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)

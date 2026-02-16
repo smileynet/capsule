@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func sampleCampaignTasks() []CampaignTaskInfo {
@@ -410,5 +412,300 @@ func TestCampaign_ViewReport_NoRunningTask(t *testing.T) {
 	// Then: empty string or fallback is returned
 	if view != "" {
 		t.Errorf("ViewReport with no running task should return empty, got: %q", view)
+	}
+}
+
+// --- selectedIdx (cursor) tests ---
+
+func TestCampaign_SelectedIdx_DefaultsToZero(t *testing.T) {
+	// Given: a fresh campaign state
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// Then: selectedIdx starts at 0
+	if cs.selectedIdx != 0 {
+		t.Errorf("selectedIdx = %d, want 0", cs.selectedIdx)
+	}
+}
+
+func TestCampaign_SelectedIdx_DownKey(t *testing.T) {
+	// Given: a campaign state with tasks
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: down key is pressed
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// Then: selectedIdx moves to 1
+	if cs.selectedIdx != 1 {
+		t.Errorf("selectedIdx = %d, want 1", cs.selectedIdx)
+	}
+}
+
+func TestCampaign_SelectedIdx_UpKey(t *testing.T) {
+	// Given: a campaign state with selectedIdx at 1
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: up key is pressed
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyUp})
+
+	// Then: selectedIdx moves back to 0
+	if cs.selectedIdx != 0 {
+		t.Errorf("selectedIdx = %d, want 0", cs.selectedIdx)
+	}
+}
+
+func TestCampaign_SelectedIdx_WrapsDown(t *testing.T) {
+	// Given: a campaign at the last task
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown}) // 1
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown}) // 2
+
+	// When: down again (past end)
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// Then: wraps to 0
+	if cs.selectedIdx != 0 {
+		t.Errorf("selectedIdx = %d, want 0 (wrap)", cs.selectedIdx)
+	}
+}
+
+func TestCampaign_SelectedIdx_WrapsUp(t *testing.T) {
+	// Given: a campaign at selectedIdx 0
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: up key (past start)
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyUp})
+
+	// Then: wraps to last task
+	if cs.selectedIdx != 2 {
+		t.Errorf("selectedIdx = %d, want 2 (wrap)", cs.selectedIdx)
+	}
+}
+
+func TestCampaign_SelectedIdx_JKey(t *testing.T) {
+	// Given: a campaign state
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: j key is pressed
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+
+	// Then: selectedIdx moves down
+	if cs.selectedIdx != 1 {
+		t.Errorf("selectedIdx = %d, want 1", cs.selectedIdx)
+	}
+}
+
+func TestCampaign_SelectedIdx_EmptyTasksNoOp(t *testing.T) {
+	// Given: a campaign with no tasks
+	cs := newCampaignState("cap-feat", "Feature Title", nil)
+
+	// When: down/up keys are pressed
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyUp})
+
+	// Then: no panic, selectedIdx stays at 0
+	if cs.selectedIdx != 0 {
+		t.Errorf("selectedIdx = %d, want 0 (empty task list)", cs.selectedIdx)
+	}
+}
+
+func TestCampaign_SelectedIdx_KKey(t *testing.T) {
+	// Given: a campaign at selectedIdx 1
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+
+	// When: k key is pressed
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+
+	// Then: selectedIdx moves up
+	if cs.selectedIdx != 0 {
+		t.Errorf("selectedIdx = %d, want 0", cs.selectedIdx)
+	}
+}
+
+// --- View: cursor marker on selected task ---
+
+func TestCampaign_View_CursorMarkerOnSelected(t *testing.T) {
+	// Given: a campaign with selectedIdx at 1
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: the view is rendered
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: cursor marker appears on "Second task" line
+	lines := strings.Split(plain, "\n")
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, CursorMarker) && strings.Contains(line, "Second task") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("cursor marker should be on 'Second task', got:\n%s", plain)
+	}
+}
+
+// --- View: completed task expansion ---
+
+func TestCampaign_View_SelectedCompletedTaskShowsPhases(t *testing.T) {
+	// Given: task 0 completed with phase reports, selectedIdx on task 0
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  true,
+		Duration: 5 * time.Second,
+		PhaseReports: []PhaseReport{
+			{PhaseName: "plan", Status: PhasePassed, Duration: 2 * time.Second},
+			{PhaseName: "code", Status: PhasePassed, Duration: 3 * time.Second},
+		},
+	})
+	// selectedIdx is 0 (default), which is the completed task
+
+	// When: the view is rendered
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: phase names appear expanded below the selected completed task
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("selected completed task should expand phases, 'plan' missing:\n%s", plain)
+	}
+	if !strings.Contains(plain, "code") {
+		t.Errorf("selected completed task should expand phases, 'code' missing:\n%s", plain)
+	}
+}
+
+func TestCampaign_View_UnselectedCompletedTaskNoPhases(t *testing.T) {
+	// Given: task 0 completed with phases, but selectedIdx on task 1
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  true,
+		Duration: 5 * time.Second,
+		PhaseReports: []PhaseReport{
+			{PhaseName: "plan", Status: PhasePassed, Duration: 2 * time.Second},
+		},
+	})
+	// Move selectedIdx to task 1
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: the view is rendered
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: no phase expansion (plan should not appear in output
+	// since the only task with reports is task 0, and it's not selected)
+	lines := strings.Split(plain, "\n")
+	for _, line := range lines {
+		// Phase lines are deeply indented; task lines are not
+		if strings.Contains(line, "      ") && strings.Contains(line, "plan") {
+			t.Errorf("unselected completed task should NOT expand phases, got:\n%s", plain)
+		}
+	}
+}
+
+func TestCampaign_View_OnlySelectedTaskExpanded(t *testing.T) {
+	// Given: tasks 0 and 1 both completed with phases
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID: "cap-001", Index: 0, Success: true, Duration: 2 * time.Second,
+		PhaseReports: []PhaseReport{{PhaseName: "plan", Status: PhasePassed}},
+	})
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-002", Index: 1, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID: "cap-002", Index: 1, Success: true, Duration: 3 * time.Second,
+		PhaseReports: []PhaseReport{{PhaseName: "test", Status: PhasePassed}},
+	})
+
+	// selectedIdx on task 1
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: the view is rendered
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: only task 1's phases are expanded (test), not task 0's (plan)
+	// Count indented phase lines
+	lines := strings.Split(plain, "\n")
+	expandedPhases := 0
+	for _, line := range lines {
+		trimmed := strings.TrimLeft(line, " ")
+		if len(line)-len(trimmed) >= 6 { // deeply indented = phase line
+			expandedPhases++
+		}
+	}
+	if expandedPhases != 1 {
+		t.Errorf("only one task should be expanded, got %d phase lines:\n%s", expandedPhases, plain)
+	}
+}
+
+// --- ViewReport: delegate to stored phase reports for completed task ---
+
+func TestCampaign_ViewReport_SelectedCompletedTask(t *testing.T) {
+	// Given: task 0 completed with phase reports, selectedIdx on task 0
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID: "cap-001", Index: 0, Success: true, Duration: 5 * time.Second,
+		PhaseReports: []PhaseReport{
+			{PhaseName: "plan", Status: PhasePassed, Summary: "All planned"},
+			{PhaseName: "code", Status: PhasePassed, Summary: "Code written"},
+		},
+	})
+
+	// When: ViewReport is called (selectedIdx 0 = completed task with reports)
+	view := cs.ViewReport(60, 20)
+	plain := stripANSI(view)
+
+	// Then: shows a summary of the completed task's phases
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("ViewReport should show phase 'plan' for completed task, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "code") {
+		t.Errorf("ViewReport should show phase 'code' for completed task, got:\n%s", plain)
+	}
+}
+
+func TestCampaign_ViewReport_SelectedRunningTask(t *testing.T) {
+	// Given: task 0 completed, task 1 running with phases, selectedIdx on task 1
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID: "cap-001", Index: 0, Success: true, Duration: 2 * time.Second,
+	})
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-002", Index: 1, Total: 3})
+	cs.pipeline = newPipelineState([]string{"plan", "code"})
+	cs, _ = cs.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+
+	// Move selectedIdx to task 1 (the running task)
+	cs, _ = cs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: ViewReport is called
+	view := cs.ViewReport(60, 20)
+	plain := stripANSI(view)
+
+	// Then: delegates to live pipeline ViewReport (shows running state)
+	if !strings.Contains(plain, "Running") {
+		t.Errorf("ViewReport for running task should show live pipeline, got:\n%s", plain)
+	}
+}
+
+func TestCampaign_ViewReport_SelectedPendingTask(t *testing.T) {
+	// Given: all tasks pending, selectedIdx on task 0
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: ViewReport is called
+	view := cs.ViewReport(60, 20)
+
+	// Then: empty string (pending task has no report)
+	if view != "" {
+		t.Errorf("ViewReport for pending task should be empty, got: %q", view)
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // campaignState manages the task queue, embedded pipeline state, and
@@ -19,6 +20,7 @@ type campaignState struct {
 	taskDurations []time.Duration
 	taskReports   map[string][]PhaseReport // Phase reports keyed by bead ID.
 	currentIdx    int                      // -1 = no task running
+	selectedIdx   int                      // Cursor for browsing tasks (independent of currentIdx).
 	pipeline      pipelineState
 	completed     int
 	failed        int
@@ -53,12 +55,33 @@ func (cs campaignState) Update(msg tea.Msg) (campaignState, tea.Cmd) {
 		var cmd tea.Cmd
 		cs.pipeline, cmd = cs.pipeline.Update(msg)
 		return cs, cmd
+	case tea.KeyMsg:
+		return cs.handleKey(msg), nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		cs.pipeline, cmd = cs.pipeline.Update(msg)
 		return cs, cmd
 	}
 	return cs, nil
+}
+
+func (cs campaignState) handleKey(msg tea.KeyMsg) campaignState {
+	if len(cs.tasks) == 0 {
+		return cs
+	}
+	switch msg.String() {
+	case "up", "k":
+		cs.selectedIdx--
+		if cs.selectedIdx < 0 {
+			cs.selectedIdx = len(cs.tasks) - 1
+		}
+	case "down", "j":
+		cs.selectedIdx++
+		if cs.selectedIdx >= len(cs.tasks) {
+			cs.selectedIdx = 0
+		}
+	}
+	return cs
 }
 
 func (cs campaignState) handleTaskStart(msg CampaignTaskStartMsg) campaignState {
@@ -104,14 +127,21 @@ func (cs campaignState) View(width, height int) string {
 		b.WriteByte('\n')
 		status := cs.taskStatuses[i]
 
+		// Cursor marker on selected task.
+		if i == cs.selectedIdx {
+			b.WriteString(CursorMarker)
+		} else {
+			b.WriteString("  ")
+		}
+
 		indicator := cs.taskIndicator(status)
-		fmt.Fprintf(&b, "  %s %s", indicator, task.Title)
+		fmt.Fprintf(&b, "%s %s", indicator, task.Title)
 
 		if cs.taskDurations[i] > 0 {
 			fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", cs.taskDurations[i].Seconds())))
 		}
 
-		// Running task: show indented phases below.
+		// Running task: show indented live phases below.
 		if i == cs.currentIdx && status == CampaignTaskRunning && len(cs.pipeline.phases) > 0 {
 			for _, phase := range cs.pipeline.phases {
 				b.WriteByte('\n')
@@ -120,6 +150,20 @@ func (cs campaignState) View(width, height int) string {
 				fmt.Fprintf(&b, "      %s %s", pInd, pName)
 				if phase.Duration > 0 {
 					fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", phase.Duration.Seconds())))
+				}
+			}
+		}
+
+		// Selected completed/failed task: expand stored phase reports below.
+		if i == cs.selectedIdx && (status == CampaignTaskPassed || status == CampaignTaskFailed) {
+			if reports, ok := cs.taskReports[task.BeadID]; ok {
+				for _, r := range reports {
+					b.WriteByte('\n')
+					ind := pipeIndicator(r.Status, "")
+					fmt.Fprintf(&b, "      %s %s", ind, r.PhaseName)
+					if r.Duration > 0 {
+						fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", r.Duration.Seconds())))
+					}
 				}
 			}
 		}
@@ -145,10 +189,61 @@ func (cs campaignState) taskIndicator(status CampaignTaskStatus) string {
 	}
 }
 
-// ViewReport delegates to the embedded pipelineState's ViewReport.
+// ViewReport renders the right-pane content for the selected task.
+// For the running task, it delegates to the live pipeline. For completed
+// tasks, it renders stored phase reports. For pending tasks, returns empty.
 func (cs campaignState) ViewReport(width, height int) string {
-	if cs.currentIdx < 0 {
+	if len(cs.tasks) == 0 || cs.selectedIdx < 0 || cs.selectedIdx >= len(cs.tasks) {
 		return ""
 	}
-	return cs.pipeline.ViewReport(width, height)
+
+	status := cs.taskStatuses[cs.selectedIdx]
+
+	// Running task: delegate to live pipeline.
+	if cs.selectedIdx == cs.currentIdx && status == CampaignTaskRunning {
+		return cs.pipeline.ViewReport(width, height)
+	}
+
+	// Completed/failed task: render stored phase reports.
+	if status == CampaignTaskPassed || status == CampaignTaskFailed {
+		task := cs.tasks[cs.selectedIdx]
+		reports, ok := cs.taskReports[task.BeadID]
+		if !ok || len(reports) == 0 {
+			return ""
+		}
+		return cs.formatTaskReport(task, reports)
+	}
+
+	return ""
+}
+
+// formatTaskReport renders the stored phase reports for a completed task.
+func (cs campaignState) formatTaskReport(task CampaignTaskInfo, reports []PhaseReport) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", task.Title)
+
+	for _, r := range reports {
+		var statusStyle lipgloss.Style
+		var statusText string
+		switch r.Status {
+		case PhaseFailed, PhaseError:
+			statusStyle = pipeFailedStyle
+			statusText = "Failed"
+		case PhaseSkipped:
+			statusStyle = pipeSkippedStyle
+			statusText = "Skipped"
+		default:
+			statusStyle = pipePassedStyle
+			statusText = "Passed"
+		}
+		fmt.Fprintf(&b, "\n%s  %s", r.PhaseName, statusStyle.Render(statusText))
+		if r.Duration > 0 {
+			fmt.Fprintf(&b, "  %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", r.Duration.Seconds())))
+		}
+		if r.Summary != "" {
+			fmt.Fprintf(&b, "\n  %s", r.Summary)
+		}
+	}
+
+	return b.String()
 }
