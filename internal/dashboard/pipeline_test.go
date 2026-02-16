@@ -696,6 +696,48 @@ func TestPipeline_PhaseUpdateIgnoresUnknownPhase(t *testing.T) {
 	}
 }
 
+func TestPipeline_ViewBeadHeader(t *testing.T) {
+	// Given: a pipeline state with a bead ID and title set
+	ps := newPipelineState(samplePhaseNames())
+	ps.beadID = "cap-042"
+	ps.beadTitle = "Fix login bug"
+
+	// When: the view is rendered
+	view := ps.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: the bead header appears as the first line
+	lines := strings.Split(plain, "\n")
+	if len(lines) == 0 {
+		t.Fatal("view should have at least one line")
+	}
+	if !strings.Contains(lines[0], "cap-042") {
+		t.Errorf("first line should contain bead ID, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "Fix login bug") {
+		t.Errorf("first line should contain bead title, got: %q", lines[0])
+	}
+}
+
+func TestPipeline_ViewNoBeadHeader_WhenEmpty(t *testing.T) {
+	// Given: a pipeline state with no bead ID
+	ps := newPipelineState(samplePhaseNames())
+
+	// When: the view is rendered
+	view := ps.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: no blank header line is added; first line is a phase
+	lines := strings.Split(plain, "\n")
+	if len(lines) == 0 {
+		t.Fatal("view should have at least one line")
+	}
+	// First line should contain a phase indicator (○) or cursor marker
+	if !strings.Contains(lines[0], "○") && !strings.Contains(lines[0], CursorMarker) {
+		t.Errorf("first line with no bead header should be a phase line, got: %q", lines[0])
+	}
+}
+
 func TestPipeline_MultiplePhaseProgression(t *testing.T) {
 	// Given: a pipeline state with autoFollow enabled
 	ps := newPipelineState(samplePhaseNames())

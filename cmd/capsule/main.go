@@ -197,6 +197,13 @@ func (r *RunCmd) Run() error {
 	pipelineCtx, pipelineCancel := context.WithCancel(context.Background())
 	defer pipelineCancel()
 
+	// Resolve bead title early for display header (best-effort).
+	// Note: the bead is resolved again in runPipeline for worklog context.
+	// The duplication is intentional — the header resolve is fire-and-forget
+	// (no warnings), while runPipeline's resolve logs warnings to the writer.
+	bdClient := bead.NewClient(".")
+	beadCtx, _ := bdClient.Resolve(r.BeadID)
+
 	// Build display bridge and display.
 	bridge := tui.NewBridge()
 	display := tui.NewDisplay(tui.DisplayOptions{
@@ -204,13 +211,14 @@ func (r *RunCmd) Run() error {
 		ForcePlain: r.NoTUI,
 		Phases:     phaseNames(phases),
 		CancelFunc: pipelineCancel,
+		BeadID:     r.BeadID,
+		BeadTitle:  beadCtx.TaskTitle,
 	})
 
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
 	wlMgr := worklog.NewManager("templates/worklog.md.template", ".capsule/logs")
-	bdClient := bead.NewClient(".")
 	gateRunner := gate.NewRunner()
 
 	orch := orchestrator.New(p,
@@ -875,6 +883,9 @@ func (c *dashboardCampaignCallback) OnCampaignStart(parentID string, tasks []cam
 			Priority: t.Priority,
 		}
 	}
+	// ParentTitle is intentionally omitted: the campaign.Callback interface
+	// does not carry it, so the dashboard model falls back to the title
+	// set during dispatch (see CampaignStartMsg handler in model.go).
 	c.statusFn(dashboard.CampaignStartMsg{
 		ParentID: parentID,
 		Tasks:    infos,

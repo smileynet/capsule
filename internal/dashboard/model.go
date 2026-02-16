@@ -320,7 +320,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDispatch(msg)
 
 	case CampaignStartMsg:
-		m.campaign = newCampaignState(msg.ParentID, "", msg.Tasks)
+		title := msg.ParentTitle
+		if title == "" {
+			title = m.campaign.parentTitle // Preserve title set during dispatch.
+		}
+		m.campaign = newCampaignState(msg.ParentID, title, msg.Tasks)
 		return m, listenForEvents(m.eventCh)
 
 	case CampaignTaskStartMsg, CampaignTaskDoneMsg:
@@ -512,6 +516,8 @@ func (m Model) handlePipelineDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.mode = ModePipeline
 	m.focus = PaneLeft
 	m.pipeline = newPipelineState(m.phaseNames)
+	m.pipeline.beadID = msg.BeadID
+	m.pipeline.beadTitle = msg.BeadTitle
 	m.pipelineOutput = nil
 	m.pipelineErr = nil
 	m.aborting = false
@@ -529,7 +535,7 @@ func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.eventCh = ch
 	m.mode = ModeCampaign
 	m.focus = PaneLeft
-	m.campaign = newCampaignState(msg.BeadID, "", nil)
+	m.campaign = newCampaignState(msg.BeadID, msg.BeadTitle, nil)
 	m.pipelineOutput = nil
 	m.pipelineErr = nil
 	m.aborting = false

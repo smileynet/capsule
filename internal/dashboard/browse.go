@@ -105,7 +105,7 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		if len(bs.beads) > 0 && bs.cursor < len(bs.beads) && !bs.showClosed {
 			selected := bs.beads[bs.cursor]
 			return bs, func() tea.Msg {
-				return DispatchMsg{BeadID: selected.ID, BeadType: selected.Type}
+				return DispatchMsg{BeadID: selected.ID, BeadType: selected.Type, BeadTitle: selected.Title}
 			}
 		}
 		return bs, nil

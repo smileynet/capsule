@@ -911,6 +911,29 @@ func TestModel_DispatchWithoutRunnerIgnored(t *testing.T) {
 	}
 }
 
+func TestModel_DispatchPassesBeadTitleToPipeline(t *testing.T) {
+	// Given: a model with a pipeline runner
+	runner := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(runner),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// When: a DispatchMsg with BeadTitle is received
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-042", BeadTitle: "Fix login bug"})
+	m = updated.(Model)
+
+	// Then: the pipeline state has the bead header set
+	if m.pipeline.beadID != "cap-042" {
+		t.Errorf("pipeline.beadID = %q, want %q", m.pipeline.beadID, "cap-042")
+	}
+	if m.pipeline.beadTitle != "Fix login bug" {
+		t.Errorf("pipeline.beadTitle = %q, want %q", m.pipeline.beadTitle, "Fix login bug")
+	}
+}
+
 func TestModel_DispatchResetsState(t *testing.T) {
 	// Given: a model with stale pipeline state from a previous run
 	runner := &mockRunner{output: PipelineOutput{Success: true}}
@@ -1665,6 +1688,36 @@ func TestModel_CampaignStartMsgInitsCampaignState(t *testing.T) {
 	}
 	if m.campaign.parentID != "cap-feat" {
 		t.Errorf("campaign.parentID = %q, want %q", m.campaign.parentID, "cap-feat")
+	}
+}
+
+func TestModel_CampaignStartMsgPassesParentTitle(t *testing.T) {
+	// Given: a model in campaign mode
+	cr := &mockCampaignRunner{}
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(pr),
+		WithCampaignRunner(cr),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-feat", BeadType: "feature"})
+	m = updated.(Model)
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a CampaignStartMsg with ParentTitle is received
+	updated, _ = m.Update(CampaignStartMsg{
+		ParentID:    "cap-feat",
+		ParentTitle: "Authentication feature",
+		Tasks:       sampleCampaignTasks(),
+	})
+	m = updated.(Model)
+
+	// Then: the campaign state has the parent title
+	if m.campaign.parentTitle != "Authentication feature" {
+		t.Errorf("campaign.parentTitle = %q, want %q", m.campaign.parentTitle, "Authentication feature")
 	}
 }
 

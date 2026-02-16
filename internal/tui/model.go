@@ -39,6 +39,7 @@ var (
 	durationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	retryStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	detailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	headerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
 // PhaseState tracks the display state of a single pipeline phase.
@@ -65,6 +66,8 @@ type Model struct {
 	detailVisible bool               // Whether the detail panel is shown.
 	detailContent string             // Raw output content for the detail panel.
 	viewport      viewport.Model     // Scrollable viewport for the detail panel.
+	beadID        string             // Bead ID shown in header (optional).
+	beadTitle     string             // Bead title shown in header (optional).
 }
 
 // ModelOption configures the Model.
@@ -76,6 +79,14 @@ type ModelOption func(*Model)
 func WithCancelFunc(fn context.CancelFunc) ModelOption {
 	return func(m *Model) {
 		m.cancelFunc = fn
+	}
+}
+
+// WithBeadHeader sets the bead ID and title rendered as a dim first line.
+func WithBeadHeader(id, title string) ModelOption {
+	return func(m *Model) {
+		m.beadID = id
+		m.beadTitle = title
 	}
 }
 
@@ -225,6 +236,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View renders the phase list with status indicators.
 func (m Model) View() string {
 	var s string
+
+	if m.beadID != "" {
+		s += headerStyle.Render(m.beadID+"  "+m.beadTitle) + "\n"
+	}
 
 	for _, phase := range m.phases {
 		indicator := styledIndicator(phase.Status, m.spinner.View())

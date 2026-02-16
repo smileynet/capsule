@@ -205,6 +205,34 @@ func TestDispatchMsg_BeadType(t *testing.T) {
 	}
 }
 
+func TestDispatchMsg_BeadTitle(t *testing.T) {
+	// Given: a DispatchMsg with BeadTitle set
+	msg := DispatchMsg{
+		BeadID:    "cap-001",
+		BeadType:  "task",
+		BeadTitle: "Fix login bug",
+	}
+
+	// Then: BeadTitle is accessible
+	if msg.BeadTitle != "Fix login bug" {
+		t.Errorf("BeadTitle = %q, want %q", msg.BeadTitle, "Fix login bug")
+	}
+}
+
+func TestCampaignStartMsg_ParentTitle(t *testing.T) {
+	// Given: a CampaignStartMsg with ParentTitle set
+	msg := CampaignStartMsg{
+		ParentID:    "cap-feat",
+		ParentTitle: "Authentication feature",
+		Tasks:       []CampaignTaskInfo{{BeadID: "cap-001", Title: "Task 1"}},
+	}
+
+	// Then: ParentTitle is accessible
+	if msg.ParentTitle != "Authentication feature" {
+		t.Errorf("ParentTitle = %q, want %q", msg.ParentTitle, "Authentication feature")
+	}
+}
+
 func TestBrowse_EnterDispatchesWithBeadType(t *testing.T) {
 	// Given: a browse state with beads that have types
 	bs := newBrowseState()
@@ -224,6 +252,28 @@ func TestBrowse_EnterDispatchesWithBeadType(t *testing.T) {
 	}
 	if dispatch.BeadType != "task" {
 		t.Errorf("dispatch BeadType = %q, want %q", dispatch.BeadType, "task")
+	}
+}
+
+func TestBrowse_EnterDispatchesWithBeadTitle(t *testing.T) {
+	// Given: a browse state with beads
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+
+	// When: enter is pressed on the first bead
+	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Then: DispatchMsg includes BeadTitle from the selected bead
+	if cmd == nil {
+		t.Fatal("enter should produce a command")
+	}
+	msg := cmd()
+	dispatch, ok := msg.(DispatchMsg)
+	if !ok {
+		t.Fatalf("enter command produced %T, want DispatchMsg", msg)
+	}
+	if dispatch.BeadTitle != "First task" {
+		t.Errorf("dispatch BeadTitle = %q, want %q", dispatch.BeadTitle, "First task")
 	}
 }
 

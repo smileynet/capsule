@@ -28,6 +28,8 @@ type pipelineState struct {
 	running    bool
 	reports    map[string]*PhaseReport
 	aborting   bool
+	beadID     string // Bead ID shown in header (optional).
+	beadTitle  string // Bead title shown in header (optional).
 }
 
 // newPipelineState creates a pipelineState for the given phase names.
@@ -128,6 +130,7 @@ var (
 	pipeSkippedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	pipeDurationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	pipeRetryStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	pipeHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
 
 func pipeIndicator(status PhaseStatus, spinnerView string) string {
@@ -165,6 +168,13 @@ func (ps pipelineState) View(width, height int) string {
 	}
 
 	var b strings.Builder
+
+	// Bead header: muted ID + title line above the phase list.
+	if ps.beadID != "" {
+		b.WriteString(pipeHeaderStyle.Render(ps.beadID + "  " + ps.beadTitle))
+		b.WriteByte('\n')
+	}
+
 	for i, phase := range ps.phases {
 		if i > 0 {
 			b.WriteByte('\n')

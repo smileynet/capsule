@@ -212,6 +212,34 @@ func TestModel_Update_StatusUpdateMsg_TracksDuration(t *testing.T) {
 	}
 }
 
+func TestModel_View_BeadHeader(t *testing.T) {
+	m := NewModel([]string{"test-writer"}, WithBeadHeader("cap-042", "Fix login bug"))
+
+	view := m.View()
+
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 {
+		t.Fatal("view should have at least one line")
+	}
+	if !strings.Contains(lines[0], "cap-042") {
+		t.Errorf("first line should contain bead ID, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "Fix login bug") {
+		t.Errorf("first line should contain bead title, got: %q", lines[0])
+	}
+}
+
+func TestModel_View_NoBeadHeader_WhenEmpty(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	view := m.View()
+
+	// Without bead header, first line should be a phase line
+	if strings.Contains(view, "cap-") {
+		t.Error("view should not contain any bead ID prefix when no header configured")
+	}
+}
+
 func TestModel_View_StatusIndicators(t *testing.T) {
 	tests := []struct {
 		name      string

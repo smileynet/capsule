@@ -158,8 +158,9 @@ type PipelineErrorMsg struct {
 
 // DispatchMsg signals the user has selected a bead to run a pipeline on.
 type DispatchMsg struct {
-	BeadID   string
-	BeadType string
+	BeadID    string
+	BeadType  string
+	BeadTitle string
 }
 
 // RefreshBeadsMsg signals that the bead list should be reloaded.
@@ -205,8 +206,9 @@ type CampaignTaskInfo struct {
 
 // CampaignStartMsg signals that a campaign has been discovered and is starting.
 type CampaignStartMsg struct {
-	ParentID string
-	Tasks    []CampaignTaskInfo
+	ParentID    string
+	ParentTitle string
+	Tasks       []CampaignTaskInfo
 }
 
 // CampaignTaskStartMsg signals that a specific task within a campaign is starting.
