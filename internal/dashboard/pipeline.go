@@ -75,13 +75,13 @@ func (ps pipelineState) handlePhaseUpdate(msg PhaseUpdateMsg) pipelineState {
 			if msg.Duration > 0 {
 				ps.phases[i].Duration = msg.Duration
 			}
-			if msg.Status == PhaseRunning {
+			switch msg.Status {
+			case PhaseRunning:
 				ps.running = true
 				if ps.autoFollow {
 					ps.cursor = i
 				}
-			}
-			if msg.Status == PhasePassed || msg.Status == PhaseFailed || msg.Status == PhaseError {
+			case PhasePassed, PhaseFailed, PhaseError:
 				ps.reports[msg.Phase] = &PhaseReport{
 					PhaseName:    msg.Phase,
 					Status:       msg.Status,
@@ -261,7 +261,7 @@ func (ps pipelineState) formatReport(r *PhaseReport) string {
 		}
 	}
 
-	// Feedback (failed phases only).
+	// Feedback (typically present for failed/error phases).
 	if r.Feedback != "" {
 		fmt.Fprintf(&b, "\n\nFeedback:\n%s", r.Feedback)
 	}
