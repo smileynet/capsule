@@ -704,6 +704,89 @@ func TestModel_Update_WindowSizeMsg_ResizesViewport(t *testing.T) {
 	}
 }
 
+// --- Elapsed time ticker tests ---
+
+func TestModel_Update_StatusUpdateMsg_Running_SetsPhaseStartedAt(t *testing.T) {
+	m := NewModel([]string{"test-writer", "test-review"})
+	msg := StatusUpdateMsg{Phase: "test-writer", Status: StatusRunning}
+
+	newModel, _ := m.Update(msg)
+	updated := newModel.(Model)
+
+	if updated.phaseStartedAt.IsZero() {
+		t.Error("phaseStartedAt should be set when a phase starts running")
+	}
+}
+
+func TestModel_Update_StatusUpdateMsg_Running_ResetsPhaseStartedAt(t *testing.T) {
+	m := NewModel([]string{"test-writer", "test-review"})
+	m.Update(StatusUpdateMsg{Phase: "test-writer", Status: StatusRunning})
+	time.Sleep(2 * time.Millisecond)
+
+	newModel, _ := m.Update(StatusUpdateMsg{Phase: "test-review", Status: StatusRunning})
+	updated := newModel.(Model)
+
+	// phaseStartedAt should be reset (not zero)
+	if updated.phaseStartedAt.IsZero() {
+		t.Error("phaseStartedAt should be set for new running phase")
+	}
+}
+
+func TestModel_View_ElapsedTime_ForRunningPhase(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.phases[0].Status = StatusRunning
+	m.phaseStartedAt = time.Now().Add(-42 * time.Second)
+
+	view := m.View()
+
+	if !strings.Contains(view, "(42s)") {
+		t.Errorf("running phase should show elapsed time '(42s)', got:\n%s", view)
+	}
+}
+
+func TestModel_View_ElapsedTime_NotShownForPendingPhase(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	// phases are pending by default
+
+	view := m.View()
+
+	if strings.Contains(view, "s)") {
+		t.Errorf("pending phase should not show elapsed time, got:\n%s", view)
+	}
+}
+
+func TestModel_Update_ElapsedTickMsg_ReturnsTickWhenRunning(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.phases[0].Status = StatusRunning
+	m.phaseStartedAt = time.Now()
+
+	_, cmd := m.Update(elapsedTickMsg{})
+
+	if cmd == nil {
+		t.Error("elapsedTickMsg should produce a follow-up tick when a phase is running")
+	}
+}
+
+func TestModel_Update_ElapsedTickMsg_NoTickWhenNotRunning(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	_, cmd := m.Update(elapsedTickMsg{})
+
+	if cmd != nil {
+		t.Error("elapsedTickMsg should not produce a tick when no phase is running")
+	}
+}
+
+func TestModel_Init_ReturnsElapsedTick(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	cmd := m.Init()
+
+	// Init should return a batch that includes both the spinner tick and elapsed tick.
+	if cmd == nil {
+		t.Fatal("Init() should return a non-nil Cmd")
+	}
+}
+
 // TestModel_Teatest_AbortFlow verifies the abort lifecycle through the full Bubble Tea program.
 func TestModel_Teatest_AbortFlow(t *testing.T) {
 	cancelled := false

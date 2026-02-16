@@ -55,6 +55,10 @@ func (cs campaignState) Update(msg tea.Msg) (campaignState, tea.Cmd) {
 		var cmd tea.Cmd
 		cs.pipeline, cmd = cs.pipeline.Update(msg)
 		return cs, cmd
+	case elapsedTickMsg:
+		var cmd tea.Cmd
+		cs.pipeline, cmd = cs.pipeline.Update(msg)
+		return cs, cmd
 	case tea.KeyMsg:
 		return cs.handleKey(msg), nil
 	case spinner.TickMsg:
@@ -148,6 +152,10 @@ func (cs campaignState) View(width, height int) string {
 				pInd := pipeIndicator(phase.Status, cs.pipeline.spinner.View())
 				pName := pipePhaseName(phase.Status, phase.Name)
 				fmt.Fprintf(&b, "      %s %s", pInd, pName)
+				if phase.Status == PhaseRunning && !cs.pipeline.phaseStartedAt.IsZero() && !cs.pipeline.aborting {
+					elapsed := int(time.Since(cs.pipeline.phaseStartedAt).Seconds())
+					fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("(%ds)", elapsed)))
+				}
 				if phase.Duration > 0 {
 					fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", phase.Duration.Seconds())))
 				}

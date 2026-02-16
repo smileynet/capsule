@@ -51,23 +51,28 @@ type PhaseState struct {
 	Duration time.Duration
 }
 
+// elapsedTickMsg is sent every second to update the elapsed time display
+// for running pipeline phases.
+type elapsedTickMsg struct{}
+
 // Model is the Bubble Tea model for pipeline phase status display.
 type Model struct {
-	phases        []PhaseState
-	spinner       spinner.Model
-	currentIdx    int // Tracks active phase index for future scroll/focus support.
-	done          bool
-	aborting      bool
-	err           error
-	cancelFunc    context.CancelFunc // Called on first abort keypress; nil means immediate quit.
-	startTime     time.Time          // Records model creation for future elapsed-time display.
-	width         int                // Terminal width from WindowSizeMsg; 0 means not yet received.
-	height        int                // Terminal height from WindowSizeMsg; 0 means not yet received.
-	detailVisible bool               // Whether the detail panel is shown.
-	detailContent string             // Raw output content for the detail panel.
-	viewport      viewport.Model     // Scrollable viewport for the detail panel.
-	beadID        string             // Bead ID shown in header (optional).
-	beadTitle     string             // Bead title shown in header (optional).
+	phases         []PhaseState
+	spinner        spinner.Model
+	currentIdx     int // Tracks active phase index for future scroll/focus support.
+	done           bool
+	aborting       bool
+	err            error
+	cancelFunc     context.CancelFunc // Called on first abort keypress; nil means immediate quit.
+	startTime      time.Time          // Records model creation for future elapsed-time display.
+	phaseStartedAt time.Time          // Timestamp when the current running phase started.
+	width          int                // Terminal width from WindowSizeMsg; 0 means not yet received.
+	height         int                // Terminal height from WindowSizeMsg; 0 means not yet received.
+	detailVisible  bool               // Whether the detail panel is shown.
+	detailContent  string             // Raw output content for the detail panel.
+	viewport       viewport.Model     // Scrollable viewport for the detail panel.
+	beadID         string             // Bead ID shown in header (optional).
+	beadTitle      string             // Bead title shown in header (optional).
 }
 
 // ModelOption configures the Model.
@@ -146,9 +151,11 @@ func NewModel(phaseNames []string, opts ...ModelOption) Model {
 	return m
 }
 
-// Init starts the spinner tick.
+// Init starts the spinner and elapsed-time ticks.
 func (m Model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return elapsedTickMsg{}
+	}))
 }
 
 // Update handles incoming messages.
@@ -169,9 +176,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if msg.Status == StatusRunning {
 					m.currentIdx = i
+					m.phaseStartedAt = time.Now()
 				}
 				break
 			}
+		}
+		return m, nil
+
+	case elapsedTickMsg:
+		if !m.phaseStartedAt.IsZero() && !m.done {
+			return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
+				return elapsedTickMsg{}
+			})
 		}
 		return m, nil
 
@@ -248,6 +264,11 @@ func (m Model) View() string {
 
 		if phase.Attempt > 1 {
 			line += retryStyle.Render(fmt.Sprintf(" (%d/%d)", phase.Attempt, phase.MaxRetry))
+		}
+
+		if phase.Status == StatusRunning && !m.phaseStartedAt.IsZero() && !m.aborting {
+			elapsed := int(time.Since(m.phaseStartedAt).Seconds())
+			line += durationStyle.Render(fmt.Sprintf(" (%ds)", elapsed))
 		}
 
 		if phase.Duration > 0 {

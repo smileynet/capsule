@@ -383,6 +383,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = ModeSummary
 		return m, nil
 
+	case elapsedTickMsg:
+		switch m.mode {
+		case ModePipeline:
+			var cmd tea.Cmd
+			m.pipeline, cmd = m.pipeline.Update(msg)
+			return m, cmd
+		case ModeCampaign:
+			var cmd tea.Cmd
+			m.campaign, cmd = m.campaign.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
 	case spinner.TickMsg:
 		switch {
 		case m.mode == ModePipeline:
@@ -524,7 +537,7 @@ func (m Model) handlePipelineDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.dispatchedBeadID = msg.BeadID
 	input := PipelineInput{BeadID: msg.BeadID}
 	go dispatchPipeline(ctx, m.runner, input, ch)
-	return m, tea.Batch(m.pipeline.spinner.Tick, listenForEvents(ch))
+	return m, tea.Batch(m.pipeline.spinner.Tick, elapsedTickCmd(), listenForEvents(ch))
 }
 
 // handleCampaignDispatch transitions to campaign mode and starts the campaign goroutine.
@@ -543,7 +556,7 @@ func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.campaignErr = nil
 	m.dispatchedBeadID = msg.BeadID
 	go dispatchCampaign(ctx, m.campaignRunner, m.runner, msg.BeadID, ch)
-	return m, tea.Batch(m.campaign.pipeline.spinner.Tick, listenForEvents(ch))
+	return m, tea.Batch(m.campaign.pipeline.spinner.Tick, elapsedTickCmd(), listenForEvents(ch))
 }
 
 // maybeResolve checks if the selected bead changed and triggers a resolve

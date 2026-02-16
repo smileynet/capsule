@@ -1,12 +1,16 @@
 package dashboard
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// elapsedPattern matches elapsed time display like "(42s)" or "(120s)".
+var elapsedPattern = regexp.MustCompile(`\(\d+s\)`)
 
 func samplePhaseNames() []string {
 	return []string{"plan", "code", "test", "review"}
@@ -735,6 +739,95 @@ func TestPipeline_ViewNoBeadHeader_WhenEmpty(t *testing.T) {
 	// First line should contain a phase indicator (○) or cursor marker
 	if !strings.Contains(lines[0], "○") && !strings.Contains(lines[0], CursorMarker) {
 		t.Errorf("first line with no bead header should be a phase line, got: %q", lines[0])
+	}
+}
+
+func TestPipeline_ElapsedTimeShownForRunningPhase(t *testing.T) {
+	// Given: a pipeline state with "code" running, started 42 seconds ago
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhasePassed, Duration: time.Second})
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "code", Status: PhaseRunning})
+	ps.phaseStartedAt = time.Now().Add(-42 * time.Second)
+
+	// When: the view is rendered
+	view := ps.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: the running phase shows elapsed time in parentheses
+	if !strings.Contains(plain, "(42s)") {
+		t.Errorf("running phase should show elapsed time '(42s)', got:\n%s", plain)
+	}
+}
+
+func TestPipeline_ElapsedTimeNotShownForNonRunningPhase(t *testing.T) {
+	// Given: a pipeline state with no running phase (all pending)
+	ps := newPipelineState(samplePhaseNames())
+
+	// When: the view is rendered
+	view := ps.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: no elapsed time parenthetical (e.g. "(0s)") is shown
+	for _, line := range strings.Split(plain, "\n") {
+		if matched := elapsedPattern.MatchString(line); matched {
+			t.Errorf("pending phases should not show elapsed time, got line: %q", line)
+		}
+	}
+}
+
+func TestPipeline_ElapsedTimeUpdatesOnPhaseRunning(t *testing.T) {
+	// Given: a pipeline state with "plan" running
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+
+	// Then: phaseStartedAt should be set (approximately now)
+	if ps.phaseStartedAt.IsZero() {
+		t.Error("phaseStartedAt should be set when a phase starts running")
+	}
+}
+
+func TestPipeline_ElapsedTimeResetsOnNewRunningPhase(t *testing.T) {
+	// Given: a pipeline state where "plan" ran and now "code" is running
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+	firstStart := ps.phaseStartedAt
+	time.Sleep(2 * time.Millisecond)
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhasePassed, Duration: time.Second})
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "code", Status: PhaseRunning})
+
+	// Then: phaseStartedAt should be reset to a newer time
+	if !ps.phaseStartedAt.After(firstStart) {
+		t.Error("phaseStartedAt should be reset when a new phase starts running")
+	}
+}
+
+func TestPipeline_ElapsedTickMsg(t *testing.T) {
+	// Given: a running pipeline state
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+
+	// When: an elapsedTickMsg is received
+	ps, cmd := ps.Update(elapsedTickMsg{})
+
+	// Then: if still running, a follow-up tick command should be returned
+	if !ps.running {
+		t.Error("running should still be true")
+	}
+	if cmd == nil {
+		t.Error("elapsedTickMsg should produce a follow-up tick command when running")
+	}
+}
+
+func TestPipeline_ElapsedTickMsg_NotRunning(t *testing.T) {
+	// Given: a pipeline state that is not running (all pending)
+	ps := newPipelineState(samplePhaseNames())
+
+	// When: an elapsedTickMsg is received
+	_, cmd := ps.Update(elapsedTickMsg{})
+
+	// Then: no follow-up tick is returned
+	if cmd != nil {
+		t.Error("elapsedTickMsg should not produce a tick command when not running")
 	}
 }
 

@@ -178,6 +178,10 @@ type PostPipelineDoneMsg struct {
 	Err    error
 }
 
+// elapsedTickMsg is sent every second to update the elapsed time display
+// for running pipeline phases.
+type elapsedTickMsg struct{}
+
 // channelClosedMsg signals that the pipeline event channel has been closed,
 // indicating the pipeline goroutine has finished.
 type channelClosedMsg struct{}
