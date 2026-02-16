@@ -292,17 +292,21 @@ func newResolverModel(w, h int) (Model, *stubResolver) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m = updated.(Model)
 	// Deliver the bead list directly (bypasses Init batch).
+	// This sets pendingResolveID via debounce; deliver the debounce tick
+	// and resolve result so cap-001 is fully resolved.
 	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+	updated, _ = m.Update(resolveDebounceMsg{ID: m.pendingResolveID})
 	m = updated.(Model)
 	return m, resolver
 }
 
 func TestModel_BeadListTriggersResolve(t *testing.T) {
 	// Given: a model with lister and resolver
-	// When: the bead list is loaded via Init
+	// When: the bead list is loaded (newResolverModel delivers list + debounce)
 	m, _ := newResolverModel(90, 40)
 
-	// Then: the first bead is being resolved
+	// Then: the first bead is being resolved (debounce tick already delivered)
 	if m.resolvingID != "cap-001" {
 		t.Errorf("resolvingID = %q, want %q", m.resolvingID, "cap-001")
 	}
@@ -322,15 +326,15 @@ func TestModel_CursorMoveTriggersResolve(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
 
-	// Then: a resolve is triggered for cap-002
+	// Then: a debounced resolve is initiated for cap-002
 	if m.detailID != "cap-002" {
 		t.Errorf("detailID = %q, want %q", m.detailID, "cap-002")
 	}
-	if m.resolvingID != "cap-002" {
-		t.Errorf("resolvingID = %q, want %q", m.resolvingID, "cap-002")
+	if m.pendingResolveID != "cap-002" {
+		t.Errorf("pendingResolveID = %q, want %q", m.pendingResolveID, "cap-002")
 	}
 	if cmd == nil {
-		t.Fatal("cursor move should produce a resolve command")
+		t.Fatal("cursor move should produce a debounce command")
 	}
 }
 
@@ -341,12 +345,14 @@ func TestModel_CacheMissTriggersResolve(t *testing.T) {
 	m = updated.(Model)
 	resolver.calls = 0
 
-	// When: cursor moves to cap-002 (cache miss)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	// When: cursor moves to cap-002 (cache miss) and debounce fires
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	_, cmd := m.Update(resolveDebounceMsg{ID: "cap-002"})
 
-	// Then: a resolve command is produced
+	// Then: the debounce fires the resolver
 	if cmd == nil {
-		t.Fatal("cache miss should produce a resolve command")
+		t.Fatal("debounce should produce a resolve command")
 	}
 	msgs := execBatch(t, cmd)
 	var found bool
@@ -371,8 +377,10 @@ func TestModel_CacheHitSkipsResolve(t *testing.T) {
 	m, resolver := newResolverModel(90, 40)
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
-	// Move to cap-002 and deliver its resolve result.
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	// Move to cap-002 and complete the debounce+resolve cycle.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, cmd := m.Update(resolveDebounceMsg{ID: "cap-002"})
 	m = updated.(Model)
 	for _, msg := range execBatch(t, cmd) {
 		updated, _ = m.Update(msg)
@@ -439,13 +447,17 @@ func TestModel_BeadResolvedMsgError(t *testing.T) {
 }
 
 func TestModel_StaleResolveDoesNotClearLoading(t *testing.T) {
-	// Given: a model that resolved cap-001 and is now resolving cap-003
+	// Given: a model that resolved cap-001, then moved to cap-002 and cap-003
+	// rapidly, and the debounce for cap-003 has fired (so it's resolving cap-003)
 	m, _ := newResolverModel(90, 40)
 	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(Model)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	// Fire the debounce for cap-003 (the latest pending)
+	updated, _ = m.Update(resolveDebounceMsg{ID: "cap-003"})
 	m = updated.(Model)
 	if m.resolvingID != "cap-003" {
 		t.Fatalf("resolvingID = %q, want %q", m.resolvingID, "cap-003")
@@ -2314,10 +2326,11 @@ func newClosedResolverModel(t *testing.T, w, h int) (Model, *stubResolver) {
 	)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m = updated.(Model)
-	// Load ready beads first.
+	// Load ready beads first; deliver debounce tick + resolve for cap-001.
 	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
 	m = updated.(Model)
-	// Resolve first ready bead to clear resolving state.
+	updated, _ = m.Update(resolveDebounceMsg{ID: m.pendingResolveID})
+	m = updated.(Model)
 	updated, _ = m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
 	// Toggle to closed view.
@@ -2327,8 +2340,10 @@ func newClosedResolverModel(t *testing.T, w, h int) (Model, *stubResolver) {
 		updated, _ = m.Update(msg)
 		m = updated.(Model)
 	}
-	// Deliver closed beads.
+	// Deliver closed beads and complete debounce cycle for cap-c01.
 	updated, _ = m.Update(ClosedBeadListMsg{Beads: closedBeads})
+	m = updated.(Model)
+	updated, _ = m.Update(resolveDebounceMsg{ID: m.pendingResolveID})
 	m = updated.(Model)
 	return m, resolver
 }
@@ -2403,6 +2418,8 @@ func TestModel_ReadyBeadDoesNotShowArchive(t *testing.T) {
 	m = updated.(Model)
 	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
 	m = updated.(Model)
+	updated, _ = m.Update(resolveDebounceMsg{ID: m.pendingResolveID})
+	m = updated.(Model)
 	updated, _ = m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
 	m = updated.(Model)
 
@@ -2435,5 +2452,186 @@ func TestModel_ResolveErrorNavigable(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("navigating after error should trigger resolve for new bead")
+	}
+}
+
+// --- Debounced resolution tests ---
+
+func TestModel_CacheMissSetsPendingResolveID(t *testing.T) {
+	// Given: a model with cap-001 resolved (cached) and cap-002 not cached
+	m, _ := newResolverModel(90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+
+	// When: cursor moves to cap-002 (cache miss)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+
+	// Then: pendingResolveID is set to cap-002
+	if m.pendingResolveID != "cap-002" {
+		t.Errorf("pendingResolveID = %q, want %q", m.pendingResolveID, "cap-002")
+	}
+	// And: resolver is NOT called yet (debounce delays the call)
+	if m.resolvingID != "" {
+		t.Errorf("resolvingID = %q, want empty (debounce should delay resolve)", m.resolvingID)
+	}
+	// And: a debounce tick command is returned (not a direct resolve)
+	if cmd == nil {
+		t.Fatal("cache miss should return a debounce tick command")
+	}
+}
+
+func TestModel_DebounceMsgFiresResolve(t *testing.T) {
+	// Given: a model with pendingResolveID set to cap-002
+	m, resolver := newResolverModel(90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+	// Move cursor to cap-002 (sets pendingResolveID via debounce)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	resolver.calls = 0
+
+	// When: the debounce tick fires with matching ID
+	updated, cmd := m.Update(resolveDebounceMsg{ID: "cap-002"})
+	m = updated.(Model)
+
+	// Then: resolvingID is set and a resolve command is returned
+	if m.resolvingID != "cap-002" {
+		t.Errorf("resolvingID = %q, want %q", m.resolvingID, "cap-002")
+	}
+	if m.pendingResolveID != "" {
+		t.Errorf("pendingResolveID = %q, want empty after debounce fires", m.pendingResolveID)
+	}
+	if cmd == nil {
+		t.Fatal("debounce tick should produce a resolve command")
+	}
+	// Execute the command and check it calls the resolver
+	msgs := execBatch(t, cmd)
+	var found bool
+	for _, msg := range msgs {
+		if resolved, ok := msg.(BeadResolvedMsg); ok {
+			found = true
+			if resolved.ID != "cap-002" {
+				t.Errorf("resolved ID = %q, want %q", resolved.ID, "cap-002")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected BeadResolvedMsg from debounce resolve")
+	}
+}
+
+func TestModel_StaleDebounceMsgIgnored(t *testing.T) {
+	// Given: a model where cursor moved from cap-002 to cap-003 rapidly
+	m, resolver := newResolverModel(90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+	// Move to cap-002
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	// Immediately move to cap-003 (before debounce fires)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	resolver.calls = 0
+
+	// Precondition: pendingResolveID is cap-003 (the latest cursor target)
+	if m.pendingResolveID != "cap-003" {
+		t.Fatalf("pendingResolveID = %q, want %q", m.pendingResolveID, "cap-003")
+	}
+
+	// When: the stale debounce tick for cap-002 arrives
+	updated, cmd := m.Update(resolveDebounceMsg{ID: "cap-002"})
+	m = updated.(Model)
+
+	// Then: the stale debounce is ignored (no resolve fired)
+	if m.resolvingID != "" {
+		t.Errorf("resolvingID = %q, want empty (stale debounce should be ignored)", m.resolvingID)
+	}
+	if cmd != nil {
+		t.Error("stale debounce should not produce a command")
+	}
+	// And: pendingResolveID still points to cap-003
+	if m.pendingResolveID != "cap-003" {
+		t.Errorf("pendingResolveID = %q, want %q", m.pendingResolveID, "cap-003")
+	}
+}
+
+func TestModel_CacheHitBypassesDebounce(t *testing.T) {
+	// Given: a model with both cap-001 and cap-002 cached
+	m, resolver := newResolverModel(90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	// Deliver debounce tick and resolve for cap-002
+	updated, cmd := m.Update(resolveDebounceMsg{ID: "cap-002"})
+	m = updated.(Model)
+	for _, msg := range execBatch(t, cmd) {
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+	}
+	resolver.calls = 0
+
+	// When: cursor moves back to cap-001 (cache hit)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(Model)
+
+	// Then: cache hit shows instantly with no debounce
+	if m.pendingResolveID != "" {
+		t.Errorf("pendingResolveID = %q, want empty for cache hit", m.pendingResolveID)
+	}
+	if m.resolvingID != "" {
+		t.Errorf("resolvingID = %q, want empty for cache hit", m.resolvingID)
+	}
+	if cmd != nil {
+		t.Error("cache hit should not produce any command")
+	}
+	if resolver.calls != 0 {
+		t.Errorf("resolver.calls = %d, want 0 for cache hit", resolver.calls)
+	}
+}
+
+func TestModel_DebounceCmdIsTickBased(t *testing.T) {
+	// Given: a model with cap-001 resolved
+	m, _ := newResolverModel(90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+
+	// When: cursor moves to cap-002 (cache miss)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// Then: the batch contains a tick-based command (not a direct BeadResolvedMsg)
+	if cmd == nil {
+		t.Fatal("expected a command from cache miss")
+	}
+	msgs := execBatch(t, cmd)
+	for _, msg := range msgs {
+		if _, ok := msg.(BeadResolvedMsg); ok {
+			t.Fatal("cache miss should NOT produce immediate BeadResolvedMsg; expected debounce tick")
+		}
+	}
+}
+
+func TestModel_BeadListInitialLoadDebounces(t *testing.T) {
+	// Given: a model that just received the bead list (first load)
+	resolver := &stubResolver{details: map[string]BeadDetail{
+		"cap-001": sampleDetail(),
+	}}
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister), WithBeadResolver(resolver))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// When: the bead list arrives (triggers maybeResolve for first bead)
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+
+	// Then: pendingResolveID is set (debounce, not immediate resolve)
+	if m.pendingResolveID != "cap-001" {
+		t.Errorf("pendingResolveID = %q, want %q", m.pendingResolveID, "cap-001")
+	}
+	// And: resolver is not called yet
+	if resolver.calls != 0 {
+		t.Errorf("resolver.calls = %d, want 0 (should debounce)", resolver.calls)
 	}
 }

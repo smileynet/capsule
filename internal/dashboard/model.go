@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -21,6 +22,11 @@ const borderChrome = 2
 // archiveSeparator is the visual divider between bead detail and archived data.
 const archiveSeparator = "───────────────────────────────"
 
+// resolveDebounce is the delay before dispatching an async resolve
+// after the cursor moves to a bead not in cache. This prevents visual
+// thrash when the user scrolls quickly through the bead list.
+const resolveDebounce = 150 * time.Millisecond
+
 // Model is the root Bubble Tea model for the dashboard TUI.
 // It manages a two-pane layout with mode-based routing and focus management.
 type Model struct {
@@ -35,11 +41,12 @@ type Model struct {
 	pipeline      pipelineState
 	lister        BeadLister
 
-	resolver    BeadResolver
-	cache       *Cache
-	detailID    string // ID currently displayed in right pane
-	resolvingID string // ID of the bead currently being resolved ("" = idle)
-	resolveErr  error  // last resolve error (nil on success)
+	resolver         BeadResolver
+	cache            *Cache
+	detailID         string // ID currently displayed in right pane
+	resolvingID      string // ID of the bead currently being resolved ("" = idle)
+	resolveErr       error  // last resolve error (nil on success)
+	pendingResolveID string // ID awaiting debounce expiry ("" = no pending debounce)
 
 	runner           PipelineRunner
 	phaseNames       []string
@@ -279,6 +286,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case BeadListMsg:
 		m.browse, _ = m.browse.Update(msg)
 		return m.maybeResolve()
+
+	case resolveDebounceMsg:
+		if msg.ID != m.pendingResolveID {
+			return m, nil
+		}
+		m.pendingResolveID = ""
+		m.resolvingID = msg.ID
+		m.resolveErr = nil
+		return m, tea.Batch(resolveBeadCmd(m.resolver, msg.ID), m.browseSpinner.Tick)
 
 	case BeadResolvedMsg:
 		isCurrent := msg.ID == m.resolvingID
@@ -556,8 +572,9 @@ func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 }
 
 // maybeResolve checks if the selected bead changed and triggers a resolve
-// if needed. On cache hit, the viewport is updated immediately. On cache miss,
-// an async resolveBeadCmd is returned.
+// if needed. On cache hit, the viewport is updated immediately (bypassing
+// debounce). On cache miss, a debounce tick is started; the actual resolve
+// is dispatched only when the tick fires with a matching pendingResolveID.
 func (m Model) maybeResolve() (Model, tea.Cmd) {
 	selected := m.browse.SelectedID()
 	if selected == "" || selected == m.detailID {
@@ -568,15 +585,19 @@ func (m Model) maybeResolve() (Model, tea.Cmd) {
 	if detail, ok := m.cache.Get(selected); ok {
 		m.resolvingID = ""
 		m.resolveErr = nil
+		m.pendingResolveID = ""
 		m.viewport.SetContent(m.renderDetailContent(*detail))
 		m.viewport.GotoTop()
 		return m, nil
 	}
 
 	if m.resolver != nil {
-		m.resolvingID = selected
+		m.pendingResolveID = selected
 		m.resolveErr = nil
-		return m, tea.Batch(resolveBeadCmd(m.resolver, selected), m.browseSpinner.Tick)
+		id := selected
+		return m, tea.Tick(resolveDebounce, func(time.Time) tea.Msg {
+			return resolveDebounceMsg{ID: id}
+		})
 	}
 	return m, nil
 }

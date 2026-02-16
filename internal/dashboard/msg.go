@@ -182,6 +182,12 @@ type PostPipelineDoneMsg struct {
 // for running pipeline phases.
 type elapsedTickMsg struct{}
 
+// resolveDebounceMsg fires after the debounce delay. If pendingResolveID
+// still matches ID, the actual resolve is dispatched.
+type resolveDebounceMsg struct {
+	ID string
+}
+
 // channelClosedMsg signals that the pipeline event channel has been closed,
 // indicating the pipeline goroutine has finished.
 type channelClosedMsg struct{}
