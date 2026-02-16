@@ -159,6 +159,49 @@ func TestBuildContext_FullChain(t *testing.T) {
 	}
 }
 
+func TestClosed_BDAvailable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping bd CLI test in short mode")
+	}
+
+	c := &Client{Dir: "."}
+
+	// bd is on PATH; closed list should succeed (even if empty).
+	summaries, err := c.Closed(5)
+	if err != nil {
+		t.Fatalf("Closed() unexpected error: %v", err)
+	}
+
+	// Each summary should have non-empty ID.
+	for i, s := range summaries {
+		if s.ID == "" {
+			t.Errorf("summaries[%d].ID is empty", i)
+		}
+	}
+
+	// Limit should be respected.
+	if len(summaries) > 5 {
+		t.Errorf("Closed(5) returned %d results, want <= 5", len(summaries))
+	}
+}
+
+func TestClosed_NoBD(t *testing.T) {
+	c := &Client{Dir: t.TempDir()}
+
+	// If bd is actually on PATH, skip — this test is for missing-bd fallback.
+	if err := c.checkBD(); err == nil {
+		t.Skip("bd is on PATH; cannot test missing-bd fallback")
+	}
+
+	_, err := c.Closed(10)
+	if err == nil {
+		t.Fatal("expected ErrCLINotFound, got nil")
+	}
+	if !errors.Is(err, ErrCLINotFound) {
+		t.Errorf("error = %v, want ErrCLINotFound", err)
+	}
+}
+
 func TestCheckBD(t *testing.T) {
 	c := &Client{}
 

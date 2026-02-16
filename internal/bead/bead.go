@@ -128,6 +128,28 @@ func (c *Client) Close(id string) error {
 	return nil
 }
 
+// Closed returns up to limit closed beads, most recently closed first.
+func (c *Client) Closed(limit int) ([]Summary, error) {
+	if err := c.checkBD(); err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command("bd", "list", "--status=closed", "--json",
+		"-n", fmt.Sprintf("%d", limit))
+	cmd.Dir = c.Dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("bead: bd list --status=closed: %w", err)
+	}
+
+	var issues []issue
+	if err := json.NewDecoder(bytes.NewReader(out)).Decode(&issues); err != nil {
+		return nil, fmt.Errorf("bead: parsing closed output: %w", err)
+	}
+
+	return toSummaries(issues), nil
+}
+
 // Ready returns the list of beads with no blockers.
 func (c *Client) Ready() ([]Summary, error) {
 	if err := c.checkBD(); err != nil {
@@ -146,6 +168,11 @@ func (c *Client) Ready() ([]Summary, error) {
 		return nil, fmt.Errorf("bead: parsing ready output: %w", err)
 	}
 
+	return toSummaries(issues), nil
+}
+
+// toSummaries converts a slice of issues to a slice of Summary values.
+func toSummaries(issues []issue) []Summary {
 	summaries := make([]Summary, len(issues))
 	for i, iss := range issues {
 		summaries[i] = Summary{
@@ -155,7 +182,7 @@ func (c *Client) Ready() ([]Summary, error) {
 			Type:     iss.IssueType,
 		}
 	}
-	return summaries, nil
+	return summaries
 }
 
 // show fetches a single issue by ID.
