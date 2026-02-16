@@ -6,15 +6,19 @@ package dashboard
 import (
 	"context"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Mode represents the current dashboard view mode.
 type Mode int
 
 const (
-	ModeBrowse   Mode = iota // Browsing bead list with detail pane.
-	ModePipeline             // Pipeline running with phase list and reports.
-	ModeSummary              // Pipeline complete, showing result summary.
+	ModeBrowse          Mode = iota // Browsing bead list with detail pane.
+	ModePipeline                    // Pipeline running with phase list and reports.
+	ModeSummary                     // Pipeline complete, showing result summary.
+	ModeCampaign                    // Campaign running with task queue and inline phases.
+	ModeCampaignSummary             // Campaign complete, showing aggregate results.
 )
 
 // Focus represents which pane has keyboard focus.
@@ -144,7 +148,8 @@ type PipelineErrorMsg struct {
 
 // DispatchMsg signals the user has selected a bead to run a pipeline on.
 type DispatchMsg struct {
-	BeadID string
+	BeadID   string
+	BeadType string
 }
 
 // RefreshBeadsMsg signals that the bead list should be reloaded.
@@ -161,3 +166,64 @@ type PostPipelineDoneMsg struct {
 // channelClosedMsg signals that the pipeline event channel has been closed,
 // indicating the pipeline goroutine has finished.
 type channelClosedMsg struct{}
+
+// --- Campaign types ---
+
+// CampaignTaskStatus represents the state of a task within a campaign.
+type CampaignTaskStatus string
+
+const (
+	CampaignTaskPending CampaignTaskStatus = "pending"
+	CampaignTaskRunning CampaignTaskStatus = "running"
+	CampaignTaskPassed  CampaignTaskStatus = "passed"
+	CampaignTaskFailed  CampaignTaskStatus = "failed"
+	CampaignTaskSkipped CampaignTaskStatus = "skipped"
+)
+
+// CampaignTaskInfo describes a child task in a campaign.
+type CampaignTaskInfo struct {
+	BeadID   string
+	Title    string
+	Priority int
+}
+
+// --- Campaign tea.Msg types ---
+
+// CampaignStartMsg signals that a campaign has been discovered and is starting.
+type CampaignStartMsg struct {
+	ParentID string
+	Tasks    []CampaignTaskInfo
+}
+
+// CampaignTaskStartMsg signals that a specific task within a campaign is starting.
+type CampaignTaskStartMsg struct {
+	BeadID string
+	Index  int
+	Total  int
+}
+
+// CampaignTaskDoneMsg signals that a specific task within a campaign has completed.
+type CampaignTaskDoneMsg struct {
+	BeadID   string
+	Index    int
+	Success  bool
+	Duration time.Duration
+}
+
+// CampaignDoneMsg signals that the entire campaign has completed.
+type CampaignDoneMsg struct {
+	ParentID   string
+	TotalTasks int
+	Passed     int
+	Failed     int
+}
+
+// CampaignRunner dispatches and runs a campaign (sequential child pipelines).
+type CampaignRunner interface {
+	RunCampaign(
+		ctx context.Context,
+		parentID string,
+		statusFn func(tea.Msg),
+		pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error),
+	) error
+}
