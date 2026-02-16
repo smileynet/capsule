@@ -42,7 +42,7 @@ func (m Model) viewSummaryRight() string {
 
 // returnToBrowseAfterAbort transitions from pipeline mode to browse mode
 // after an abort. Unlike returnToBrowse, it skips post-pipeline lifecycle
-// since the pipeline was cancelled.
+// and sticky cursor restore since the pipeline was cancelled.
 func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
@@ -66,6 +66,7 @@ func (m Model) returnToBrowseFromCampaign() (Model, tea.Cmd) {
 	m.browse.showClosed = false
 	m.browse.readyBeads = nil
 	m.cache.Invalidate()
+	m.lastDispatchedID = m.dispatchedBeadID
 	m.campaignDone = nil
 	m.dispatchedBeadID = ""
 
@@ -114,6 +115,7 @@ func (m Model) returnToBrowse() (Model, tea.Cmd) {
 	m.browse.showClosed = false
 	m.browse.readyBeads = nil
 	m.cache.Invalidate()
+	m.lastDispatchedID = m.dispatchedBeadID
 
 	var cmds []tea.Cmd
 

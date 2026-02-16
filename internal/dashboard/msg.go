@@ -109,8 +109,8 @@ type PipelineRunner interface {
 
 // PostPipelineFunc runs post-pipeline lifecycle (merge, cleanup, close bead).
 // Called in a background goroutine after a pipeline completes and the user
-// returns to browse mode. Errors are surfaced via PostPipelineDoneMsg but
-// not displayed in the UI.
+// returns to browse mode. Results are surfaced via PostPipelineDoneMsg and
+// shown as a transient status line in the UI.
 type PostPipelineFunc func(beadID string) error
 
 // --- tea.Msg types ---
@@ -172,7 +172,7 @@ type RefreshBeadsMsg struct{}
 type ToggleHistoryMsg struct{}
 
 // PostPipelineDoneMsg signals that post-pipeline lifecycle completed.
-// Best-effort: the UI does not display errors from post-pipeline.
+// Displayed as a transient status line that auto-clears after statusLineDuration.
 type PostPipelineDoneMsg struct {
 	BeadID string
 	Err    error
@@ -187,6 +187,9 @@ type elapsedTickMsg struct{}
 type resolveDebounceMsg struct {
 	ID string
 }
+
+// statusClearMsg signals that the transient status line should be cleared.
+type statusClearMsg struct{}
 
 // channelClosedMsg signals that the pipeline event channel has been closed,
 // indicating the pipeline goroutine has finished.

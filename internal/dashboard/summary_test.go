@@ -405,7 +405,7 @@ func TestSummary_DispatchStoresBeadID(t *testing.T) {
 	}
 }
 
-func TestSummary_PostPipelineDoneMsgHandledSilently(t *testing.T) {
+func TestSummary_PostPipelineDoneMsgSetsStatusAndTimer(t *testing.T) {
 	// Given: a model in browse mode
 	m := newSizedModel(90, 40)
 
@@ -413,11 +413,225 @@ func TestSummary_PostPipelineDoneMsgHandledSilently(t *testing.T) {
 	updated, cmd := m.Update(PostPipelineDoneMsg{BeadID: "cap-001", Err: fmt.Errorf("merge failed")})
 	m = updated.(Model)
 
-	// Then: the model is unchanged (message handled silently)
+	// Then: the mode stays in browse
 	if m.mode != ModeBrowse {
 		t.Errorf("mode = %d, want ModeBrowse", m.mode)
 	}
+	// And: statusMsg is set
+	if m.statusMsg == "" {
+		t.Fatal("statusMsg should be set")
+	}
+	// And: a timer command is produced to clear the status
+	if cmd == nil {
+		t.Fatal("PostPipelineDoneMsg should produce a status clear timer")
+	}
+}
+
+// --- Sticky cursor tests ---
+
+func TestSummary_ReturnToBrowse_SetsLastDispatchedID(t *testing.T) {
+	// Given: a model in summary mode with dispatchedBeadID="cap-002"
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeSummary
+	m.dispatchedBeadID = "cap-002"
+	m.pipeline = newPipelineState([]string{"plan"})
+	m.pipeline, _ = m.pipeline.Update(PhaseUpdateMsg{Phase: "plan", Status: PhasePassed, Duration: time.Second})
+	m.pipelineOutput = &PipelineOutput{Success: true}
+
+	// When: any key is pressed to return to browse
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: lastDispatchedID is set to the dispatched bead
+	if m.lastDispatchedID != "cap-002" {
+		t.Errorf("lastDispatchedID = %q, want %q", m.lastDispatchedID, "cap-002")
+	}
+}
+
+func TestSummary_StickyCursor_BeadListRestoresCursor(t *testing.T) {
+	// Given: a model that returned to browse with lastDispatchedID="cap-002"
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.lastDispatchedID = "cap-002"
+
+	// When: a BeadListMsg arrives with cap-002 in the list
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+
+	// Then: the cursor is positioned on cap-002 (index 1)
+	if m.browse.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (cap-002)", m.browse.cursor)
+	}
+	// And: lastDispatchedID is cleared
+	if m.lastDispatchedID != "" {
+		t.Errorf("lastDispatchedID = %q, want empty after restore", m.lastDispatchedID)
+	}
+}
+
+func TestSummary_StickyCursor_FallsBackToZeroIfNotFound(t *testing.T) {
+	// Given: a model that returned to browse with lastDispatchedID="cap-999"
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.lastDispatchedID = "cap-999"
+
+	// When: a BeadListMsg arrives without cap-999
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+
+	// Then: the cursor stays at 0 (default)
+	if m.browse.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (fallback)", m.browse.cursor)
+	}
+	// And: lastDispatchedID is cleared
+	if m.lastDispatchedID != "" {
+		t.Errorf("lastDispatchedID = %q, want empty after fallback", m.lastDispatchedID)
+	}
+}
+
+func TestSummary_StickyCursor_AbortSkipsLastDispatchedID(t *testing.T) {
+	// Given: a model that is aborting a pipeline
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModePipeline
+	m.aborting = true
+	m.cancelPipeline = func() {}
+	m.dispatchedBeadID = "cap-002"
+
+	// When: channelClosedMsg is received (abort completes)
+	updated, _ = m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: lastDispatchedID is not set (abort should not restore cursor)
+	if m.lastDispatchedID != "" {
+		t.Errorf("lastDispatchedID = %q, want empty after abort", m.lastDispatchedID)
+	}
+}
+
+func TestSummary_StickyCursor_CampaignReturnSetsLastDispatchedID(t *testing.T) {
+	// Given: a model in campaign summary mode
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+	m.dispatchedBeadID = "cap-002"
+
+	// When: any key is pressed to return to browse
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: lastDispatchedID is set for campaign return too
+	if m.lastDispatchedID != "cap-002" {
+		t.Errorf("lastDispatchedID = %q, want %q", m.lastDispatchedID, "cap-002")
+	}
+}
+
+// --- Status line tests ---
+
+func TestSummary_PostPipelineDoneMsg_SetsStatusLine(t *testing.T) {
+	// Given: a model in browse mode after returning from a pipeline
+	m := newSizedModel(90, 40)
+
+	// When: a PostPipelineDoneMsg arrives with no error
+	updated, cmd := m.Update(PostPipelineDoneMsg{BeadID: "cap-001"})
+	m = updated.(Model)
+
+	// Then: statusMsg is set with a success message
+	if m.statusMsg == "" {
+		t.Fatal("statusMsg should be set after PostPipelineDoneMsg")
+	}
+	if !strings.Contains(m.statusMsg, "cap-001") {
+		t.Errorf("statusMsg = %q, should contain bead ID", m.statusMsg)
+	}
+	// And: a clear command is returned (5s timer)
+	if cmd == nil {
+		t.Fatal("PostPipelineDoneMsg should produce a status clear timer")
+	}
+}
+
+func TestSummary_PostPipelineDoneMsg_SetsStatusLineOnError(t *testing.T) {
+	// Given: a model in browse mode
+	m := newSizedModel(90, 40)
+
+	// When: a PostPipelineDoneMsg arrives with an error
+	updated, cmd := m.Update(PostPipelineDoneMsg{BeadID: "cap-001", Err: fmt.Errorf("merge failed")})
+	m = updated.(Model)
+
+	// Then: statusMsg is set with a failure message
+	if m.statusMsg == "" {
+		t.Fatal("statusMsg should be set after PostPipelineDoneMsg with error")
+	}
+	if !strings.Contains(m.statusMsg, "failed") {
+		t.Errorf("statusMsg = %q, should contain 'failed'", m.statusMsg)
+	}
+	// And: a clear command is returned
+	if cmd == nil {
+		t.Fatal("PostPipelineDoneMsg with error should produce a status clear timer")
+	}
+}
+
+func TestSummary_StatusClearMsg_ClearsStatus(t *testing.T) {
+	// Given: a model with an active status message
+	m := newSizedModel(90, 40)
+	m.statusMsg = "cap-001: post-pipeline complete"
+
+	// When: a statusClearMsg is received
+	updated, cmd := m.Update(statusClearMsg{})
+	m = updated.(Model)
+
+	// Then: the status message is cleared
+	if m.statusMsg != "" {
+		t.Errorf("statusMsg = %q, want empty after statusClearMsg", m.statusMsg)
+	}
 	if cmd != nil {
-		t.Error("PostPipelineDoneMsg should produce no command")
+		t.Error("statusClearMsg should not produce a command")
+	}
+}
+
+func TestSummary_StatusLine_RenderedInBrowseView(t *testing.T) {
+	// Given: a model in browse mode with a status message
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+	m.statusMsg = "cap-001: post-pipeline complete"
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: the status message appears in the view
+	if !strings.Contains(plain, "post-pipeline complete") {
+		t.Errorf("browse view should show status message, got:\n%s", plain)
+	}
+}
+
+func TestSummary_StatusLine_NotRenderedWhenEmpty(t *testing.T) {
+	// Given: a model in browse mode with no status message
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: no status line appears between panes and help
+	if strings.Contains(plain, "post-pipeline") {
+		t.Errorf("browse view should not show status when empty, got:\n%s", plain)
 	}
 }
