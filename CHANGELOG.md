@@ -52,3 +52,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Error surfacing to dashboard UI with campaign error messages
   - SiblingContext propagation through the campaign bridge
   - Empty/unknown bead type defaults to single pipeline (safe fallback)
+- Campaign completed task inspection (cap-fj8.3)
+  - Navigate to completed tasks within a campaign using cursor/vim keys
+  - Expand completed tasks to view their phase reports (progressive disclosure)
+  - Right pane shows phase-level summaries, files changed, and feedback for inspected tasks
+  - Phase results carried from pipeline completion messages and stored per-task for later review
