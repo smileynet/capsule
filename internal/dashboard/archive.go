@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// ErrInvalidBeadID indicates a bead ID is empty or contains path traversal components.
+// ErrInvalidBeadID indicates a bead ID failed path-safety validation.
 var ErrInvalidBeadID = errors.New("archive: invalid bead id")
 
 // ArchiveReader reads archived pipeline results for a given bead.
@@ -41,7 +41,7 @@ func (r *FileArchiveReader) ReadSummary(beadID string) (string, error) {
 }
 
 // validateBeadID checks that beadID is safe for use as a path component.
-// Rejects empty, path traversal (/ \ . ..), and flag-like IDs (starting with -).
+// Rejects empty, path traversal (/ \ . ..), null bytes, and flag-like IDs (starting with -).
 func validateBeadID(id string) error {
 	if id == "" {
 		return fmt.Errorf("%w: cannot be empty", ErrInvalidBeadID)
@@ -49,7 +49,7 @@ func validateBeadID(id string) error {
 	if strings.HasPrefix(id, "-") {
 		return fmt.Errorf("%w: %q (must not start with -)", ErrInvalidBeadID, id)
 	}
-	if strings.ContainsAny(id, `/\`) || id == "." || id == ".." {
+	if strings.ContainsAny(id, "/\\\x00") || id == "." || id == ".." {
 		return fmt.Errorf("%w: %q", ErrInvalidBeadID, id)
 	}
 	return nil

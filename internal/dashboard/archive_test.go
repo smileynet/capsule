@@ -113,6 +113,7 @@ func TestFileArchiveReader_RejectsInvalidBeadID(t *testing.T) {
 		{"dot", "."},
 		{"dot-dot", ".."},
 		{"flag-like", "-malicious"},
+		{"null byte", "cap\x00evil"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
