@@ -1355,6 +1355,42 @@ func TestModel_DoublePressCtrlCForceQuits(t *testing.T) {
 
 // --- Global refresh key tests ---
 
+func TestModel_RefreshInClosedViewResetsToReady(t *testing.T) {
+	// Given: a model in browse mode showing closed beads (showClosed=true)
+	lister := &stubLister{
+		beads:       sampleBeads(),
+		closedBeads: []BeadSummary{{ID: "cap-c01", Title: "Done", Priority: 2, Type: "task"}},
+	}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+	// Toggle to closed view
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = updated.(Model)
+	// Execute the ToggleHistoryMsg
+	for _, msg := range execBatch(t, cmd) {
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+	}
+	// Deliver the closed beads
+	updated, _ = m.Update(ClosedBeadListMsg{Beads: lister.closedBeads})
+	m = updated.(Model)
+	if !m.browse.showClosed {
+		t.Fatal("precondition: showClosed should be true")
+	}
+
+	// When: r is pressed to refresh
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(Model)
+
+	// Then: showClosed is reset to false (refresh returns to ready view)
+	if m.browse.showClosed {
+		t.Error("refresh should reset showClosed to false")
+	}
+}
+
 func TestModel_RefreshWorksFromRightPane(t *testing.T) {
 	// Given: a model in browse mode with right pane focused and a lister
 	lister := &stubLister{beads: sampleBeads()}
@@ -2098,6 +2134,232 @@ func TestModel_CampaignChannelClosedWithoutDoneMsgGoesToCampaignSummary(t *testi
 	}
 	if m.campaignDone.ParentID != "cap-feat" {
 		t.Errorf("campaignDone.ParentID = %q, want %q", m.campaignDone.ParentID, "cap-feat")
+	}
+}
+
+// --- Archive detail tests ---
+
+// stubArchiveReader implements ArchiveReader for tests.
+type stubArchiveReader struct {
+	summaries map[string]string
+	worklogs  map[string]string
+}
+
+func (s *stubArchiveReader) ReadSummary(beadID string) (string, error) {
+	if v, ok := s.summaries[beadID]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("not found: %s", beadID)
+}
+
+func (s *stubArchiveReader) ReadWorklog(beadID string) (string, error) {
+	if v, ok := s.worklogs[beadID]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("not found: %s", beadID)
+}
+
+func TestWithArchiveReader(t *testing.T) {
+	// Given: a stub archive reader
+	ar := &stubArchiveReader{}
+
+	// When: a model is created with WithArchiveReader
+	m := NewModel(WithArchiveReader(ar))
+
+	// Then: the archive reader is stored
+	if m.archive == nil {
+		t.Error("archive reader should be set")
+	}
+}
+
+func TestFormatClosedBeadDetail_WithSummaryAndWorklog(t *testing.T) {
+	// Given: a bead detail with both summary and worklog
+	detail := sampleDetail()
+	summary := "## Summary\n\nAll phases passed."
+	worklog := "# Worklog\n\nPhase 1: passed\nPhase 2: passed"
+
+	// When: formatClosedBeadDetail is called
+	text := formatClosedBeadDetail(detail, summary, worklog)
+
+	// Then: the standard detail is present
+	if !strings.Contains(text, "First task") {
+		t.Errorf("should contain title, got:\n%s", text)
+	}
+
+	// And: the archive separator is present
+	if !strings.Contains(text, archiveSeparator) {
+		t.Errorf("should contain archive separator, got:\n%s", text)
+	}
+
+	// And: summary section is present
+	if !strings.Contains(text, "All phases passed.") {
+		t.Errorf("should contain summary, got:\n%s", text)
+	}
+
+	// And: worklog section is present
+	if !strings.Contains(text, "Phase 1: passed") {
+		t.Errorf("should contain worklog, got:\n%s", text)
+	}
+}
+
+func TestFormatClosedBeadDetail_SummaryOnly(t *testing.T) {
+	// Given: a bead detail with summary but no worklog
+	detail := BeadDetail{ID: "cap-001", Title: "Test", Priority: 2, Type: "task"}
+	summary := "All passed."
+
+	// When: formatClosedBeadDetail is called with empty worklog
+	text := formatClosedBeadDetail(detail, summary, "")
+
+	// Then: summary is present but no worklog header
+	if !strings.Contains(text, "All passed.") {
+		t.Errorf("should contain summary, got:\n%s", text)
+	}
+	if strings.Contains(text, "Worklog") {
+		t.Errorf("should not contain worklog header when empty, got:\n%s", text)
+	}
+}
+
+func TestFormatClosedBeadDetail_NoArchive(t *testing.T) {
+	// Given: a bead detail with no archive data
+	detail := sampleDetail()
+
+	// When: formatClosedBeadDetail is called with empty strings
+	text := formatClosedBeadDetail(detail, "", "")
+
+	// Then: it should be equivalent to formatBeadDetail (no separator, no archive sections)
+	if strings.Contains(text, archiveSeparator) {
+		t.Errorf("should not contain archive separator with no archive data, got:\n%s", text)
+	}
+}
+
+func newClosedResolverModel(t *testing.T, w, h int) (Model, *stubResolver) {
+	t.Helper()
+	ar := &stubArchiveReader{
+		summaries: map[string]string{
+			"cap-c01": "## Summary\n\nTask completed.",
+		},
+		worklogs: map[string]string{
+			"cap-c01": "# Worklog\n\nAll phases passed.",
+		},
+	}
+	closedBeads := []BeadSummary{
+		{ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task"},
+		{ID: "cap-c02", Title: "Done feature", Priority: 1, Type: "feature"},
+	}
+	resolver := &stubResolver{details: map[string]BeadDetail{
+		"cap-c01": {ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task", Description: "Was completed."},
+		"cap-c02": {ID: "cap-c02", Title: "Done feature", Priority: 1, Type: "feature", Description: "Also done."},
+	}}
+	lister := &stubLister{
+		beads:       sampleBeads(),
+		closedBeads: closedBeads,
+	}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithBeadResolver(resolver),
+		WithArchiveReader(ar),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m = updated.(Model)
+	// Load ready beads first.
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+	// Resolve first ready bead to clear resolving state.
+	updated, _ = m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+	// Toggle to closed view.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m = updated.(Model)
+	for _, msg := range execBatch(t, cmd) {
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+	}
+	// Deliver closed beads.
+	updated, _ = m.Update(ClosedBeadListMsg{Beads: closedBeads})
+	m = updated.(Model)
+	return m, resolver
+}
+
+func TestModel_ClosedBeadDetailShowsArchive(t *testing.T) {
+	// Given: a model in closed view with archive reader, resolved bead cap-c01
+	m, _ := newClosedResolverModel(t, 90, 40)
+	// Deliver the resolve result for cap-c01.
+	updated, _ := m.Update(BeadResolvedMsg{
+		ID:     "cap-c01",
+		Detail: BeadDetail{ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task", Description: "Was completed."},
+	})
+	m = updated.(Model)
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: the standard detail is shown
+	if !strings.Contains(plain, "Done task") {
+		t.Errorf("should contain bead title, got:\n%s", plain)
+	}
+	// And: archive summary is shown
+	if !strings.Contains(plain, "Task completed.") {
+		t.Errorf("should contain archive summary, got:\n%s", plain)
+	}
+	// And: archive worklog is shown
+	if !strings.Contains(plain, "All phases passed.") {
+		t.Errorf("should contain archive worklog, got:\n%s", plain)
+	}
+}
+
+func TestModel_ClosedBeadCacheHitShowsArchive(t *testing.T) {
+	// Given: a model in closed view with cap-c01 already resolved (cached)
+	m, _ := newClosedResolverModel(t, 90, 40)
+	updated, _ := m.Update(BeadResolvedMsg{
+		ID:     "cap-c01",
+		Detail: BeadDetail{ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task", Description: "Was completed."},
+	})
+	m = updated.(Model)
+	// Move to cap-c02 then back to cap-c01 (cache hit).
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(Model)
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: archive data is shown even on cache hit
+	if !strings.Contains(plain, "Task completed.") {
+		t.Errorf("cache hit should show archive summary, got:\n%s", plain)
+	}
+}
+
+func TestModel_ReadyBeadDoesNotShowArchive(t *testing.T) {
+	// Given: a model with archive reader but showing ready beads
+	ar := &stubArchiveReader{
+		summaries: map[string]string{"cap-001": "Should not appear"},
+	}
+	resolver := &stubResolver{details: map[string]BeadDetail{
+		"cap-001": sampleDetail(),
+	}}
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithBeadResolver(resolver),
+		WithArchiveReader(ar),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+	updated, _ = m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
+	m = updated.(Model)
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: archive data is not shown for ready beads
+	if strings.Contains(plain, "Should not appear") {
+		t.Errorf("ready beads should not show archive data, got:\n%s", plain)
 	}
 }
 

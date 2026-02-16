@@ -19,6 +19,10 @@ var priorityColors = [5]lipgloss.AdaptiveColor{
 	{Light: "240", Dark: "245"}, // P4: gray
 }
 
+// mutedText is a lipgloss style that dims text for closed/historical items.
+var mutedText = lipgloss.NewStyle().
+	Foreground(lipgloss.AdaptiveColor{Light: "245", Dark: "242"})
+
 // PriorityBadge returns a styled priority label like "P0", "P2", etc.
 func PriorityBadge(priority int) string {
 	label := fmt.Sprintf("P%d", priority)

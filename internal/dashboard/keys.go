@@ -9,19 +9,20 @@ type browseKeys struct {
 	Enter   key.Binding
 	Tab     key.Binding
 	Refresh key.Binding
+	History key.Binding
 	Quit    key.Binding
 }
 
 // ShortHelp returns the browse mode bindings for the help bar.
 func (k browseKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Enter, k.Tab, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Enter, k.Tab, k.Refresh, k.History, k.Quit}
 }
 
 // FullHelp returns the browse mode bindings grouped for expanded help.
 func (k browseKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter},
-		{k.Tab, k.Refresh, k.Quit},
+		{k.Tab, k.Refresh, k.History, k.Quit},
 	}
 }
 
@@ -83,6 +84,10 @@ func BrowseKeyMap() browseKeys {
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),
 			key.WithHelp("r", "refresh"),
+		),
+		History: key.NewBinding(
+			key.WithKeys("h"),
+			key.WithHelp("h", "history"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),

@@ -10,12 +10,25 @@ import (
 
 // stubLister implements BeadLister for tests.
 type stubLister struct {
-	beads []BeadSummary
-	err   error
+	beads       []BeadSummary
+	err         error
+	closedBeads []BeadSummary
+	closedErr   error
 }
 
 func (s *stubLister) Ready() ([]BeadSummary, error) {
 	return s.beads, s.err
+}
+
+func (s *stubLister) Closed(limit int) ([]BeadSummary, error) {
+	if s.closedErr != nil {
+		return nil, s.closedErr
+	}
+	result := s.closedBeads
+	if limit > 0 && limit < len(result) {
+		result = result[:limit]
+	}
+	return result, nil
 }
 
 func sampleBeads() []BeadSummary {
@@ -407,6 +420,153 @@ func TestBrowse_SelectedID(t *testing.T) {
 				t.Errorf("SelectedID() = %q, want %q", got, tt.wantID)
 			}
 		})
+	}
+}
+
+func sampleClosedBeads() []BeadSummary {
+	return []BeadSummary{
+		{ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task"},
+		{ID: "cap-c02", Title: "Done feature", Priority: 1, Type: "feature"},
+	}
+}
+
+func TestBrowse_HToggleSwitchesToClosed(t *testing.T) {
+	// Given: a browse state showing ready beads
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+
+	// When: h is pressed to toggle history
+	bs, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: showClosed is true and a ToggleHistoryMsg command is returned
+	if !bs.showClosed {
+		t.Error("after h, showClosed should be true")
+	}
+	if cmd == nil {
+		t.Fatal("h should produce a command to fetch closed beads")
+	}
+	msg := cmd()
+	if _, ok := msg.(ToggleHistoryMsg); !ok {
+		t.Fatalf("h command produced %T, want ToggleHistoryMsg", msg)
+	}
+}
+
+func TestBrowse_HToggleSwitchesBackToReady(t *testing.T) {
+	// Given: a browse state showing closed beads
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	bs, _ = bs.Update(ClosedBeadListMsg{Beads: sampleClosedBeads()})
+
+	// When: h is pressed again to toggle back
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: showClosed is false and ready beads are displayed
+	if bs.showClosed {
+		t.Error("after second h, showClosed should be false")
+	}
+	if len(bs.beads) != len(sampleBeads()) {
+		t.Errorf("after toggle back, beads count = %d, want %d", len(bs.beads), len(sampleBeads()))
+	}
+}
+
+func TestBrowse_ClosedBeadsLoadedView(t *testing.T) {
+	// Given: a browse state that received closed beads
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	bs, _ = bs.Update(ClosedBeadListMsg{Beads: sampleClosedBeads()})
+
+	// When: the view is rendered
+	view := bs.View(80, 20, "")
+	plain := stripANSI(view)
+
+	// Then: closed bead IDs appear
+	for _, b := range sampleClosedBeads() {
+		if !strings.Contains(plain, b.ID) {
+			t.Errorf("view should contain closed bead ID %q, got:\n%s", b.ID, plain)
+		}
+	}
+}
+
+func TestBrowse_ClosedBeadsCursorResetsToZero(t *testing.T) {
+	// Given: a browse state with cursor at position 1 in ready list
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: h is pressed and closed beads are loaded
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	bs, _ = bs.Update(ClosedBeadListMsg{Beads: sampleClosedBeads()})
+
+	// Then: cursor is reset to 0
+	if bs.cursor != 0 {
+		t.Errorf("cursor after switching to closed = %d, want 0", bs.cursor)
+	}
+}
+
+func TestBrowse_ClosedBeadsError(t *testing.T) {
+	// Given: a browse state that received a closed beads error
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	bs, _ = bs.Update(ClosedBeadListMsg{Err: fmt.Errorf("db error")})
+
+	// When: the view is rendered
+	view := bs.View(80, 20, "")
+	plain := stripANSI(view)
+
+	// Then: error is shown
+	if !strings.Contains(plain, "db error") {
+		t.Errorf("view should show error, got:\n%s", plain)
+	}
+}
+
+func TestBrowse_ClosedBeadsNavigation(t *testing.T) {
+	// Given: a browse state showing closed beads
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	bs, _ = bs.Update(ClosedBeadListMsg{Beads: sampleClosedBeads()})
+
+	// When: down key is pressed
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// Then: cursor moves through closed beads
+	if bs.cursor != 1 {
+		t.Errorf("after down in closed mode: cursor = %d, want 1", bs.cursor)
+	}
+}
+
+func TestBrowse_HKeyIgnoredDuringLoading(t *testing.T) {
+	// Given: a browse state still loading
+	bs := newBrowseState()
+
+	// When: h is pressed during loading
+	bs, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: no command is produced and showClosed stays false
+	if cmd != nil {
+		t.Error("h during loading should not produce a command")
+	}
+	if bs.showClosed {
+		t.Error("showClosed should stay false during loading")
+	}
+}
+
+func TestBrowse_EnterIgnoredInClosedView(t *testing.T) {
+	// Given: a browse state showing closed beads
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	bs, _ = bs.Update(ClosedBeadListMsg{Beads: sampleClosedBeads()})
+
+	// When: enter is pressed on a closed bead
+	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Then: no command is produced (closed beads are not dispatchable)
+	if cmd != nil {
+		t.Error("enter on closed beads should not produce a command")
 	}
 }
 

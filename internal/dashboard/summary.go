@@ -48,6 +48,8 @@ func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 	m.focus = PaneLeft
 	m.aborting = false
 	m.dispatchedBeadID = ""
+	m.browse.showClosed = false
+	m.browse.readyBeads = nil
 	m.cache.Invalidate()
 
 	if m.lister != nil {
@@ -61,6 +63,8 @@ func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 func (m Model) returnToBrowseFromCampaign() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
+	m.browse.showClosed = false
+	m.browse.readyBeads = nil
 	m.cache.Invalidate()
 	m.campaignDone = nil
 	m.dispatchedBeadID = ""
@@ -107,6 +111,8 @@ func (m Model) viewCampaignSummaryRight() string {
 func (m Model) returnToBrowse() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
+	m.browse.showClosed = false
+	m.browse.readyBeads = nil
 	m.cache.Invalidate()
 
 	var cmds []tea.Cmd

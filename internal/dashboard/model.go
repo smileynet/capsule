@@ -18,6 +18,9 @@ const helpBarHeight = 1
 // borderChrome is the number of lines consumed by top + bottom borders.
 const borderChrome = 2
 
+// archiveSeparator is the visual divider between bead detail and archived data.
+const archiveSeparator = "───────────────────────────────"
+
 // Model is the root Bubble Tea model for the dashboard TUI.
 // It manages a two-pane layout with mode-based routing and focus management.
 type Model struct {
@@ -52,6 +55,8 @@ type Model struct {
 	campaignRunner CampaignRunner
 	campaignDone   *CampaignDoneMsg // set on CampaignDoneMsg or synthesized on channel close
 	campaignErr    error            // set on CampaignErrorMsg from runner failure
+
+	archive ArchiveReader
 }
 
 // newBrowseSpinner returns a spinner for browse mode loading states.
@@ -111,6 +116,12 @@ func WithPostPipelineFunc(fn PostPipelineFunc) ModelOption {
 // WithCampaignRunner sets the CampaignRunner used to dispatch campaigns.
 func WithCampaignRunner(r CampaignRunner) ModelOption {
 	return func(m *Model) { m.campaignRunner = r }
+}
+
+// WithArchiveReader sets the ArchiveReader used to fetch archived pipeline
+// results for closed beads.
+func WithArchiveReader(ar ArchiveReader) ModelOption {
+	return func(m *Model) { m.archive = ar }
 }
 
 // listenForEvents returns a tea.Cmd that reads one message from ch.
@@ -209,6 +220,41 @@ func formatBeadDetail(d BeadDetail) string {
 	return b.String()
 }
 
+// renderDetailContent formats a bead detail for the viewport. In closed mode
+// with an archive reader, it appends archived summary and worklog data.
+func (m Model) renderDetailContent(d BeadDetail) string {
+	if !m.browse.showClosed || m.archive == nil {
+		return formatBeadDetail(d)
+	}
+	summary, _ := m.archive.ReadSummary(d.ID)
+	worklog, _ := m.archive.ReadWorklog(d.ID)
+	return formatClosedBeadDetail(d, summary, worklog)
+}
+
+// formatClosedBeadDetail renders a closed bead's detail with archived summary
+// and worklog below a separator. If both summary and worklog are empty, renders
+// as a normal bead detail without a separator.
+func formatClosedBeadDetail(d BeadDetail, summary, worklog string) string {
+	base := formatBeadDetail(d)
+	if summary == "" && worklog == "" {
+		return base
+	}
+
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n\n" + archiveSeparator + "\n")
+
+	if summary != "" {
+		fmt.Fprintf(&b, "\n%s", summary)
+	}
+
+	if worklog != "" {
+		fmt.Fprintf(&b, "\n\nWorklog:\n%s", worklog)
+	}
+
+	return b.String()
+}
+
 // Init returns the initial command. If a BeadLister was provided,
 // it fires an async fetch for the bead list with spinner animation.
 func (m Model) Init() tea.Cmd {
@@ -248,7 +294,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cache.Set(msg.ID, &msg.Detail)
 		if isCurrent {
 			m.resolveErr = nil
-			m.viewport.SetContent(formatBeadDetail(msg.Detail))
+			m.viewport.SetContent(m.renderDetailContent(msg.Detail))
 			m.viewport.GotoTop()
 		}
 		return m, nil
@@ -259,6 +305,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
 		}
 		return m, nil
+
+	case ToggleHistoryMsg:
+		if m.lister != nil {
+			return m, tea.Batch(initClosedBrowse(m.lister), m.browseSpinner.Tick)
+		}
+		return m, nil
+
+	case ClosedBeadListMsg:
+		m.browse, _ = m.browse.Update(msg)
+		return m.maybeResolve()
 
 	case DispatchMsg:
 		return m.handleDispatch(msg)
@@ -387,7 +443,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeBrowse {
 			m.browse.loading = true
 			m.browse.err = nil
+			m.browse.showClosed = false
+			m.browse.readyBeads = nil
 			return m, func() tea.Msg { return RefreshBeadsMsg{} }
+		}
+	case "h":
+		if m.mode == ModeBrowse && !m.browse.loading {
+			var cmd tea.Cmd
+			m.browse, cmd = m.browse.Update(msg)
+			return m, cmd
 		}
 	}
 
@@ -484,7 +548,7 @@ func (m Model) maybeResolve() (Model, tea.Cmd) {
 	if detail, ok := m.cache.Get(selected); ok {
 		m.resolvingID = ""
 		m.resolveErr = nil
-		m.viewport.SetContent(formatBeadDetail(*detail))
+		m.viewport.SetContent(m.renderDetailContent(*detail))
 		m.viewport.GotoTop()
 		return m, nil
 	}
@@ -531,7 +595,7 @@ func (m Model) View() string {
 	leftPane := leftStyle.Render(m.viewLeft())
 	rightPane := rightStyle.Render(m.viewRight())
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-	helpView := m.help.View(HelpBindings(m.mode))
+	helpView := m.help.View(HelpBindings(m.mode, m.browse.showClosed))
 
 	return lipgloss.JoinVertical(lipgloss.Left, panes, helpView)
 }

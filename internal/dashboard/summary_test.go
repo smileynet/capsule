@@ -154,6 +154,74 @@ func TestSummary_AnyKeyTriggersRefresh(t *testing.T) {
 	}
 }
 
+func TestSummary_ReturnToBrowseResetsShowClosed(t *testing.T) {
+	// Given: a model in summary mode where showClosed was true before pipeline
+	m := newPassedSummaryModel(90, 40)
+	m.browse.showClosed = true
+	m.browse.readyBeads = sampleBeads()
+
+	// When: any key is pressed to return to browse
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: showClosed is reset to false
+	if m.browse.showClosed {
+		t.Error("returnToBrowse should reset showClosed to false")
+	}
+	// And: readyBeads is cleared
+	if m.browse.readyBeads != nil {
+		t.Error("returnToBrowse should clear readyBeads")
+	}
+}
+
+func TestSummary_ReturnToBrowseAfterAbortResetsShowClosed(t *testing.T) {
+	// Given: a model in pipeline mode that is aborting with showClosed=true
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModePipeline
+	m.aborting = true
+	m.cancelPipeline = func() {}
+	m.browse.showClosed = true
+	m.browse.readyBeads = sampleBeads()
+
+	// When: channelClosedMsg is received (abort completes)
+	updated, _ = m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: showClosed is reset to false
+	if m.browse.showClosed {
+		t.Error("returnToBrowseAfterAbort should reset showClosed to false")
+	}
+	if m.browse.readyBeads != nil {
+		t.Error("returnToBrowseAfterAbort should clear readyBeads")
+	}
+}
+
+func TestSummary_ReturnToBrowseFromCampaignResetsShowClosed(t *testing.T) {
+	// Given: a model in campaign summary mode with showClosed=true
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+	m.browse.showClosed = true
+	m.browse.readyBeads = sampleBeads()
+
+	// When: any key is pressed to return to browse
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: showClosed is reset to false
+	if m.browse.showClosed {
+		t.Error("returnToBrowseFromCampaign should reset showClosed to false")
+	}
+	if m.browse.readyBeads != nil {
+		t.Error("returnToBrowseFromCampaign should clear readyBeads")
+	}
+}
+
 func TestSummary_QDoesNotQuit(t *testing.T) {
 	// Given: a model in summary mode
 	m := newPassedSummaryModel(90, 40)

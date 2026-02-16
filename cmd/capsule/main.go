@@ -481,6 +481,8 @@ func (d *DashboardCmd) Run() error {
 		},
 	}
 
+	archiveReader := dashboard.NewFileArchiveReader(".capsule/logs")
+
 	m := dashboard.NewModel(
 		dashboard.WithBeadLister(lister),
 		dashboard.WithBeadResolver(resolver),
@@ -488,6 +490,7 @@ func (d *DashboardCmd) Run() error {
 		dashboard.WithPipelineRunner(pipelineAdapter),
 		dashboard.WithPhaseNames(phaseNames(phases)),
 		dashboard.WithCampaignRunner(campaignAdapter),
+		dashboard.WithArchiveReader(archiveReader),
 	)
 
 	prog := tea.NewProgram(m, tea.WithAltScreen())
@@ -585,6 +588,23 @@ type beadListerAdapter struct {
 
 func (a *beadListerAdapter) Ready() ([]dashboard.BeadSummary, error) {
 	summaries, err := a.client.Ready()
+	if err != nil {
+		return nil, err
+	}
+	beads := make([]dashboard.BeadSummary, len(summaries))
+	for i, s := range summaries {
+		beads[i] = dashboard.BeadSummary{
+			ID:       s.ID,
+			Title:    s.Title,
+			Priority: s.Priority,
+			Type:     s.Type,
+		}
+	}
+	return beads, nil
+}
+
+func (a *beadListerAdapter) Closed(limit int) ([]dashboard.BeadSummary, error) {
+	summaries, err := a.client.Closed(limit)
 	if err != nil {
 		return nil, err
 	}
