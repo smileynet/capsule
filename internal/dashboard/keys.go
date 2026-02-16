@@ -113,6 +113,49 @@ func PipelineKeyMap() pipelineKeys {
 	}
 }
 
+// campaignKeys holds key bindings for campaign mode.
+type campaignKeys struct {
+	Up   key.Binding
+	Down key.Binding
+	Tab  key.Binding
+	Quit key.Binding
+}
+
+// ShortHelp returns the campaign mode bindings for the help bar.
+func (k campaignKeys) ShortHelp() []key.Binding {
+	return []key.Binding{k.Up, k.Down, k.Tab, k.Quit}
+}
+
+// FullHelp returns the campaign mode bindings grouped for expanded help.
+func (k campaignKeys) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down},
+		{k.Tab, k.Quit},
+	}
+}
+
+// CampaignKeyMap returns the key bindings for campaign mode.
+func CampaignKeyMap() campaignKeys {
+	return campaignKeys{
+		Up: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "down"),
+		),
+		Tab: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "switch pane"),
+		),
+		Quit: key.NewBinding(
+			key.WithKeys("q", "ctrl+c"),
+			key.WithHelp("q", "abort"),
+		),
+	}
+}
+
 // SummaryKeyMap returns the key bindings for summary mode.
 func SummaryKeyMap() summaryKeys {
 	return summaryKeys{

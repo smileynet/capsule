@@ -47,9 +47,35 @@ func TestHelpBindings_SummaryMode(t *testing.T) {
 	}
 }
 
+func TestHelpBindings_CampaignMode(t *testing.T) {
+	// Given: help bindings for campaign mode
+	km := HelpBindings(ModeCampaign)
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: enter is absent (no dispatch) but quit is present
+	if containsKey(allKeys, "enter") {
+		t.Error("campaign help should not contain 'enter' key")
+	}
+	if !containsKey(allKeys, "q") {
+		t.Error("campaign help should contain 'q' key")
+	}
+}
+
+func TestHelpBindings_CampaignSummaryMode(t *testing.T) {
+	// Given: help bindings for campaign summary mode
+	km := HelpBindings(ModeCampaignSummary)
+	bindings := km.ShortHelp()
+
+	// Then: at least one binding is present
+	if len(bindings) == 0 {
+		t.Fatal("campaign summary help should have at least one binding")
+	}
+}
+
 func TestHelpBindings_ImplementsKeyMap(t *testing.T) {
 	// Given: all dashboard modes
-	modes := []Mode{ModeBrowse, ModePipeline, ModeSummary}
+	modes := []Mode{ModeBrowse, ModePipeline, ModeSummary, ModeCampaign, ModeCampaignSummary}
 
 	// Then: each returns a type satisfying help.KeyMap (ShortHelp + FullHelp)
 	for _, mode := range modes {
@@ -64,4 +90,5 @@ var (
 	_ help.KeyMap = browseKeys{}
 	_ help.KeyMap = pipelineKeys{}
 	_ help.KeyMap = summaryKeys{}
+	_ help.KeyMap = campaignKeys{}
 )
