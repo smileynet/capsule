@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -48,22 +49,23 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 	projectDir := setupDashboardProject(t)
 
 	t.Run("dashboard launches and renders browse pane", func(t *testing.T) {
-		ptmx, cmd := startDashboard(t, binary, projectDir)
+		ptmx, cmd, waitFunc := startDashboard(t, binary, projectDir)
 
 		// Wait for the TUI to render the bead list.
 		output := readPTYUntil(t, ptmx, "smoke-test-task", 8*time.Second)
+		clean := stripANSI(output)
 
-		if !strings.Contains(stripANSI(output), "smoke-test-task") {
-			t.Errorf("expected 'smoke-test-task' in rendered output, got:\n%s", stripANSI(output))
+		if !strings.Contains(clean, "smoke-test-task") {
+			t.Errorf("expected 'smoke-test-task' in rendered output, got:\n%s", clean)
 		}
 
 		// Send 'q' to quit gracefully.
 		writePTY(t, ptmx, "q")
-		waitForExit(t, cmd, 5*time.Second)
+		waitForExit(t, cmd, waitFunc, 5*time.Second)
 	})
 
 	t.Run("dashboard renders pipeline context in detail pane", func(t *testing.T) {
-		ptmx, cmd := startDashboard(t, binary, projectDir)
+		ptmx, cmd, waitFunc := startDashboard(t, binary, projectDir)
 
 		// Wait for the bead list to load.
 		readPTYUntil(t, ptmx, "smoke-test-task", 8*time.Second)
@@ -84,11 +86,11 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 
 		// Send 'q' to quit.
 		writePTY(t, ptmx, "q")
-		waitForExit(t, cmd, 5*time.Second)
+		waitForExit(t, cmd, waitFunc, 5*time.Second)
 	})
 
 	t.Run("history toggle with h key", func(t *testing.T) {
-		ptmx, cmd := startDashboard(t, binary, projectDir)
+		ptmx, cmd, waitFunc := startDashboard(t, binary, projectDir)
 
 		// Wait for initial render with bead list.
 		readPTYUntil(t, ptmx, "smoke-test-task", 8*time.Second)
@@ -109,14 +111,17 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 
 		// Send 'q' to quit.
 		writePTY(t, ptmx, "q")
-		waitForExit(t, cmd, 5*time.Second)
+		waitForExit(t, cmd, waitFunc, 5*time.Second)
 	})
 }
 
 // startDashboard launches the dashboard binary with a pseudo-TTY.
 // Cleanup is registered automatically: the PTY is closed and the process
 // is killed+waited on when the test finishes, preventing orphan processes.
-func startDashboard(t *testing.T, binary, projectDir string) (*os.File, *exec.Cmd) {
+//
+// The returned waitFunc uses sync.Once so that both the cleanup path and
+// explicit waitForExit calls safely share a single cmd.Wait() invocation.
+func startDashboard(t *testing.T, binary, projectDir string) (*os.File, *exec.Cmd, func() error) {
 	t.Helper()
 	cmd := exec.Command(binary, "dashboard")
 	cmd.Dir = projectDir
@@ -126,14 +131,22 @@ func startDashboard(t *testing.T, binary, projectDir string) (*os.File, *exec.Cm
 	if err != nil {
 		t.Fatalf("failed to start with PTY: %v", err)
 	}
+
+	var waitErr error
+	var once sync.Once
+	waitFunc := func() error {
+		once.Do(func() { waitErr = cmd.Wait() })
+		return waitErr
+	}
+
 	t.Cleanup(func() {
 		ptmx.Close()
 		if cmd.Process != nil {
 			cmd.Process.Kill()
-			cmd.Wait()
+			waitFunc()
 		}
 	})
-	return ptmx, cmd
+	return ptmx, cmd, waitFunc
 }
 
 // setupDashboardProject creates a minimal git project with beads initialized
@@ -218,10 +231,12 @@ func writePTY(t *testing.T, ptmx *os.File, s string) {
 }
 
 // waitForExit waits for the command to exit within the timeout.
-func waitForExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
+// It uses the waitFunc returned by startDashboard so that cmd.Wait()
+// is called at most once across both waitForExit and t.Cleanup.
+func waitForExit(t *testing.T, cmd *exec.Cmd, waitFunc func() error, timeout time.Duration) {
 	t.Helper()
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() { done <- waitFunc() }()
 
 	select {
 	case err := <-done:
