@@ -143,8 +143,8 @@ func (d *PlainDisplay) renderUpdate(su StatusUpdateMsg) {
 	if su.Summary != "" {
 		_, _ = fmt.Fprintf(d.w, "         summary: %s\n", su.Summary)
 	}
-	// Feedback is only meaningful for failed phases (NEEDS_WORK from orchestrator).
-	if su.Feedback != "" && su.Status == StatusFailed {
+	// Feedback is only meaningful for failed/error phases (NEEDS_WORK from orchestrator).
+	if su.Feedback != "" && (su.Status == StatusFailed || su.Status == StatusError) {
 		_, _ = fmt.Fprintf(d.w, "         feedback: %s\n", su.Feedback)
 	}
 }
