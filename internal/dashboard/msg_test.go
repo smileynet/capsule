@@ -123,26 +123,30 @@ func TestCampaignTaskDoneMsg_Fields(t *testing.T) {
 }
 
 func TestCampaignDoneMsg_Fields(t *testing.T) {
-	// Given: a CampaignDoneMsg with results
+	// Given: a CampaignDoneMsg with results including skipped tasks
 	msg := CampaignDoneMsg{
 		ParentID:   "cap-feat",
-		TotalTasks: 3,
+		TotalTasks: 5,
 		Passed:     2,
 		Failed:     1,
+		Skipped:    2,
 	}
 
 	// Then: fields are accessible
 	if msg.ParentID != "cap-feat" {
 		t.Errorf("ParentID = %q, want %q", msg.ParentID, "cap-feat")
 	}
-	if msg.TotalTasks != 3 {
-		t.Errorf("TotalTasks = %d, want 3", msg.TotalTasks)
+	if msg.TotalTasks != 5 {
+		t.Errorf("TotalTasks = %d, want 5", msg.TotalTasks)
 	}
 	if msg.Passed != 2 {
 		t.Errorf("Passed = %d, want 2", msg.Passed)
 	}
 	if msg.Failed != 1 {
 		t.Errorf("Failed = %d, want 1", msg.Failed)
+	}
+	if msg.Skipped != 2 {
+		t.Errorf("Skipped = %d, want 2", msg.Skipped)
 	}
 }
 

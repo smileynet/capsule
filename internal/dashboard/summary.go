@@ -87,6 +87,9 @@ func (m Model) viewCampaignSummaryRight() string {
 		fmt.Fprintf(&b, "%s  Campaign Failed\n", pipeFailedStyle.Render("✗"))
 		fmt.Fprintf(&b, "\n%d/%d tasks passed, %d failed", done.Passed, done.TotalTasks, done.Failed)
 	}
+	if done.Skipped > 0 {
+		fmt.Fprintf(&b, ", %d skipped", done.Skipped)
+	}
 
 	return b.String()
 }

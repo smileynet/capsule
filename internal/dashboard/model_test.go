@@ -1909,6 +1909,40 @@ func TestModel_CampaignSummaryViewRightShowsSummary(t *testing.T) {
 	}
 }
 
+func TestModel_CampaignSummaryViewRightShowsSkipped(t *testing.T) {
+	// Given: a model in campaign summary mode with skipped tasks
+	m := newCampaignModel(90, 40)
+	m.mode = ModeCampaignSummary
+	m.campaign = newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	m.campaignDone = &CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 5, Passed: 2, Failed: 1, Skipped: 2}
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: skipped count is shown in the summary
+	if !strings.Contains(plain, "2 skipped") {
+		t.Errorf("campaign summary should show '2 skipped', got:\n%s", plain)
+	}
+}
+
+func TestModel_CampaignSummaryViewRightHidesZeroSkipped(t *testing.T) {
+	// Given: a model in campaign summary mode with no skipped tasks
+	m := newCampaignModel(90, 40)
+	m.mode = ModeCampaignSummary
+	m.campaign = newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	m.campaignDone = &CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 3, Passed: 2, Failed: 1}
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: "skipped" should not appear when count is zero
+	if strings.Contains(plain, "skipped") {
+		t.Errorf("campaign summary should not show 'skipped' when count is zero, got:\n%s", plain)
+	}
+}
+
 func TestModel_CampaignModeHelpShowsCampaignBindings(t *testing.T) {
 	// Given: a model in campaign mode
 	m := newSizedModel(90, 40)

@@ -216,6 +216,7 @@ type CampaignDoneMsg struct {
 	TotalTasks int
 	Passed     int
 	Failed     int
+	Skipped    int
 }
 
 // CampaignRunner dispatches and runs a campaign (sequential child pipelines).

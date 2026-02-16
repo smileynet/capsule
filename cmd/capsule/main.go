@@ -469,12 +469,25 @@ func (d *DashboardCmd) Run() error {
 		bdClient:     bdClient,
 	}
 
+	campaignAdapter := &dashboardCampaignAdapter{
+		beadClient: newCampaignBeadClient("."),
+		stateStore: state.NewFileStore(".capsule/campaigns"),
+		campaignCfg: campaign.Config{
+			FailureMode:      cfg.Campaign.FailureMode,
+			CircuitBreaker:   cfg.Campaign.CircuitBreaker,
+			DiscoveryFiling:  cfg.Campaign.DiscoveryFiling,
+			CrossRunContext:  cfg.Campaign.CrossRunContext,
+			ValidationPhases: cfg.Campaign.ValidationPhases,
+		},
+	}
+
 	m := dashboard.NewModel(
 		dashboard.WithBeadLister(lister),
 		dashboard.WithBeadResolver(resolver),
 		dashboard.WithPostPipelineFunc(ppFunc),
 		dashboard.WithPipelineRunner(pipelineAdapter),
 		dashboard.WithPhaseNames(phaseNames(phases)),
+		dashboard.WithCampaignRunner(campaignAdapter),
 	)
 
 	prog := tea.NewProgram(m, tea.WithAltScreen())
@@ -717,6 +730,176 @@ func severityToPriorityCLI(severity string) int {
 	default:
 		return 3
 	}
+}
+
+// --- Dashboard campaign adapter types ---
+
+// dashboardCampaignAdapter implements dashboard.CampaignRunner by building a
+// campaign.Runner and bridging its lifecycle events to tea.Msg via statusFn.
+type dashboardCampaignAdapter struct {
+	beadClient  campaign.BeadClient
+	stateStore  campaign.StateStore
+	campaignCfg campaign.Config
+}
+
+func (a *dashboardCampaignAdapter) RunCampaign(
+	ctx context.Context,
+	parentID string,
+	statusFn func(tea.Msg),
+	pipelineFn func(context.Context, dashboard.PipelineInput, func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error),
+) error {
+	cb := &dashboardCampaignCallback{statusFn: statusFn}
+	pr := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+	runner := campaign.NewRunner(pr, a.beadClient, a.stateStore, a.campaignCfg, cb)
+	return runner.Run(ctx, parentID)
+}
+
+// dashboardCampaignPipelineRunner implements campaign.PipelineRunner by
+// bridging dashboard's pipelineFn (which accepts dashboard types) to the
+// campaign's orchestrator-typed interface.
+type dashboardCampaignPipelineRunner struct {
+	pipelineFn func(context.Context, dashboard.PipelineInput, func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error)
+}
+
+func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input orchestrator.PipelineInput) (orchestrator.PipelineOutput, error) {
+	if r.pipelineFn == nil {
+		return orchestrator.PipelineOutput{}, fmt.Errorf("no pipeline runner configured")
+	}
+
+	// Convert orchestrator input to dashboard input.
+	dashInput := dashboard.PipelineInput{BeadID: input.BeadID}
+
+	// Collect phase updates to reconstruct PhaseResults.
+	var lastUpdates []orchestrator.StatusUpdate
+	statusFn := func(msg dashboard.PhaseUpdateMsg) {
+		lastUpdates = append(lastUpdates, orchestrator.StatusUpdate{
+			BeadID:   input.BeadID,
+			Phase:    msg.Phase,
+			Status:   orchestrator.PhaseStatus(msg.Status),
+			Attempt:  msg.Attempt,
+			MaxRetry: msg.MaxRetry,
+			Duration: msg.Duration,
+			Signal: &provider.Signal{
+				Summary:      msg.Summary,
+				FilesChanged: msg.FilesChanged,
+				Feedback:     msg.Feedback,
+			},
+		})
+	}
+
+	output, err := r.pipelineFn(ctx, dashInput, statusFn)
+	if err != nil {
+		return orchestrator.PipelineOutput{}, err
+	}
+
+	// Convert dashboard output to orchestrator output.
+	results := make([]orchestrator.PhaseResult, len(output.PhaseReports))
+	for i, pr := range output.PhaseReports {
+		results[i] = orchestrator.PhaseResult{
+			PhaseName: pr.PhaseName,
+			Signal: provider.Signal{
+				Status:       provider.Status(pr.Status),
+				Summary:      pr.Summary,
+				FilesChanged: pr.FilesChanged,
+				Feedback:     pr.Feedback,
+			},
+			Duration: pr.Duration,
+		}
+	}
+
+	return orchestrator.PipelineOutput{
+		PhaseResults: results,
+		Completed:    output.Success,
+	}, nil
+}
+
+// dashboardCampaignCallback implements campaign.Callback by converting
+// campaign lifecycle events to dashboard tea.Msg types.
+type dashboardCampaignCallback struct {
+	statusFn  func(tea.Msg)
+	taskIndex int
+	taskTotal int
+}
+
+func (c *dashboardCampaignCallback) OnCampaignStart(parentID string, tasks []campaign.BeadInfo) {
+	c.taskTotal = len(tasks)
+	c.taskIndex = 0
+	infos := make([]dashboard.CampaignTaskInfo, len(tasks))
+	for i, t := range tasks {
+		infos[i] = dashboard.CampaignTaskInfo{
+			BeadID:   t.ID,
+			Title:    t.Title,
+			Priority: t.Priority,
+		}
+	}
+	c.statusFn(dashboard.CampaignStartMsg{
+		ParentID: parentID,
+		Tasks:    infos,
+	})
+}
+
+func (c *dashboardCampaignCallback) OnTaskStart(beadID string) {
+	c.statusFn(dashboard.CampaignTaskStartMsg{
+		BeadID: beadID,
+		Index:  c.taskIndex,
+		Total:  c.taskTotal,
+	})
+}
+
+func (c *dashboardCampaignCallback) OnTaskComplete(result campaign.TaskResult) {
+	var dur time.Duration
+	for _, pr := range result.PhaseResults {
+		dur += pr.Duration
+	}
+	c.statusFn(dashboard.CampaignTaskDoneMsg{
+		BeadID:   result.BeadID,
+		Index:    c.taskIndex,
+		Success:  result.Status == campaign.TaskCompleted,
+		Duration: dur,
+	})
+	c.taskIndex++
+}
+
+func (c *dashboardCampaignCallback) OnTaskFail(beadID string, _ error) {
+	c.statusFn(dashboard.CampaignTaskDoneMsg{
+		BeadID:  beadID,
+		Index:   c.taskIndex,
+		Success: false,
+	})
+	c.taskIndex++
+}
+
+func (c *dashboardCampaignCallback) OnDiscoveryFiled(_ provider.Finding, _ string) {
+	// Discovery filing is silent in dashboard mode.
+}
+
+func (c *dashboardCampaignCallback) OnValidationStart() {
+	// Validation is not surfaced in dashboard campaign mode.
+}
+
+func (c *dashboardCampaignCallback) OnValidationComplete(_ campaign.TaskResult) {
+	// Validation is not surfaced in dashboard campaign mode.
+}
+
+func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {
+	passed, failed, skipped := 0, 0, 0
+	for _, t := range s.Tasks {
+		switch t.Status {
+		case campaign.TaskCompleted:
+			passed++
+		case campaign.TaskFailed:
+			failed++
+		case campaign.TaskSkipped:
+			skipped++
+		}
+	}
+	c.statusFn(dashboard.CampaignDoneMsg{
+		ParentID:   s.ParentBeadID,
+		TotalTasks: len(s.Tasks),
+		Passed:     passed,
+		Failed:     failed,
+		Skipped:    skipped,
+	})
 }
 
 // Exit codes.
