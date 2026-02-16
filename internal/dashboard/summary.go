@@ -56,6 +56,41 @@ func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 	return m, nil
 }
 
+// returnToBrowseFromCampaign transitions from campaign summary to browse mode.
+// Skips postPipeline since campaigns handle their own lifecycle.
+func (m Model) returnToBrowseFromCampaign() (Model, tea.Cmd) {
+	m.mode = ModeBrowse
+	m.focus = PaneLeft
+	m.cache.Invalidate()
+	m.campaignDone = nil
+	m.dispatchedBeadID = ""
+
+	if m.lister != nil {
+		return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
+	}
+	return m, nil
+}
+
+// viewCampaignSummaryRight renders the right pane in campaign summary mode.
+func (m Model) viewCampaignSummaryRight() string {
+	done := m.campaignDone
+	if done == nil {
+		return ""
+	}
+
+	var b strings.Builder
+
+	if done.Failed == 0 {
+		fmt.Fprintf(&b, "%s  Campaign Passed\n", pipePassedStyle.Render("✓"))
+		fmt.Fprintf(&b, "\n%d/%d tasks passed", done.Passed, done.TotalTasks)
+	} else {
+		fmt.Fprintf(&b, "%s  Campaign Failed\n", pipeFailedStyle.Render("✗"))
+		fmt.Fprintf(&b, "\n%d/%d tasks passed, %d failed", done.Passed, done.TotalTasks, done.Failed)
+	}
+
+	return b.String()
+}
+
 // returnToBrowse transitions from summary mode back to browse mode,
 // invalidating the bead cache and triggering a refresh. If a post-pipeline
 // function is configured, it fires in a background goroutine.

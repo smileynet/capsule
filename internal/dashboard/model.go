@@ -47,6 +47,10 @@ type Model struct {
 	postPipeline     PostPipelineFunc
 	dispatchedBeadID string
 	aborting         bool
+
+	campaign       campaignState
+	campaignRunner CampaignRunner
+	campaignDone   *CampaignDoneMsg // set when CampaignDoneMsg received, consumed on channelClosedMsg
 }
 
 // newBrowseSpinner returns a spinner for browse mode loading states.
@@ -103,6 +107,11 @@ func WithPostPipelineFunc(fn PostPipelineFunc) ModelOption {
 	return func(m *Model) { m.postPipeline = fn }
 }
 
+// WithCampaignRunner sets the CampaignRunner used to dispatch campaigns.
+func WithCampaignRunner(r CampaignRunner) ModelOption {
+	return func(m *Model) { m.campaignRunner = r }
+}
+
 // listenForEvents returns a tea.Cmd that reads one message from ch.
 // On channel close, it returns channelClosedMsg. Returns nil if ch is nil.
 func listenForEvents(ch <-chan tea.Msg) tea.Cmd {
@@ -141,6 +150,23 @@ func dispatchPipeline(ctx context.Context, runner PipelineRunner, input Pipeline
 	case ch <- PipelineDoneMsg{Output: output}:
 	case <-ctx.Done():
 	}
+}
+
+// dispatchCampaign runs a campaign in the calling goroutine, bridging
+// status events to ch. It closes ch when done.
+func dispatchCampaign(ctx context.Context, cr CampaignRunner, pr PipelineRunner, parentID string, ch chan<- tea.Msg) {
+	defer close(ch)
+	statusFn := func(msg tea.Msg) {
+		select {
+		case ch <- msg:
+		case <-ctx.Done():
+		}
+	}
+	var pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error)
+	if pr != nil {
+		pipelineFn = pr.RunPipeline
+	}
+	_ = cr.RunCampaign(ctx, parentID, statusFn, pipelineFn)
 }
 
 // resolveBeadCmd returns a tea.Cmd that calls resolver.Resolve(id)
@@ -231,7 +257,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case DispatchMsg:
 		return m.handleDispatch(msg)
 
+	case CampaignStartMsg:
+		m.campaign = newCampaignState(msg.ParentID, "", msg.Tasks)
+		return m, listenForEvents(m.eventCh)
+
+	case CampaignTaskStartMsg, CampaignTaskDoneMsg:
+		var cmd tea.Cmd
+		m.campaign, cmd = m.campaign.Update(msg)
+		return m, tea.Batch(cmd, listenForEvents(m.eventCh))
+
+	case CampaignDoneMsg:
+		m.campaignDone = &msg
+		return m, listenForEvents(m.eventCh)
+
 	case PhaseUpdateMsg:
+		if m.mode == ModeCampaign {
+			var cmd tea.Cmd
+			m.campaign, cmd = m.campaign.Update(msg)
+			return m, tea.Batch(cmd, listenForEvents(m.eventCh))
+		}
 		var cmd tea.Cmd
 		m.pipeline, cmd = m.pipeline.Update(msg)
 		return m, tea.Batch(cmd, listenForEvents(m.eventCh))
@@ -254,6 +298,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.aborting {
 			return m.returnToBrowseAfterAbort()
 		}
+		if m.mode == ModeCampaign && m.campaignDone != nil {
+			m.mode = ModeCampaignSummary
+			return m, nil
+		}
 		m.mode = ModeSummary
 		return m, nil
 
@@ -262,6 +310,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.mode == ModePipeline:
 			var cmd tea.Cmd
 			m.pipeline, cmd = m.pipeline.Update(msg)
+			return m, cmd
+		case m.mode == ModeCampaign:
+			var cmd tea.Cmd
+			m.campaign, cmd = m.campaign.Update(msg)
 			return m, cmd
 		case m.mode == ModeBrowse && (m.browse.loading || m.resolvingID != ""):
 			var cmd tea.Cmd
@@ -279,9 +331,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes key messages with global and mode-specific routing.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Summary mode: any key returns to browse with cache refresh.
+	// Summary modes: any key returns to browse with cache refresh.
 	if m.mode == ModeSummary {
 		return m.returnToBrowse()
+	}
+	if m.mode == ModeCampaignSummary {
+		return m.returnToBrowseFromCampaign()
 	}
 
 	// Global keys.
@@ -290,11 +345,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.mode == ModeBrowse:
 			return m, tea.Quit
-		case m.mode == ModePipeline && m.aborting:
+		case (m.mode == ModePipeline || m.mode == ModeCampaign) && m.aborting:
 			return m, tea.Quit
 		case m.mode == ModePipeline && m.cancelPipeline != nil:
 			m.aborting = true
 			m.pipeline.aborting = true
+			m.cancelPipeline()
+			return m, nil
+		case m.mode == ModeCampaign && m.cancelPipeline != nil:
+			m.aborting = true
 			m.cancelPipeline()
 			return m, nil
 		}
@@ -335,13 +394,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
+
+	case m.mode == ModeCampaign && m.focus == PaneRight:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
 }
 
-// handleDispatch transitions to pipeline mode and starts the pipeline goroutine.
+// handleDispatch branches on BeadType: feature/epic → campaign, else → pipeline.
 func (m Model) handleDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
+	if (msg.BeadType == "feature" || msg.BeadType == "epic") && m.campaignRunner != nil {
+		return m.handleCampaignDispatch(msg)
+	}
+	return m.handlePipelineDispatch(msg)
+}
+
+// handlePipelineDispatch transitions to pipeline mode and starts the pipeline goroutine.
+func (m Model) handlePipelineDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		return m, nil
 	}
@@ -359,6 +431,24 @@ func (m Model) handleDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	input := PipelineInput{BeadID: msg.BeadID}
 	go dispatchPipeline(ctx, m.runner, input, ch)
 	return m, tea.Batch(m.pipeline.spinner.Tick, listenForEvents(ch))
+}
+
+// handleCampaignDispatch transitions to campaign mode and starts the campaign goroutine.
+func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelPipeline = cancel
+	ch := make(chan tea.Msg, 16)
+	m.eventCh = ch
+	m.mode = ModeCampaign
+	m.focus = PaneLeft
+	m.campaign = newCampaignState(msg.BeadID, "", nil)
+	m.pipelineOutput = nil
+	m.pipelineErr = nil
+	m.aborting = false
+	m.campaignDone = nil
+	m.dispatchedBeadID = msg.BeadID
+	go dispatchCampaign(ctx, m.campaignRunner, m.runner, msg.BeadID, ch)
+	return m, tea.Batch(m.campaign.pipeline.spinner.Tick, listenForEvents(ch))
 }
 
 // maybeResolve checks if the selected bead changed and triggers a resolve
@@ -435,6 +525,8 @@ func (m Model) viewLeft() string {
 	switch m.mode {
 	case ModePipeline, ModeSummary:
 		return m.pipeline.View(w, h)
+	case ModeCampaign, ModeCampaignSummary:
+		return m.campaign.View(w, h)
 	default:
 		return m.browse.View(w, h, m.browseSpinner.View())
 	}
@@ -448,6 +540,11 @@ func (m Model) viewRight() string {
 		return m.pipeline.ViewReport(rightWidth-borderChrome, m.contentHeight())
 	case ModeSummary:
 		return m.viewSummaryRight()
+	case ModeCampaign:
+		_, rightWidth := PaneWidths(m.width)
+		return m.campaign.ViewReport(rightWidth-borderChrome, m.contentHeight())
+	case ModeCampaignSummary:
+		return m.viewCampaignSummaryRight()
 	default:
 		return m.viewBrowseDetail()
 	}

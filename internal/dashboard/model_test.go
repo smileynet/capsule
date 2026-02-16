@@ -1378,6 +1378,626 @@ func TestModel_RefreshWorksFromRightPane(t *testing.T) {
 	}
 }
 
+// --- Campaign wiring tests ---
+
+// mockCampaignRunner implements CampaignRunner for tests.
+type mockCampaignRunner struct {
+	events []tea.Msg
+	err    error
+}
+
+func (r *mockCampaignRunner) RunCampaign(
+	_ context.Context,
+	_ string,
+	statusFn func(tea.Msg),
+	_ func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error),
+) error {
+	for _, e := range r.events {
+		statusFn(e)
+	}
+	return r.err
+}
+
+func TestModel_WithCampaignRunner(t *testing.T) {
+	// Given: a campaign runner
+	cr := &mockCampaignRunner{}
+
+	// When: a model is created with WithCampaignRunner
+	m := NewModel(WithCampaignRunner(cr))
+
+	// Then: the campaign runner is stored
+	if m.campaignRunner == nil {
+		t.Error("campaignRunner should be set")
+	}
+}
+
+func TestModel_DispatchFeatureGoesToCampaign(t *testing.T) {
+	// Given: a model with both pipeline and campaign runners
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	cr := &mockCampaignRunner{}
+	m := NewModel(
+		WithPipelineRunner(pr),
+		WithCampaignRunner(cr),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// When: a feature bead is dispatched
+	updated, cmd := m.Update(DispatchMsg{BeadID: "cap-feat", BeadType: "feature"})
+	m = updated.(Model)
+
+	// Then: the model transitions to campaign mode
+	if m.mode != ModeCampaign {
+		t.Errorf("mode = %d, want ModeCampaign (%d)", m.mode, ModeCampaign)
+	}
+	if m.cancelPipeline == nil {
+		t.Error("cancelPipeline should be set for campaign")
+	}
+	if m.eventCh == nil {
+		t.Error("eventCh should be set for campaign")
+	}
+	if cmd == nil {
+		t.Error("campaign dispatch should return a command")
+	}
+	if m.dispatchedBeadID != "cap-feat" {
+		t.Errorf("dispatchedBeadID = %q, want %q", m.dispatchedBeadID, "cap-feat")
+	}
+}
+
+func TestModel_DispatchRoutesToModeByType(t *testing.T) {
+	tests := []struct {
+		name     string
+		beadType string
+		wantMode Mode
+	}{
+		{"epic goes to campaign", "epic", ModeCampaign},
+		{"task goes to pipeline", "task", ModePipeline},
+		{"empty type goes to pipeline", "", ModePipeline},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Given: a model with both pipeline and campaign runners
+			pr := &mockRunner{output: PipelineOutput{Success: true}}
+			cr := &mockCampaignRunner{}
+			m := NewModel(
+				WithPipelineRunner(pr),
+				WithCampaignRunner(cr),
+				WithPhaseNames([]string{"plan"}),
+			)
+			updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+			m = updated.(Model)
+
+			// When: a bead of the given type is dispatched
+			updated, _ = m.Update(DispatchMsg{BeadID: "cap-001", BeadType: tt.beadType})
+			m = updated.(Model)
+
+			// Then: the model transitions to the expected mode
+			if m.mode != tt.wantMode {
+				t.Errorf("mode = %d, want %d", m.mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestModel_DispatchFeatureWithoutCampaignRunnerGoesToPipeline(t *testing.T) {
+	// Given: a model with only pipeline runner (no campaign runner)
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(pr),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// When: a feature bead is dispatched
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-feat", BeadType: "feature"})
+	m = updated.(Model)
+
+	// Then: falls back to pipeline mode (no campaign runner)
+	if m.mode != ModePipeline {
+		t.Errorf("mode = %d, want ModePipeline (%d) without campaign runner", m.mode, ModePipeline)
+	}
+}
+
+func TestModel_CampaignDispatchResetsState(t *testing.T) {
+	// Given: a model with stale state from a previous run
+	cr := &mockCampaignRunner{}
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(pr),
+		WithCampaignRunner(cr),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.focus = PaneRight
+	m.pipelineOutput = &PipelineOutput{}
+	m.pipelineErr = fmt.Errorf("old error")
+
+	// When: a feature bead is dispatched
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-feat", BeadType: "feature"})
+	m = updated.(Model)
+
+	// Then: focus, output, and error are reset
+	if m.focus != PaneLeft {
+		t.Error("campaign dispatch should reset focus to left pane")
+	}
+	if m.pipelineOutput != nil {
+		t.Error("campaign dispatch should clear pipelineOutput")
+	}
+	if m.pipelineErr != nil {
+		t.Error("campaign dispatch should clear pipelineErr")
+	}
+	if m.aborting {
+		t.Error("campaign dispatch should clear aborting")
+	}
+}
+
+// --- dispatchCampaign tests ---
+
+func TestDispatchCampaign_SendsEventsAndDone(t *testing.T) {
+	// Given: a campaign runner that emits campaign messages and succeeds
+	cr := &mockCampaignRunner{
+		events: []tea.Msg{
+			CampaignStartMsg{ParentID: "cap-feat", Tasks: sampleCampaignTasks()},
+			CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3},
+			CampaignTaskDoneMsg{BeadID: "cap-001", Index: 0, Success: true, Duration: time.Second},
+			CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 3, Passed: 1, Failed: 0},
+		},
+	}
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	ch := make(chan tea.Msg, 32)
+	ctx := context.Background()
+
+	// When: dispatchCampaign runs to completion
+	dispatchCampaign(ctx, cr, pr, "cap-feat", ch)
+
+	// Then: the campaign messages are sent through the channel
+	var msgs []tea.Msg
+	for msg := range ch {
+		msgs = append(msgs, msg)
+	}
+
+	if len(msgs) != 4 {
+		t.Fatalf("got %d messages, want 4", len(msgs))
+	}
+	// First should be CampaignStartMsg
+	if _, ok := msgs[0].(CampaignStartMsg); !ok {
+		t.Errorf("first message should be CampaignStartMsg, got %T", msgs[0])
+	}
+	// Last should be CampaignDoneMsg
+	if _, ok := msgs[3].(CampaignDoneMsg); !ok {
+		t.Errorf("last message should be CampaignDoneMsg, got %T", msgs[3])
+	}
+}
+
+func TestDispatchCampaign_ClosesChannelOnError(t *testing.T) {
+	// Given: a campaign runner that returns an error
+	cr := &mockCampaignRunner{err: fmt.Errorf("campaign failed")}
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	ch := make(chan tea.Msg, 32)
+	ctx := context.Background()
+
+	// When: dispatchCampaign runs
+	dispatchCampaign(ctx, cr, pr, "cap-feat", ch)
+
+	// Then: the channel is closed with no spurious messages
+	var msgs []tea.Msg
+	for msg := range ch {
+		msgs = append(msgs, msg)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages from failing runner, got %d", len(msgs))
+	}
+}
+
+// --- Campaign Update routing tests ---
+
+func TestModel_CampaignStartMsgInitsCampaignState(t *testing.T) {
+	// Given: a model in campaign mode
+	cr := &mockCampaignRunner{}
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(pr),
+		WithCampaignRunner(cr),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	// Dispatch to enter campaign mode
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-feat", BeadType: "feature"})
+	m = updated.(Model)
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a CampaignStartMsg is received
+	tasks := sampleCampaignTasks()
+	updated, _ = m.Update(CampaignStartMsg{ParentID: "cap-feat", Tasks: tasks})
+	m = updated.(Model)
+
+	// Then: the campaign state is initialized with the tasks
+	if len(m.campaign.tasks) != len(tasks) {
+		t.Errorf("campaign.tasks len = %d, want %d", len(m.campaign.tasks), len(tasks))
+	}
+	if m.campaign.parentID != "cap-feat" {
+		t.Errorf("campaign.parentID = %q, want %q", m.campaign.parentID, "cap-feat")
+	}
+}
+
+func TestModel_CampaignTaskStartMsgRoutes(t *testing.T) {
+	// Given: a model in campaign mode with campaign started
+	m := newCampaignModel(90, 40)
+
+	// When: a CampaignTaskStartMsg is received
+	updated, _ := m.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	m = updated.(Model)
+
+	// Then: the campaign state shows the task as running
+	if m.campaign.currentIdx != 0 {
+		t.Errorf("campaign.currentIdx = %d, want 0", m.campaign.currentIdx)
+	}
+	if m.campaign.taskStatuses[0] != CampaignTaskRunning {
+		t.Errorf("taskStatuses[0] = %q, want %q", m.campaign.taskStatuses[0], CampaignTaskRunning)
+	}
+}
+
+func TestModel_CampaignTaskDoneMsgRoutes(t *testing.T) {
+	// Given: a model in campaign mode with a running task
+	m := newCampaignModel(90, 40)
+	updated, _ := m.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	m = updated.(Model)
+
+	// When: a CampaignTaskDoneMsg is received
+	updated, _ = m.Update(CampaignTaskDoneMsg{BeadID: "cap-001", Index: 0, Success: true, Duration: 5 * time.Second})
+	m = updated.(Model)
+
+	// Then: the campaign state reflects completion
+	if m.campaign.completed != 1 {
+		t.Errorf("campaign.completed = %d, want 1", m.campaign.completed)
+	}
+}
+
+func TestModel_CampaignDoneMsgTransitionsToSummary(t *testing.T) {
+	// Given: a model in campaign mode with event channel
+	m := newCampaignModel(90, 40)
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a CampaignDoneMsg is received
+	updated, _ := m.Update(CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 3, Passed: 2, Failed: 1})
+	m = updated.(Model)
+
+	// Then: event is stored but mode doesn't change yet (waits for channelClosedMsg)
+	// channelClosedMsg will transition to summary
+	if m.campaignDone == nil {
+		t.Error("campaignDone should be set after CampaignDoneMsg")
+	}
+}
+
+func TestModel_CampaignChannelClosedTransitionsToSummary(t *testing.T) {
+	// Given: a model in campaign mode with campaignDone set
+	m := newCampaignModel(90, 40)
+	m.cancelPipeline = func() {}
+	m.campaignDone = &CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 3, Passed: 3, Failed: 0}
+
+	// When: channelClosedMsg is received
+	updated, _ := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: the model transitions to campaign summary mode
+	if m.mode != ModeCampaignSummary {
+		t.Errorf("mode = %d, want ModeCampaignSummary (%d)", m.mode, ModeCampaignSummary)
+	}
+}
+
+func TestModel_CampaignChannelClosedWhileAbortingGoesToBrowse(t *testing.T) {
+	// Given: a model in campaign mode that is aborting
+	m := newCampaignModel(90, 40)
+	m.aborting = true
+	m.cancelPipeline = func() {}
+
+	// When: channelClosedMsg is received
+	updated, _ := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: the model transitions to browse mode (not campaign summary)
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse (%d) after campaign abort", m.mode, ModeBrowse)
+	}
+}
+
+func TestModel_PhaseUpdateRoutesToCampaignInCampaignMode(t *testing.T) {
+	// Given: a model in campaign mode with a task started
+	m := newCampaignModel(90, 40)
+	updated, _ := m.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	m = updated.(Model)
+	// Set pipeline phases on the campaign state
+	m.campaign.pipeline = newPipelineState([]string{"plan", "code"})
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a PhaseUpdateMsg is received
+	updated, _ = m.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+	m = updated.(Model)
+
+	// Then: the campaign's embedded pipeline is updated
+	if m.campaign.pipeline.phases[0].Status != PhaseRunning {
+		t.Errorf("campaign pipeline phase status = %q, want %q", m.campaign.pipeline.phases[0].Status, PhaseRunning)
+	}
+}
+
+func TestModel_SpinnerTickRoutesToCampaign(t *testing.T) {
+	// Given: a model in campaign mode
+	m := newCampaignModel(90, 40)
+
+	// When: a spinner tick from the campaign's embedded pipeline spinner is received
+	_, cmd := m.Update(m.campaign.pipeline.spinner.Tick())
+
+	// Then: a follow-up tick is produced (spinner keeps animating)
+	if cmd == nil {
+		t.Error("spinner tick should produce a follow-up command in campaign mode")
+	}
+}
+
+// --- Campaign key handling tests ---
+
+func TestModel_CampaignQuitCancels(t *testing.T) {
+	// Given: a model in campaign mode with a cancel function
+	var cancelled bool
+	m := newCampaignModel(90, 40)
+	m.cancelPipeline = func() { cancelled = true }
+
+	// When: q is pressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+
+	// Then: the cancel function is called and aborting is set
+	if !cancelled {
+		t.Error("q in campaign mode should cancel")
+	}
+	if !m.aborting {
+		t.Error("aborting should be set after q in campaign mode")
+	}
+}
+
+func TestModel_CampaignDoublePressQForceQuits(t *testing.T) {
+	// Given: a model in campaign mode that is already aborting
+	m := newCampaignModel(90, 40)
+	m.aborting = true
+
+	// When: q is pressed again
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	// Then: a quit command is returned
+	if cmd == nil {
+		t.Fatal("second q during campaign abort should return quit")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg, got %T", msg)
+	}
+}
+
+func TestModel_CampaignSummaryAnyKeyReturnsToBrowse(t *testing.T) {
+	// Given: a model in campaign summary mode
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+
+	// When: any key is pressed
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	// Then: the model transitions to browse mode
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse (%d)", m.mode, ModeBrowse)
+	}
+}
+
+func TestModel_CampaignSummarySkipsPostPipeline(t *testing.T) {
+	// Given: a model in campaign summary mode with PostPipelineFunc configured
+	var postPipelineCalled bool
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithPostPipelineFunc(func(beadID string) error {
+			postPipelineCalled = true
+			return nil
+		}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+	m.dispatchedBeadID = "cap-feat"
+
+	// When: any key is pressed to return to browse
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	// Then: postPipeline is NOT called
+	if cmd != nil {
+		for _, msg := range execBatch(t, cmd) {
+			if _, ok := msg.(PostPipelineDoneMsg); ok {
+				t.Error("campaign summary should not fire postPipeline")
+			}
+		}
+	}
+	if postPipelineCalled {
+		t.Error("PostPipelineFunc should not be called for campaign summary")
+	}
+}
+
+// --- Campaign view tests ---
+
+func TestModel_CampaignViewLeftShowsCampaignState(t *testing.T) {
+	// Given: a model in campaign mode with tasks
+	m := newCampaignModel(90, 40)
+	updated, _ := m.Update(CampaignStartMsg{
+		ParentID: "cap-feat",
+		Tasks:    sampleCampaignTasks(),
+	})
+	m = updated.(Model)
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: campaign task info is visible
+	if !strings.Contains(plain, "First task") {
+		t.Errorf("campaign left pane should show task titles, got:\n%s", plain)
+	}
+}
+
+func TestModel_CampaignViewRightShowsPhaseReport(t *testing.T) {
+	// Given: a model in campaign mode with a running task and phases
+	m := newCampaignModel(90, 40)
+	updated, _ := m.Update(CampaignStartMsg{
+		ParentID: "cap-feat",
+		Tasks:    sampleCampaignTasks(),
+	})
+	m = updated.(Model)
+	updated, _ = m.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	m = updated.(Model)
+	m.campaign.pipeline = newPipelineState([]string{"plan", "code"})
+	updated, _ = m.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+	m = updated.(Model)
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: phase report content appears in the right pane
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("campaign right pane should show phase report, got:\n%s", plain)
+	}
+}
+
+func TestModel_CampaignSummaryViewLeftShowsFrozenState(t *testing.T) {
+	// Given: a model in campaign summary mode with completed campaign
+	m := newCampaignModel(90, 40)
+	m.mode = ModeCampaignSummary
+	m.campaign = newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	m.campaign, _ = m.campaign.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	m.campaign, _ = m.campaign.Update(CampaignTaskDoneMsg{BeadID: "cap-001", Index: 0, Success: true, Duration: 5 * time.Second})
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: frozen campaign state is visible
+	if !strings.Contains(plain, "✓") {
+		t.Errorf("campaign summary left pane should show completed task checkmarks, got:\n%s", plain)
+	}
+}
+
+func TestModel_CampaignSummaryViewRightShowsSummary(t *testing.T) {
+	// Given: a model in campaign summary mode with results
+	m := newCampaignModel(90, 40)
+	m.mode = ModeCampaignSummary
+	m.campaign = newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	m.campaignDone = &CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 3, Passed: 2, Failed: 1}
+
+	// When: the view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: campaign summary with pass/fail counts is shown
+	if !strings.Contains(plain, "2/3") {
+		t.Errorf("campaign summary right pane should show '2/3' tasks, got:\n%s", plain)
+	}
+}
+
+func TestModel_CampaignModeHelpShowsCampaignBindings(t *testing.T) {
+	// Given: a model in campaign mode
+	m := newSizedModel(90, 40)
+	m.mode = ModeCampaign
+
+	// When: the view is rendered
+	view := m.View()
+
+	// Then: campaign help text (abort) is shown
+	if !containsPlainText(view, "abort") {
+		t.Errorf("campaign mode help should show 'abort'")
+	}
+}
+
+func TestModel_CampaignSummaryHelpShowsContinue(t *testing.T) {
+	// Given: a model in campaign summary mode
+	m := newSizedModel(90, 40)
+	m.mode = ModeCampaignSummary
+
+	// When: the view is rendered
+	view := m.View()
+
+	// Then: summary help text (continue) is shown
+	if !containsPlainText(view, "continue") {
+		t.Errorf("campaign summary mode help should show 'continue'")
+	}
+}
+
+// --- Campaign full flow test ---
+
+func TestModel_CampaignFullFlow(t *testing.T) {
+	// Given: a model with campaign runner that runs two tasks
+	cr := &mockCampaignRunner{
+		events: []tea.Msg{
+			CampaignStartMsg{ParentID: "cap-feat", Tasks: []CampaignTaskInfo{
+				{BeadID: "cap-001", Title: "Task 1", Priority: 1},
+				{BeadID: "cap-002", Title: "Task 2", Priority: 2},
+			}},
+			CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 2},
+			CampaignTaskDoneMsg{BeadID: "cap-001", Index: 0, Success: true, Duration: time.Second},
+			CampaignTaskStartMsg{BeadID: "cap-002", Index: 1, Total: 2},
+			CampaignTaskDoneMsg{BeadID: "cap-002", Index: 1, Success: true, Duration: 2 * time.Second},
+			CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 2, Passed: 2, Failed: 0},
+		},
+	}
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithPipelineRunner(pr),
+		WithCampaignRunner(cr),
+		WithPhaseNames([]string{"plan"}),
+		WithBeadLister(lister),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// When: a feature bead is dispatched
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-feat", BeadType: "feature"})
+	m = updated.(Model)
+	if m.mode != ModeCampaign {
+		t.Fatalf("mode = %d, want ModeCampaign", m.mode)
+	}
+
+	// Drain campaign events
+	m = drainPipeline(t, m) // works for campaign too since it uses same channel pattern
+
+	// Then: the model is in campaign summary mode
+	if m.mode != ModeCampaignSummary {
+		t.Errorf("mode = %d, want ModeCampaignSummary after campaign completes", m.mode)
+	}
+}
+
+// newCampaignModel creates a model set up in campaign mode for testing.
+func newCampaignModel(w, h int) Model {
+	cr := &mockCampaignRunner{}
+	pr := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(pr),
+		WithCampaignRunner(cr),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m = updated.(Model)
+	// Manually enter campaign mode
+	m.mode = ModeCampaign
+	m.campaign = newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	return m
+}
+
 func TestModel_ResolveErrorNavigable(t *testing.T) {
 	// Given: a model with cap-001 resolve failed
 	m, _ := newResolverModel(90, 40)
