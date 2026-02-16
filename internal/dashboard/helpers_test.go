@@ -48,7 +48,7 @@ func stripANSI(s string) string {
 	var result strings.Builder
 	i := 0
 	for i < len(s) {
-		if s[i] == '\x1b' {
+		if s[i] == '\033' {
 			i++
 			if i >= len(s) {
 				break // bare ESC at end
@@ -69,7 +69,7 @@ func stripANSI(s string) string {
 						i++
 						break
 					}
-					if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '\\' {
+					if s[i] == '\033' && i+1 < len(s) && s[i+1] == '\\' {
 						i += 2
 						break
 					}
@@ -92,6 +92,9 @@ func stripANSI(s string) string {
 	return result.String()
 }
 
+// isLetter reports whether b is an ASCII letter.
+// Used as the CSI final-byte check. ECMA-48 defines the full final-byte
+// range as 0x40-0x7E, but letters cover all sequences seen in practice.
 func isLetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }

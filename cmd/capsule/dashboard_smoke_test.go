@@ -58,7 +58,7 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 		}
 
 		// Send 'q' to quit gracefully.
-		ptmx.Write([]byte("q"))
+		writePTY(t, ptmx, "q")
 		waitForExit(t, cmd, 5*time.Second)
 	})
 
@@ -70,7 +70,7 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 
 		// Press tab to switch focus to the right (detail) pane,
 		// which should show bead detail with "Select a bead" or resolved detail.
-		ptmx.Write([]byte("\t"))
+		writePTY(t, ptmx, "\t")
 
 		// Wait for detail pane content. The bead should be auto-resolved
 		// and show its title or description.
@@ -83,7 +83,7 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 		}
 
 		// Send 'q' to quit.
-		ptmx.Write([]byte("q"))
+		writePTY(t, ptmx, "q")
 		waitForExit(t, cmd, 5*time.Second)
 	})
 
@@ -94,7 +94,7 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 		readPTYUntil(t, ptmx, "smoke-test-task", 8*time.Second)
 
 		// Press 'h' to toggle history (show closed beads).
-		ptmx.Write([]byte("h"))
+		writePTY(t, ptmx, "h")
 
 		// After toggling, the closed bead should appear.
 		output := readPTYUntil(t, ptmx, "closed-smoke-task", 5*time.Second)
@@ -108,7 +108,7 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 		}
 
 		// Send 'q' to quit.
-		ptmx.Write([]byte("q"))
+		writePTY(t, ptmx, "q")
 		waitForExit(t, cmd, 5*time.Second)
 	})
 }
@@ -209,6 +209,14 @@ func readPTYUntil(t *testing.T, ptmx *os.File, target string, timeout time.Durat
 	}
 }
 
+// writePTY writes to the PTY and fails the test if the write errors.
+func writePTY(t *testing.T, ptmx *os.File, s string) {
+	t.Helper()
+	if _, err := ptmx.Write([]byte(s)); err != nil {
+		t.Fatalf("ptmx.Write(%q): %v", s, err)
+	}
+}
+
 // waitForExit waits for the command to exit within the timeout.
 func waitForExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
 	t.Helper()
@@ -237,7 +245,7 @@ func run(t *testing.T, dir string, name string, args ...string) {
 	}
 }
 
-// runOutput executes a command and returns its stdout.
+// runOutput executes a command and returns its combined stdout/stderr.
 func runOutput(t *testing.T, dir string, name string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(name, args...)

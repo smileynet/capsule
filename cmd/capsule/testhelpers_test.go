@@ -166,6 +166,9 @@ func stripANSI(s string) string {
 	return result.String()
 }
 
+// isLetter reports whether b is an ASCII letter.
+// Used as the CSI final-byte check. ECMA-48 defines the full final-byte
+// range as 0x40-0x7E, but letters cover all sequences seen in practice.
 func isLetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
