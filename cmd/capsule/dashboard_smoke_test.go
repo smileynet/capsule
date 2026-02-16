@@ -181,42 +181,6 @@ func setupDashboardProject(t *testing.T) string {
 	return dir
 }
 
-// extractBeadID extracts the bead ID from bd output.
-// Handles formats like "Created test-abc" or "○ test-abc · title [P2 · OPEN]".
-func extractBeadID(output string) string {
-	clean := stripANSI(output)
-	fields := strings.Fields(clean)
-	for _, f := range fields {
-		// Bead IDs contain a hyphen and are alphanumeric (e.g., "test-abc", "beads-xxx").
-		if len(f) > 2 && strings.Contains(f, "-") && !strings.HasPrefix(f, "[") && !strings.HasPrefix(f, "--") {
-			// Strip trailing punctuation.
-			f = strings.TrimRight(f, ".:,;")
-			return f
-		}
-	}
-	return ""
-}
-
-// stripANSI removes ANSI escape sequences from a string.
-func stripANSI(s string) string {
-	var result strings.Builder
-	inEscape := false
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\033' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if (s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') {
-				inEscape = false
-			}
-			continue
-		}
-		result.WriteByte(s[i])
-	}
-	return result.String()
-}
-
 // readPTYUntil reads from the PTY until the target string appears or timeout.
 func readPTYUntil(t *testing.T, ptmx *os.File, target string, timeout time.Duration) string {
 	t.Helper()
