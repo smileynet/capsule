@@ -43,3 +43,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Empty bead list: "No ready beads" message with refresh hint
   - Given-When-Then structural comments on all dashboard test files
   - Smoke test for dashboard pipeline mode
+- Campaign mode in dashboard TUI (cap-fj8.1)
+  - Select a feature or epic bead to discover and run its ready child tasks sequentially
+  - Campaign view with task queue, inline phase nesting for the active task, and collapsed pass/fail lines for completed tasks
+  - Right pane shows phase report for cursor-selected phase (same as pipeline mode)
+  - Campaign summary after all tasks complete
+  - Abort campaign with q/Ctrl+C; double-press force quits
+  - Error surfacing to dashboard UI with campaign error messages
+  - SiblingContext propagation through the campaign bridge
+  - Empty/unknown bead type defaults to single pipeline (safe fallback)
