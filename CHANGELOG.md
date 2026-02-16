@@ -57,3 +57,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Expand completed tasks to view their phase reports (progressive disclosure)
   - Right pane shows phase-level summaries, files changed, and feedback for inspected tasks
   - Phase results carried from pipeline completion messages and stored per-task for later review
+- History view with archived pipeline results (cap-fj8.2)
+  - Toggle between ready and closed beads with `h` key
+  - Archive reader loads pipeline results from `.capsule/logs/` for closed beads
+  - Closed bead detail view shows archived phase reports and summaries
+  - `Closed()` method on bead client for retrieving closed beads
+- Pipeline context and responsiveness improvements (cap-fj8.4)
+  - Bead header line (ID + title) at top of pipeline and campaign views
+  - Elapsed time ticker updates every second for running phases
+  - Debounced bead resolution prevents right-pane thrash during rapid cursor scrolling
+  - Sticky cursor restores position to previously run bead after returning from pipeline/campaign
+  - Post-pipeline status line shows merge/close result for 5 seconds
+- Dashboard hardening bug fixes (cap-fj8.5, cap-fj8.6, cap-fj8.7)
+  - Null byte check in validateBeadID prevents path traversal
+  - Defensive slice copy in applyBeadList prevents aliasing bugs
+  - Plain priority labels in closed view prevent nested ANSI escape codes

@@ -109,8 +109,10 @@ PROJECT_DIR_DET=$("$SETUP_SCRIPT" 2>/dev/null)
 CLEANUP_DIRS+=("$PROJECT_DIR_DET")
 FILES1=$(cd "$PROJECT_DIR" && find . -not -path './.git/*' -not -path './.beads/beads.db*' -not -name 'last-touched' | sort)
 FILES2=$(cd "$PROJECT_DIR_DET" && find . -not -path './.git/*' -not -path './.beads/beads.db*' -not -name 'last-touched' | sort)
-BD_LIST1=$(cd "$PROJECT_DIR" && bd list 2>&1)
-BD_LIST2=$(cd "$PROJECT_DIR_DET" && bd list 2>&1)
+# Strip parenthesized dependency info (blocks:/blocked by:) from bd list
+# output since bd may order dependencies non-deterministically.
+BD_LIST1=$(cd "$PROJECT_DIR" && bd list 2>&1 | sed 's/ ([^)]*)//')
+BD_LIST2=$(cd "$PROJECT_DIR_DET" && bd list 2>&1 | sed 's/ ([^)]*)//')
 if [ "$FILES1" = "$FILES2" ] && [ "$BD_LIST1" = "$BD_LIST2" ]; then
     pass "file tree and bd list are identical across runs"
 else
