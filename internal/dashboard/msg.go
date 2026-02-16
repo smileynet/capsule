@@ -55,6 +55,7 @@ const (
 	PhaseRunning PhaseStatus = "running"
 	PhasePassed  PhaseStatus = "passed"
 	PhaseFailed  PhaseStatus = "failed"
+	PhaseError   PhaseStatus = "error"
 	PhaseSkipped PhaseStatus = "skipped"
 )
 

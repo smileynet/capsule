@@ -81,7 +81,7 @@ func (ps pipelineState) handlePhaseUpdate(msg PhaseUpdateMsg) pipelineState {
 					ps.cursor = i
 				}
 			}
-			if msg.Status == PhasePassed || msg.Status == PhaseFailed {
+			if msg.Status == PhasePassed || msg.Status == PhaseFailed || msg.Status == PhaseError {
 				ps.reports[msg.Phase] = &PhaseReport{
 					PhaseName:    msg.Phase,
 					Status:       msg.Status,
@@ -138,7 +138,7 @@ func pipeIndicator(status PhaseStatus, spinnerView string) string {
 		return spinnerView
 	case PhasePassed:
 		return pipePassedStyle.Render("✓")
-	case PhaseFailed:
+	case PhaseFailed, PhaseError:
 		return pipeFailedStyle.Render("✗")
 	case PhaseSkipped:
 		return pipeSkippedStyle.Render("–")
@@ -237,7 +237,7 @@ func (ps pipelineState) formatReport(r *PhaseReport) string {
 	// Header: phase name + status.
 	statusText := "Passed"
 	statusStyle := pipePassedStyle
-	if r.Status == PhaseFailed {
+	if r.Status == PhaseFailed || r.Status == PhaseError {
 		statusText = "Failed"
 		statusStyle = pipeFailedStyle
 	}

@@ -88,6 +88,21 @@ func TestPipeline_ViewFailedPhase(t *testing.T) {
 	}
 }
 
+func TestPipeline_ViewErrorPhase(t *testing.T) {
+	// Given: a pipeline state with "code" marked as error
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{Phase: "code", Status: PhaseError})
+
+	// When: the view is rendered
+	view := ps.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: a cross indicator is shown (same as failed)
+	if !strings.Contains(plain, "✗") {
+		t.Errorf("error phase should show ✗ indicator, got:\n%s", plain)
+	}
+}
+
 func TestPipeline_ViewSkippedPhase(t *testing.T) {
 	// Given: a pipeline state with "review" marked as skipped
 	ps := newPipelineState(samplePhaseNames())
@@ -447,6 +462,60 @@ func TestPipeline_ReportStoredOnFail(t *testing.T) {
 	}
 	if report.Feedback != "error in main.go:42" {
 		t.Errorf("Feedback = %q, want %q", report.Feedback, "error in main.go:42")
+	}
+}
+
+func TestPipeline_ReportStoredOnError(t *testing.T) {
+	// Given: a pipeline state with phases
+	ps := newPipelineState(samplePhaseNames())
+
+	// When: a phase errors with feedback
+	ps, _ = ps.Update(PhaseUpdateMsg{
+		Phase:    "code",
+		Status:   PhaseError,
+		Duration: 3 * time.Second,
+		Summary:  "Could not read worklog",
+		Feedback: "worklog.md not found",
+	})
+
+	// Then: a report is stored with error details
+	report := ps.reports["code"]
+	if report == nil {
+		t.Fatal("expected report for error phase")
+	}
+	if report.Status != PhaseError {
+		t.Errorf("Status = %q, want %q", report.Status, PhaseError)
+	}
+	if report.Summary != "Could not read worklog" {
+		t.Errorf("Summary = %q, want %q", report.Summary, "Could not read worklog")
+	}
+	if report.Feedback != "worklog.md not found" {
+		t.Errorf("Feedback = %q, want %q", report.Feedback, "worklog.md not found")
+	}
+}
+
+func TestPipeline_ViewReportError(t *testing.T) {
+	// Given: a pipeline state with "code" errored and cursor moved to it
+	ps := newPipelineState(samplePhaseNames())
+	ps, _ = ps.Update(PhaseUpdateMsg{
+		Phase:    "code",
+		Status:   PhaseError,
+		Duration: 3 * time.Second,
+		Summary:  "Could not read worklog",
+		Feedback: "worklog.md not found",
+	})
+	ps, _ = ps.Update(tea.KeyMsg{Type: tea.KeyDown})
+
+	// When: the report view is rendered
+	view := ps.ViewReport(60, 20)
+	plain := stripANSI(view)
+
+	// Then: "Failed" status and feedback are shown
+	if !strings.Contains(plain, "Failed") {
+		t.Errorf("error report should show 'Failed', got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "worklog.md not found") {
+		t.Errorf("error report should show feedback, got:\n%s", plain)
 	}
 }
 
