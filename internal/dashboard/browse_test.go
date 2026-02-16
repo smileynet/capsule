@@ -570,6 +570,52 @@ func TestBrowse_EnterIgnoredInClosedView(t *testing.T) {
 	}
 }
 
+func TestBrowse_ApplyBeadListCopiesSlice(t *testing.T) {
+	// Given: an incoming bead slice
+	incoming := sampleBeads()
+
+	// When: applyBeadList stores the beads
+	bs := newBrowseState()
+	bs = bs.applyBeadList(incoming, nil)
+
+	// Then: mutating the original slice does not affect the stored beads
+	incoming[0].Title = "MUTATED"
+	if bs.beads[0].Title == "MUTATED" {
+		t.Error("applyBeadList should copy the slice; mutation of original affected stored beads")
+	}
+}
+
+func TestBrowse_ToggleHistoryCopiesReadyBeads(t *testing.T) {
+	// Given: a browse state showing ready beads
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+
+	// When: h is pressed to toggle to closed (saves readyBeads)
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: mutating bs.beads does not affect readyBeads
+	bs.beads[0].Title = "MUTATED"
+	if bs.readyBeads[0].Title == "MUTATED" {
+		t.Error("toggle should copy beads to readyBeads; mutation of beads affected readyBeads")
+	}
+}
+
+func TestBrowse_ToggleBackCopiesBeads(t *testing.T) {
+	// Given: a browse state that toggled to closed view
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}) // toggle to closed
+
+	// When: h is pressed again to toggle back (restores readyBeads)
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: mutating the restored beads does not affect readyBeads
+	bs.beads[0].Title = "MUTATED"
+	if bs.readyBeads[0].Title == "MUTATED" {
+		t.Error("toggle-back should copy readyBeads; mutation of beads affected readyBeads")
+	}
+}
+
 func TestBrowse_ErrorThenRetry(t *testing.T) {
 	// Given: a browse state that received an error
 	bs := newBrowseState()

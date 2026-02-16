@@ -76,7 +76,7 @@ func (bs browseState) applyBeadList(beads []BeadSummary, err error) browseState 
 		return bs
 	}
 	bs.err = nil
-	bs.beads = beads
+	bs.beads = append([]BeadSummary(nil), beads...)
 	bs.cursor = 0
 	return bs
 }
@@ -119,14 +119,14 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		if bs.showClosed {
 			// Toggle back to ready: restore saved beads.
 			bs.showClosed = false
-			bs.beads = bs.readyBeads
+			bs.beads = append([]BeadSummary(nil), bs.readyBeads...)
 			bs.cursor = 0
 			bs.err = nil
 			return bs, nil
 		}
 		// Toggle to closed: save ready beads, request fetch.
 		bs.showClosed = true
-		bs.readyBeads = bs.beads
+		bs.readyBeads = append([]BeadSummary(nil), bs.beads...)
 		bs.loading = true
 		bs.err = nil
 		return bs, func() tea.Msg { return ToggleHistoryMsg{} }
