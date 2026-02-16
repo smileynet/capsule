@@ -474,13 +474,16 @@ func TestRunPhasePair_MaxRetriesExceeded(t *testing.T) {
 	// When runPhasePair executes
 	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 
-	// Then it fails with max retries exceeded
+	// Then it fails with retries exhausted
 	var pe *PipelineError
 	if !errors.As(err, &pe) {
 		t.Fatalf("expected PipelineError, got %T: %v", err, err)
 	}
 	if pe.Attempt != 3 {
 		t.Errorf("Attempt = %d, want 3", pe.Attempt)
+	}
+	if want := `pipeline: phase "reviewer" attempt 3: failed after 3 attempts`; pe.Error() != want {
+		t.Errorf("Error() = %q, want %q", pe.Error(), want)
 	}
 	// And all 6 provider calls were made (3 attempts x 2 phases)
 	if got := len(sp.calls); got != 6 {
@@ -553,18 +556,27 @@ func TestRunPhasePair_StatusCallbacks(t *testing.T) {
 	if updates[3].Phase != "reviewer" || updates[3].Status != PhasePassed {
 		t.Errorf("update[3] = %s/%s, want reviewer/passed", updates[3].Phase, updates[3].Status)
 	}
-	// Running updates have nil Signal; completion updates have non-nil Signal
+	// Running updates have nil Signal and zero Duration; completion updates have non-nil Signal and non-zero Duration
 	if updates[0].Signal != nil {
 		t.Error("update[0] (running) should have nil Signal")
 	}
+	if updates[0].Duration != 0 {
+		t.Errorf("update[0] (running) Duration = %v, want 0", updates[0].Duration)
+	}
 	if updates[1].Signal == nil {
 		t.Error("update[1] (passed) should have non-nil Signal")
+	}
+	if updates[1].Duration == 0 {
+		t.Error("update[1] (passed) should have non-zero Duration")
 	}
 	if updates[2].Signal != nil {
 		t.Error("update[2] (running) should have nil Signal")
 	}
 	if updates[3].Signal == nil {
 		t.Error("update[3] (passed) should have non-nil Signal")
+	}
+	if updates[3].Duration == 0 {
+		t.Error("update[3] (passed) should have non-zero Duration")
 	}
 	// And all updates carry the bead ID
 	for i, u := range updates {
@@ -820,15 +832,21 @@ func TestRunPipeline_StatusCallbacks(t *testing.T) {
 	if updates[11].Phase != "merge" || updates[11].Status != PhasePassed {
 		t.Errorf("last update = %s/%s, want merge/passed", updates[11].Phase, updates[11].Status)
 	}
-	// And completion updates carry Signal data
+	// And completion updates carry Signal data and Duration
 	for i, u := range updates {
 		if u.Status == PhaseRunning {
 			if u.Signal != nil {
 				t.Errorf("update[%d] (running) should have nil Signal", i)
 			}
+			if u.Duration != 0 {
+				t.Errorf("update[%d] (running) Duration = %v, want 0", i, u.Duration)
+			}
 		} else {
 			if u.Signal == nil {
 				t.Errorf("update[%d] (%s) should have non-nil Signal", i, u.Status)
+			}
+			if u.Duration == 0 {
+				t.Errorf("update[%d] (%s) should have non-zero Duration", i, u.Status)
 			}
 		}
 	}

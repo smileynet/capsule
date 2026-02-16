@@ -72,6 +72,7 @@ type StatusUpdate struct {
 	Progress string           // Human-readable progress (e.g. "2/6").
 	Attempt  int              // Current attempt number (1-based).
 	MaxRetry int              // Maximum retries configured.
+	Duration time.Duration    // Phase execution time (populated on completion, zero while running).
 	Signal   *provider.Signal // Populated on phase completion (passed/failed/error), nil while running.
 }
 

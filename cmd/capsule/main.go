@@ -433,6 +433,22 @@ func (d *DashboardCmd) Run() error {
 		return fmt.Errorf("dashboard: %w", err)
 	}
 
+	// Create provider via registry.
+	reg := provider.NewRegistry()
+	reg.Register("claude", func() (provider.Executor, error) {
+		return provider.NewClaudeProvider(provider.WithTimeout(cfg.Runtime.Timeout)), nil
+	})
+	p, err := reg.NewProvider(cfg.Runtime.Provider)
+	if err != nil {
+		return fmt.Errorf("dashboard: %w", err)
+	}
+
+	// Resolve pipeline phases.
+	phases, err := orchestrator.LoadPhases(cfg.Pipeline.Phases)
+	if err != nil {
+		return fmt.Errorf("dashboard: loading phases: %w", err)
+	}
+
 	bdClient := bead.NewClient(".")
 	lister := &beadListerAdapter{client: bdClient}
 	resolver := &beadResolverAdapter{client: bdClient}
@@ -443,10 +459,22 @@ func (d *DashboardCmd) Run() error {
 		return nil
 	}
 
+	pipelineAdapter := &dashboardPipelineAdapter{
+		providerExec: p,
+		promptLoader: prompt.NewLoader("prompts"),
+		wtMgr:        wtMgr,
+		wlMgr:        worklog.NewManager("templates/worklog.md.template", ".capsule/logs"),
+		gateRunner:   gate.NewRunner(),
+		phases:       phases,
+		bdClient:     bdClient,
+	}
+
 	m := dashboard.NewModel(
 		dashboard.WithBeadLister(lister),
 		dashboard.WithBeadResolver(resolver),
 		dashboard.WithPostPipelineFunc(ppFunc),
+		dashboard.WithPipelineRunner(pipelineAdapter),
+		dashboard.WithPhaseNames(phaseNames(phases)),
 	)
 
 	prog := tea.NewProgram(m, tea.WithAltScreen())
@@ -463,6 +491,78 @@ func (d *DashboardCmd) run(isTTY bool, prog teaRunner) error {
 }
 
 // --- Dashboard adapter types ---
+
+// dashboardPipelineAdapter implements dashboard.PipelineRunner by building
+// a fresh orchestrator per run with the provided statusFn callback.
+type dashboardPipelineAdapter struct {
+	providerExec provider.Executor
+	promptLoader *prompt.Loader
+	wtMgr        *worktree.Manager
+	wlMgr        *worklog.Manager
+	gateRunner   *gate.Runner
+	phases       []orchestrator.PhaseDefinition
+	bdClient     *bead.Client
+}
+
+func (a *dashboardPipelineAdapter) RunPipeline(ctx context.Context, input dashboard.PipelineInput, statusFn func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+	// Build status callback that converts orchestrator updates to dashboard messages.
+	cb := func(su orchestrator.StatusUpdate) {
+		msg := dashboard.PhaseUpdateMsg{
+			Phase:    su.Phase,
+			Status:   dashboard.PhaseStatus(su.Status),
+			Attempt:  su.Attempt,
+			MaxRetry: su.MaxRetry,
+			Duration: su.Duration,
+		}
+		if su.Signal != nil {
+			msg.Summary = su.Signal.Summary
+			msg.FilesChanged = su.Signal.FilesChanged
+			msg.Feedback = su.Signal.Feedback
+		}
+		statusFn(msg)
+	}
+
+	orch := orchestrator.New(a.providerExec,
+		orchestrator.WithPromptLoader(a.promptLoader),
+		orchestrator.WithWorktreeManager(a.wtMgr),
+		orchestrator.WithWorklogManager(a.wlMgr),
+		orchestrator.WithGateRunner(a.gateRunner),
+		orchestrator.WithPhases(a.phases),
+		orchestrator.WithStatusCallback(cb),
+	)
+
+	// Resolve bead context (best-effort).
+	beadCtx, _ := a.bdClient.Resolve(input.BeadID)
+
+	orchInput := orchestrator.PipelineInput{
+		BeadID: input.BeadID,
+		Title:  beadCtx.TaskTitle,
+		Bead:   beadCtx,
+	}
+
+	output, err := orch.RunPipeline(ctx, orchInput)
+	if err != nil {
+		return dashboard.PipelineOutput{}, err
+	}
+
+	// Convert phase results.
+	reports := make([]dashboard.PhaseReport, len(output.PhaseResults))
+	for i, pr := range output.PhaseResults {
+		reports[i] = dashboard.PhaseReport{
+			PhaseName:    pr.PhaseName,
+			Status:       dashboard.PhaseStatus(pr.Signal.Status),
+			Summary:      pr.Signal.Summary,
+			FilesChanged: pr.Signal.FilesChanged,
+			Feedback:     pr.Signal.Feedback,
+			Duration:     pr.Duration,
+		}
+	}
+
+	return dashboard.PipelineOutput{
+		Success:      output.Completed,
+		PhaseReports: reports,
+	}, nil
+}
 
 // beadListerAdapter wraps *bead.Client to implement dashboard.BeadLister.
 type beadListerAdapter struct {
@@ -635,6 +735,10 @@ func exitCode(err error) int {
 	if errors.As(err, &pe) {
 		return exitPipeline
 	}
+	// Campaign runtime errors map to pipeline exit code (not setup).
+	if errors.Is(err, campaign.ErrNoTasks) || errors.Is(err, campaign.ErrCircuitBroken) {
+		return exitPipeline
+	}
 	return exitSetup
 }
 
@@ -648,6 +752,7 @@ func bridgeStatusCallback(bridge *tui.Bridge) orchestrator.StatusCallback {
 			Progress: su.Progress,
 			Attempt:  su.Attempt,
 			MaxRetry: su.MaxRetry,
+			Duration: su.Duration,
 		}
 		if su.Signal != nil {
 			msg.Summary = su.Signal.Summary

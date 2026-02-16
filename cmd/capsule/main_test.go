@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alecthomas/kong"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/smileynet/capsule/internal/bead"
+	"github.com/smileynet/capsule/internal/campaign"
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/provider"
 	"github.com/smileynet/capsule/internal/tui"
@@ -429,6 +431,28 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		}
 	})
 
+	t.Run("exitCode returns 1 for campaign ErrNoTasks", func(t *testing.T) {
+		// Given a campaign.ErrNoTasks error
+		err := campaign.ErrNoTasks
+		// When exitCode is called
+		code := exitCode(err)
+		// Then it returns 1 (runtime failure, not setup error)
+		if code != 1 {
+			t.Errorf("exitCode(ErrNoTasks) = %d, want 1", code)
+		}
+	})
+
+	t.Run("exitCode returns 1 for campaign ErrCircuitBroken", func(t *testing.T) {
+		// Given a campaign.ErrCircuitBroken error
+		err := campaign.ErrCircuitBroken
+		// When exitCode is called
+		code := exitCode(err)
+		// Then it returns 1 (runtime failure, not setup error)
+		if code != 1 {
+			t.Errorf("exitCode(ErrCircuitBroken) = %d, want 1", code)
+		}
+	})
+
 	t.Run("RunCmd wires pipeline and returns nil on success", func(t *testing.T) {
 		// Given a RunCmd with mocks that succeed
 		var buf bytes.Buffer
@@ -723,6 +747,33 @@ func TestFeature_DisplayWiring(t *testing.T) {
 		}
 		if msg.Feedback != "ok" {
 			t.Errorf("Feedback = %q, want %q", msg.Feedback, "ok")
+		}
+	})
+
+	t.Run("bridgeStatusCallback passes Duration to StatusUpdateMsg", func(t *testing.T) {
+		// Given a bridge and a bridge status callback
+		bridge := tui.NewBridge()
+		cb := bridgeStatusCallback(bridge)
+
+		// When a completed status update with Duration is sent
+		cb(orchestrator.StatusUpdate{
+			Phase:    "test-writer",
+			Status:   orchestrator.PhasePassed,
+			Progress: "1/6",
+			Attempt:  1,
+			MaxRetry: 3,
+			Duration: 45200 * time.Millisecond,
+			Signal:   &provider.Signal{Status: provider.StatusPass, Summary: "ok", Feedback: "ok"},
+		})
+
+		// Then the bridge delivers a StatusUpdateMsg with Duration set
+		ev := <-bridge.Events()
+		msg, ok := ev.(tui.StatusUpdateMsg)
+		if !ok {
+			t.Fatalf("expected StatusUpdateMsg, got %T", ev)
+		}
+		if msg.Duration != 45200*time.Millisecond {
+			t.Errorf("Duration = %v, want %v", msg.Duration, 45200*time.Millisecond)
 		}
 	})
 
