@@ -773,25 +773,7 @@ func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input
 		SiblingContext: input.SiblingContext,
 	}
 
-	// Collect phase updates emitted by the pipeline adapter callback.
-	var lastUpdates []orchestrator.StatusUpdate
-	statusFn := func(msg dashboard.PhaseUpdateMsg) {
-		lastUpdates = append(lastUpdates, orchestrator.StatusUpdate{
-			BeadID:   input.BeadID,
-			Phase:    msg.Phase,
-			Status:   orchestrator.PhaseStatus(msg.Status),
-			Attempt:  msg.Attempt,
-			MaxRetry: msg.MaxRetry,
-			Duration: msg.Duration,
-			Signal: &provider.Signal{
-				Summary:      msg.Summary,
-				FilesChanged: msg.FilesChanged,
-				Feedback:     msg.Feedback,
-			},
-		})
-	}
-
-	output, err := r.pipelineFn(ctx, dashInput, statusFn)
+	output, err := r.pipelineFn(ctx, dashInput, func(dashboard.PhaseUpdateMsg) {})
 	if err != nil {
 		return orchestrator.PipelineOutput{}, err
 	}

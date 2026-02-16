@@ -1068,6 +1068,78 @@ func TestDashboardCampaignPipelineRunner_PropagatesSiblingContext(t *testing.T) 
 	}
 }
 
+func TestDashboardCampaignPipelineRunner_ConvertsPhaseReports(t *testing.T) {
+	// Given: a pipelineFn that returns PhaseReports in its output
+	pipelineFn := func(_ context.Context, _ dashboard.PipelineInput, _ func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+		return dashboard.PipelineOutput{
+			Success: true,
+			PhaseReports: []dashboard.PhaseReport{
+				{
+					PhaseName:    "plan",
+					Status:       dashboard.PhasePassed,
+					Summary:      "planned changes",
+					Feedback:     "looks good",
+					FilesChanged: []string{"main.go"},
+					Duration:     2 * time.Second,
+				},
+				{
+					PhaseName: "code",
+					Status:    dashboard.PhasePassed,
+					Summary:   "implemented",
+					Duration:  5 * time.Second,
+				},
+			},
+		}, nil
+	}
+	runner := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+
+	// When: RunPipeline is called
+	output, err := runner.RunPipeline(context.Background(), orchestrator.PipelineInput{BeadID: "cap-conv"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then: PhaseReports are converted to PhaseResults in the output
+	if !output.Completed {
+		t.Error("Completed = false, want true")
+	}
+	if len(output.PhaseResults) != 2 {
+		t.Fatalf("PhaseResults len = %d, want 2", len(output.PhaseResults))
+	}
+	first := output.PhaseResults[0]
+	if first.PhaseName != "plan" {
+		t.Errorf("PhaseResults[0].PhaseName = %q, want %q", first.PhaseName, "plan")
+	}
+	if first.Signal.Status != provider.Status(dashboard.PhasePassed) {
+		t.Errorf("PhaseResults[0].Signal.Status = %q, want %q", first.Signal.Status, dashboard.PhasePassed)
+	}
+	if first.Signal.Summary != "planned changes" {
+		t.Errorf("PhaseResults[0].Signal.Summary = %q, want %q", first.Signal.Summary, "planned changes")
+	}
+	if first.Signal.Feedback != "looks good" {
+		t.Errorf("PhaseResults[0].Signal.Feedback = %q, want %q", first.Signal.Feedback, "looks good")
+	}
+	if len(first.Signal.FilesChanged) != 1 || first.Signal.FilesChanged[0] != "main.go" {
+		t.Errorf("PhaseResults[0].Signal.FilesChanged = %v, want [main.go]", first.Signal.FilesChanged)
+	}
+	if first.Duration != 2*time.Second {
+		t.Errorf("PhaseResults[0].Duration = %v, want 2s", first.Duration)
+	}
+	second := output.PhaseResults[1]
+	if second.PhaseName != "code" {
+		t.Errorf("PhaseResults[1].PhaseName = %q, want %q", second.PhaseName, "code")
+	}
+	if second.Signal.Status != provider.Status(dashboard.PhasePassed) {
+		t.Errorf("PhaseResults[1].Signal.Status = %q, want %q", second.Signal.Status, dashboard.PhasePassed)
+	}
+	if second.Signal.Summary != "implemented" {
+		t.Errorf("PhaseResults[1].Signal.Summary = %q, want %q", second.Signal.Summary, "implemented")
+	}
+	if second.Duration != 5*time.Second {
+		t.Errorf("PhaseResults[1].Duration = %v, want 5s", second.Duration)
+	}
+}
+
 func TestPostPipeline_MergesAndClosesBead(t *testing.T) {
 	// Given: mock worktree and bead resolver that succeed
 	var buf bytes.Buffer
