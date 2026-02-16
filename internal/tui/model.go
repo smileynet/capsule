@@ -55,6 +55,13 @@ type PhaseState struct {
 // for running pipeline phases.
 type elapsedTickMsg struct{}
 
+// elapsedTickCmd returns a tea.Cmd that fires an elapsedTickMsg after one second.
+func elapsedTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return elapsedTickMsg{}
+	})
+}
+
 // Model is the Bubble Tea model for pipeline phase status display.
 type Model struct {
 	phases         []PhaseState
@@ -153,9 +160,7 @@ func NewModel(phaseNames []string, opts ...ModelOption) Model {
 
 // Init starts the spinner and elapsed-time ticks.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, tea.Tick(time.Second, func(time.Time) tea.Msg {
-		return elapsedTickMsg{}
-	}))
+	return tea.Batch(m.spinner.Tick, elapsedTickCmd())
 }
 
 // Update handles incoming messages.
@@ -185,9 +190,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case elapsedTickMsg:
 		if !m.phaseStartedAt.IsZero() && !m.done {
-			return m, tea.Tick(time.Second, func(time.Time) tea.Msg {
-				return elapsedTickMsg{}
-			})
+			return m, elapsedTickCmd()
 		}
 		return m, nil
 

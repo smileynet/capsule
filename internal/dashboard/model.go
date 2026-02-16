@@ -384,34 +384,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case elapsedTickMsg:
+		var cmd tea.Cmd
 		switch m.mode {
 		case ModePipeline:
-			var cmd tea.Cmd
 			m.pipeline, cmd = m.pipeline.Update(msg)
-			return m, cmd
 		case ModeCampaign:
-			var cmd tea.Cmd
 			m.campaign, cmd = m.campaign.Update(msg)
-			return m, cmd
+		default:
+			return m, nil
 		}
-		return m, nil
+		return m, cmd
 
 	case spinner.TickMsg:
+		var cmd tea.Cmd
 		switch {
 		case m.mode == ModePipeline:
-			var cmd tea.Cmd
 			m.pipeline, cmd = m.pipeline.Update(msg)
-			return m, cmd
 		case m.mode == ModeCampaign:
-			var cmd tea.Cmd
 			m.campaign, cmd = m.campaign.Update(msg)
-			return m, cmd
 		case m.mode == ModeBrowse && (m.browse.loading || m.resolvingID != ""):
-			var cmd tea.Cmd
 			m.browseSpinner, cmd = m.browseSpinner.Update(msg)
-			return m, cmd
+		default:
+			return m, nil
 		}
-		return m, nil
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)

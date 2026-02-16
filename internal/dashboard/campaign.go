@@ -51,20 +51,12 @@ func (cs campaignState) Update(msg tea.Msg) (campaignState, tea.Cmd) {
 		return cs.handleTaskStart(msg), nil
 	case CampaignTaskDoneMsg:
 		return cs.handleTaskDone(msg), nil
-	case PhaseUpdateMsg:
-		var cmd tea.Cmd
-		cs.pipeline, cmd = cs.pipeline.Update(msg)
-		return cs, cmd
-	case elapsedTickMsg:
+	case PhaseUpdateMsg, elapsedTickMsg, spinner.TickMsg:
 		var cmd tea.Cmd
 		cs.pipeline, cmd = cs.pipeline.Update(msg)
 		return cs, cmd
 	case tea.KeyMsg:
 		return cs.handleKey(msg), nil
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		cs.pipeline, cmd = cs.pipeline.Update(msg)
-		return cs, cmd
 	}
 	return cs, nil
 }
