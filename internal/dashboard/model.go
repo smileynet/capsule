@@ -27,6 +27,10 @@ const archiveSeparator = "──────────────────
 // thrash when the user scrolls quickly through the bead list.
 const resolveDebounce = 150 * time.Millisecond
 
+// statusLineDuration is how long the transient status message is shown
+// before being cleared automatically.
+const statusLineDuration = 5 * time.Second
+
 // Model is the root Bubble Tea model for the dashboard TUI.
 // It manages a two-pane layout with mode-based routing and focus management.
 type Model struct {
@@ -56,6 +60,7 @@ type Model struct {
 	pipelineErr      error
 	postPipeline     PostPipelineFunc
 	dispatchedBeadID string
+	lastDispatchedID string // Preserved across returnToBrowse so cursor snaps on next BeadListMsg.
 	aborting         bool
 
 	campaign       campaignState
@@ -64,6 +69,8 @@ type Model struct {
 	campaignErr    error            // set on CampaignErrorMsg from runner failure
 
 	archive ArchiveReader
+
+	statusMsg string // Transient status shown between panes and help bar; cleared by statusClearMsg.
 }
 
 // newBrowseSpinner returns a spinner for browse mode loading states.
@@ -285,6 +292,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case BeadListMsg:
 		m.browse, _ = m.browse.Update(msg)
+		if m.lastDispatchedID != "" {
+			for i, b := range m.browse.beads {
+				if b.ID == m.lastDispatchedID {
+					m.browse.cursor = i
+					break
+				}
+			}
+			m.lastDispatchedID = ""
+		}
 		return m.maybeResolve()
 
 	case resolveDebounceMsg:
@@ -375,7 +391,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 
 	case PostPipelineDoneMsg:
-		// Post-pipeline is best-effort; no UI update needed.
+		if msg.Err != nil {
+			m.statusMsg = fmt.Sprintf("%s: post-pipeline failed: %s", msg.BeadID, msg.Err)
+		} else {
+			m.statusMsg = fmt.Sprintf("%s: post-pipeline complete", msg.BeadID)
+		}
+		return m, tea.Tick(statusLineDuration, func(time.Time) tea.Msg {
+			return statusClearMsg{}
+		})
+
+	case statusClearMsg:
+		m.statusMsg = ""
 		return m, nil
 
 	case channelClosedMsg:
@@ -638,6 +664,10 @@ func (m Model) View() string {
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 	helpView := m.help.View(HelpBindings(m.mode, m.browse.showClosed))
 
+	if m.statusMsg != "" {
+		statusLine := pipeHeaderStyle.Render(m.statusMsg)
+		return lipgloss.JoinVertical(lipgloss.Left, panes, statusLine, helpView)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, panes, helpView)
 }
 
