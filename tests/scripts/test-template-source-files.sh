@@ -126,8 +126,8 @@ fi
 echo "[E4] No hardcoded absolute paths"
 # Given: all files in the template directory
 # When: searching for absolute path references
-# Then: no files contain /home/, /usr/, or /tmp/ paths
-ABSOLUTE_REFS=$(grep -rlE "(^|[^.])/home/|/usr/|/tmp/" "$TEMPLATE_DIR/" 2>/dev/null || true)
+# Then: no files contain /home/, /usr/, or /tmp/ paths (shebangs excluded)
+ABSOLUTE_REFS=$(grep -rnE "(^|[^.])/home/|/usr/|/tmp/" "$TEMPLATE_DIR/" 2>/dev/null | grep -vE ':[0-9]+:#!' | cut -d: -f1 | sort -u || true)
 if [ -z "$ABSOLUTE_REFS" ]; then
   pass "No hardcoded absolute paths in template files"
 else
@@ -135,5 +135,7 @@ else
 fi
 
 echo ""
-echo "=== Results: $PASS passed, $FAIL failed ==="
+echo "==========================================="
+echo "RESULTS: $PASS passed, $FAIL failed"
+echo "==========================================="
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

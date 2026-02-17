@@ -24,6 +24,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Final sign-off validates all tests pass, code is commit-ready, and acceptance criteria are met
 - Only implementation and test files land on main; worklogs archived for audit trail
 - Worktree isolation: each task runs in its own git worktree, cleaned up after merge
+- Task Dashboard TUI: `capsule dashboard` command with two-pane layout for browsing ready beads (`internal/dashboard`)
+  - Left pane: navigable bead list with ID, priority badge (P0-P4), title, and type
+  - Right pane: resolved bead detail with hierarchy, description, and acceptance criteria
+  - Tab focus switching, cursor navigation (arrow/vim keys), refresh ('r'), and quit ('q')
+- Pipeline mode in dashboard: dispatch pipelines from bead list and watch phase progress in real time (`internal/dashboard`)
+  - Left pane: phase list with status indicators (spinner, checkmark, cross), auto-follow, retry counters, and duration
+  - Right pane: per-phase reports with summary, files changed, duration, and feedback (on failure)
+  - Channel-based event bridging between pipeline goroutine and Bubble Tea model
+  - Summary mode on completion: pass/fail result with phase count and timing, any-key return to browse
+  - Graceful abort with q/Ctrl+C during pipeline execution
+  - TTY detection with clear error message when run without a terminal
+- Dashboard polish and edge case handling (cap-kxw.3)
+  - Shared post-pipeline lifecycle: merge, cleanup, and close bead run in background after pipeline completion
+  - Terminal resize: both panes re-layout proportionally on window size changes
+  - Graceful abort: Ctrl+C during pipeline triggers cleanup and returns to browse; double-press force quits
+  - Missing bd detection: clear error message when bd is not installed
+  - Empty bead list: "No ready beads" message with refresh hint
+  - Given-When-Then structural comments on all dashboard test files
+  - Smoke test for dashboard pipeline mode
+- Campaign mode in dashboard TUI (cap-fj8.1)
+  - Select a feature or epic bead to discover and run its ready child tasks sequentially
+  - Campaign view with task queue, inline phase nesting for the active task, and collapsed pass/fail lines for completed tasks
+  - Right pane shows phase report for cursor-selected phase (same as pipeline mode)
+  - Campaign summary after all tasks complete
+  - Abort campaign with q/Ctrl+C; double-press force quits
+  - Error surfacing to dashboard UI with campaign error messages
+  - SiblingContext propagation through the campaign bridge
+  - Empty/unknown bead type defaults to single pipeline (safe fallback)
+- Campaign completed task inspection (cap-fj8.3)
+  - Navigate to completed tasks within a campaign using cursor/vim keys
+  - Expand completed tasks to view their phase reports (progressive disclosure)
+  - Right pane shows phase-level summaries, files changed, and feedback for inspected tasks
+  - Phase results carried from pipeline completion messages and stored per-task for later review
+- History view with archived pipeline results (cap-fj8.2)
+  - Toggle between ready and closed beads with `h` key
+  - Archive reader loads pipeline results from `.capsule/logs/` for closed beads
+  - Closed bead detail view shows archived phase reports and summaries
+  - `Closed()` method on bead client for retrieving closed beads
+- Pipeline context and responsiveness improvements (cap-fj8.4)
+  - Bead header line (ID + title) at top of pipeline and campaign views
+  - Elapsed time ticker updates every second for running phases
+  - Debounced bead resolution prevents right-pane thrash during rapid cursor scrolling
+  - Sticky cursor restores position to previously run bead after returning from pipeline/campaign
+  - Post-pipeline status line shows merge/close result for 5 seconds
+- Dashboard hardening bug fixes (cap-fj8.5, cap-fj8.6, cap-fj8.7)
+  - Null byte check in validateBeadID prevents path traversal
+  - Defensive slice copy in applyBeadList prevents aliasing bugs
+  - Plain priority labels in closed view prevent nested ANSI escape codes
 - Advanced retry strategies for pipeline phase pairs (cap-6vp.3)
   - Unified retry configuration via ResolveRetryStrategy (phase-level MaxRetries override pipeline defaults)
   - Configurable timeout backoff: BackoffFactor multiplies effective timeout per retry attempt

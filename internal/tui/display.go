@@ -37,6 +37,8 @@ type DisplayOptions struct {
 	ForcePlain bool               // Force plain text even if TTY.
 	Phases     []string           // Phase names for TUI initialization.
 	CancelFunc context.CancelFunc // Called by TUI on abort keypress (ignored by PlainDisplay).
+	BeadID     string             // Optional bead ID for header display.
+	BeadTitle  string             // Optional bead title for header display.
 }
 
 // NewDisplay returns a TUI display when stdout is a TTY, or a plain text
@@ -50,7 +52,13 @@ func NewDisplay(opts DisplayOptions) Display {
 		return &PlainDisplay{w: opts.Writer}
 	}
 
-	return &TUIDisplay{phases: opts.Phases, w: opts.Writer, cancelFunc: opts.CancelFunc}
+	return &TUIDisplay{
+		phases:     opts.Phases,
+		w:          opts.Writer,
+		cancelFunc: opts.CancelFunc,
+		beadID:     opts.BeadID,
+		beadTitle:  opts.BeadTitle,
+	}
 }
 
 // isTTY reports whether w is connected to a terminal.
@@ -143,8 +151,8 @@ func (d *PlainDisplay) renderUpdate(su StatusUpdateMsg) {
 	if su.Summary != "" {
 		_, _ = fmt.Fprintf(d.w, "         summary: %s\n", su.Summary)
 	}
-	// Feedback is only meaningful for failed phases (NEEDS_WORK from orchestrator).
-	if su.Feedback != "" && su.Status == StatusFailed {
+	// Feedback is only meaningful for failed/error phases (NEEDS_WORK from orchestrator).
+	if su.Feedback != "" && (su.Status == StatusFailed || su.Status == StatusError) {
 		_, _ = fmt.Fprintf(d.w, "         feedback: %s\n", su.Feedback)
 	}
 }
@@ -155,6 +163,8 @@ type TUIDisplay struct {
 	phases     []string
 	w          io.Writer
 	cancelFunc context.CancelFunc
+	beadID     string
+	beadTitle  string
 }
 
 // Run starts the Bubble Tea program and feeds events from the channel.
@@ -163,6 +173,9 @@ func (d *TUIDisplay) Run(ctx context.Context, events <-chan DisplayEvent) error 
 	var opts []ModelOption
 	if d.cancelFunc != nil {
 		opts = append(opts, WithCancelFunc(d.cancelFunc))
+	}
+	if d.beadID != "" {
+		opts = append(opts, WithBeadHeader(d.beadID, d.beadTitle))
 	}
 	model := NewModel(d.phases, opts...)
 	p := tea.NewProgram(model, tea.WithOutput(d.w))

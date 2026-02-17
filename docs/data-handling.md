@@ -8,10 +8,10 @@ Always use `jq -r '.field // empty'` for optional fields. Use `-e` for required 
 
 ```bash
 # Good: null-safe optional field
-TITLE=$(echo "$JSON" | jq -r '.[0].title // empty')
+TITLE=$(printf '%s\n' "$JSON" | jq -r '.[0].title // empty')
 
 # Good: required field — fails if missing
-TITLE=$(echo "$JSON" | jq -e -r '.[0].title') || { echo "missing title" >&2; exit 1; }
+TITLE=$(printf '%s\n' "$JSON" | jq -e -r '.[0].title') || { echo "missing title" >&2; exit 1; }
 
 # Bad: grep/sed on JSON
 TITLE=$(echo "$JSON" | grep '"title"' | sed 's/.*: "\(.*\)"/\1/')
@@ -21,17 +21,16 @@ Validate types before use. An array field might contain unexpected element types
 
 ## 2. Template Rendering
 
-`envsubst` with an explicit variable whitelist is safe **except** for self-referencing: if a variable's *value* contains `${LISTED_VAR}`, envsubst expands it. Example: `TASK_DESCRIPTION='Set via ${TASK_ID}'` — envsubst replaces `${TASK_ID}` inside the value too.
+Template rendering uses POSIX `awk` with `-v` variable assignments, which avoids shell expansion. The awk renderer handles Go `text/template` syntax: `{{.Field}}` substitution and `{{if .Field}}...{{end}}` conditionals.
 
 ```bash
-# Safe: explicit whitelist prevents uncontrolled expansion
-envsubst '${TASK_ID} ${TITLE}' < template.md > output.md
-
-# Risk: if TITLE contains literal "${TASK_ID}", it gets expanded
-# Guard: warn if any value contains a whitelisted variable reference
+# Safe: awk -v passes values without shell expansion
+awk -v TaskID="$TASK_ID" -v Title="$TITLE" '...' template.md > output.md
 ```
 
-For untrusted content, prefer `awk`-based rendering (see section 3) or `printf`-based substitution. `awk -v` assignments are literal — no shell expansion occurs.
+**Caveat:** `awk -v` interprets C-style escape sequences (`\n`, `\t`, `\\`). If bead content contains literal backslash sequences, they will be interpreted. For most bead descriptions this is not an issue.
+
+The previous `envsubst` approach was replaced because it had a self-referencing risk: if a variable's value contained `${LISTED_VAR}`, envsubst would expand it recursively.
 
 ## 3. Bash String Replacement
 
@@ -99,7 +98,7 @@ jq '.files_changed | type == "array" and all(type == "string")'
 Sanitize data at every format crossing:
 
 - **JSON → shell**: Use `jq -r` with `// empty`, never grep/sed
-- **Shell → template**: Use awk or guarded envsubst, never raw `${//}`
+- **Shell → template**: Use `awk -v` for variable passing, never raw `${//}`
 - **Shell → markdown**: Content is generally safe (markdown doesn't execute), but beware of template placeholders in content
 - **Shell → git**: Quote arguments, use `--` to separate flags from paths
 - **Go → subprocess**: Use `exec.Command` with separate arguments, never `"sh", "-c", concatenated`
@@ -152,6 +151,6 @@ These patterns in the codebase are correct — reference them:
 
 - `printf '%s\n'` for writing arbitrary content (`run-phase.sh`)
 - `jq -r '... // empty'` for null-safe field extraction (throughout)
-- `envsubst '$VAR1 $VAR2'` explicit whitelist (`prep.sh`)
+- `awk -v Var="$SHELL_VAR"` for template rendering (`prep.sh`)
 - `exec.Command("git", arg1, arg2)` with separate arguments (`worktree.go`, `claude.go`)
 - `validateID()` rejecting `-`, `/\`, `.`, `..` before path construction (`worktree.go`)

@@ -112,7 +112,7 @@ BEAD_JSON=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null) || {
     echo "ERROR: Could not read bead '$BEAD_ID'" >&2
     exit 2
 }
-TASK_TITLE=$(echo "$BEAD_JSON" | jq -r '.[0].title // empty')
+TASK_TITLE=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].title // empty')
 COMMIT_MSG="$BEAD_ID: $TASK_TITLE"
 
 # --- Invoke merge agent ---

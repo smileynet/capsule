@@ -53,7 +53,7 @@ fi
 PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 
 # --- Prerequisite checks ---
-for cmd in git bd jq envsubst; do
+for cmd in git bd jq; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: $cmd is required but not installed" >&2
         exit 1
@@ -71,7 +71,7 @@ BEAD_JSON=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null) || {
     exit 1
 }
 
-TASK_TITLE=$(echo "$BEAD_JSON" | jq -r '.[0].title // empty')
+TASK_TITLE=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].title // empty')
 if [ -z "$TASK_TITLE" ]; then
     echo "ERROR: Bead '$BEAD_ID' has no title (malformed or missing)" >&2
     exit 1
@@ -100,8 +100,8 @@ if [ -d "$WORKTREE_DIR" ]; then
 fi
 
 # --- Extract bead context ---
-TASK_DESCRIPTION=$(echo "$BEAD_JSON" | jq -r '.[0].description // empty')
-TASK_AC=$(echo "$BEAD_JSON" | jq -r '.[0].acceptance_criteria // empty')
+TASK_DESCRIPTION=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].description // empty')
+TASK_AC=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].acceptance_criteria // empty')
 
 # Walk up the parent chain to find feature and epic
 source "$SCRIPT_DIR/lib/resolve-parent-chain.sh"
@@ -124,6 +124,13 @@ GIT_WT_ERR=$( (cd "$PROJECT_DIR" && git worktree add -b "$BRANCH_NAME" "$WORKTRE
     fi
     exit 1
 }
+
+# --- Cleanup trap: remove worktree if subsequent steps fail ---
+cleanup_worktree() {
+    (cd "$PROJECT_DIR" && git worktree remove --force "$WORKTREE_DIR" 2>/dev/null) || rm -rf "$WORKTREE_DIR"
+    (cd "$PROJECT_DIR" && git branch -D "$BRANCH_NAME" 2>/dev/null) || true
+}
+trap cleanup_worktree ERR
 
 # --- Create .capsule/logs directory ---
 mkdir -p "$PROJECT_DIR/.capsule/logs"
@@ -148,37 +155,62 @@ if [ -n "$ACCEPTANCE_CRITERIA" ] && [ -z "$TASK_AC" ]; then
       awk '/^#+ *(Acceptance Criteria|Requirements)/{skip=1; next} /^#/{skip=0} !skip')
 fi
 
-# Guard: warn if any variable value contains a whitelisted variable reference (self-referencing risk)
-# See docs/data-handling.md section 2 for details on envsubst self-referencing
-ENVSUBST_VARS="EPIC_ID EPIC_TITLE EPIC_GOAL FEATURE_ID FEATURE_TITLE FEATURE_GOAL TASK_ID TASK_TITLE TASK_DESCRIPTION ACCEPTANCE_CRITERIA TIMESTAMP"
-for _check_var in $ENVSUBST_VARS; do
-    # Use indirect expansion to get variable value
-    case "$_check_var" in
-        TASK_ID) _check_val="$BEAD_ID" ;;
-        *) _check_val="${!_check_var}" ;;
-    esac
-    for _ref_var in $ENVSUBST_VARS; do
-        if printf '%s' "$_check_val" | grep -qF "\${$_ref_var}"; then
-            echo "WARNING: $_check_var value contains \${$_ref_var} — envsubst may expand it" >&2
-        fi
-    done
-done
+# Render Go text/template to worklog.md using POSIX awk.
+# Handles {{.Field}} substitution and {{if .Field}}...{{end}} conditionals.
+# Field values are passed via -v to avoid shell-injection from bead content.
+# Note: awk -v interprets C escape sequences (\n, \t, \\) in values.
+awk \
+    -v EpicID="$EPIC_ID" \
+    -v EpicTitle="$EPIC_TITLE" \
+    -v EpicGoal="$EPIC_GOAL" \
+    -v FeatureID="$FEATURE_ID" \
+    -v FeatureTitle="$FEATURE_TITLE" \
+    -v FeatureGoal="$FEATURE_GOAL" \
+    -v TaskID="$BEAD_ID" \
+    -v TaskTitle="$TASK_TITLE" \
+    -v TaskDescription="$TASK_DESCRIPTION" \
+    -v AcceptanceCriteria="$ACCEPTANCE_CRITERIA" \
+    -v Timestamp="$TIMESTAMP" \
+'
+BEGIN {
+    f[".EpicID"]             = EpicID
+    f[".EpicTitle"]          = EpicTitle
+    f[".EpicGoal"]           = EpicGoal
+    f[".FeatureID"]          = FeatureID
+    f[".FeatureTitle"]       = FeatureTitle
+    f[".FeatureGoal"]        = FeatureGoal
+    f[".TaskID"]             = TaskID
+    f[".TaskTitle"]          = TaskTitle
+    f[".TaskDescription"]    = TaskDescription
+    f[".AcceptanceCriteria"] = AcceptanceCriteria
+    f[".Timestamp"]          = Timestamp
+    skip = 0
+}
+# Reset skip on {{end}} first (handles {{end}}{{if .X}} on same line)
+/\{\{end\}\}/ { skip = 0 }
+# {{if .Field}} — start conditional block
+/\{\{if \./ {
+    s = $0; sub(/.*\{\{if /, "", s); sub(/\}\}.*/, "", s)
+    if (s != "" && f[s] == "") { skip = 1 }
+    next
+}
+# Pure {{end}} lines (skip already reset above)
+/\{\{end\}\}/ { next }
+skip { next }
+{
+    line = $0
+    while (match(line, /\{\{\.[-_a-zA-Z0-9]+\}\}/)) {
+        token = substr(line, RSTART, RLENGTH)
+        key = substr(token, 3, length(token) - 4)
+        val = (key in f) ? f[key] : ""
+        line = substr(line, 1, RSTART - 1) val substr(line, RSTART + RLENGTH)
+    }
+    print line
+}
+' "$TEMPLATE" > "$WORKTREE_DIR/worklog.md"
 
-# Convert {{ }} to ${ } for envsubst
-sed 's/{{/\${/g; s/}}/}/g' "$TEMPLATE" | \
-    EPIC_ID="$EPIC_ID" \
-    EPIC_TITLE="$EPIC_TITLE" \
-    EPIC_GOAL="$EPIC_GOAL" \
-    FEATURE_ID="$FEATURE_ID" \
-    FEATURE_TITLE="$FEATURE_TITLE" \
-    FEATURE_GOAL="$FEATURE_GOAL" \
-    TASK_ID="$BEAD_ID" \
-    TASK_TITLE="$TASK_TITLE" \
-    TASK_DESCRIPTION="$TASK_DESCRIPTION" \
-    ACCEPTANCE_CRITERIA="$ACCEPTANCE_CRITERIA" \
-    TIMESTAMP="$TIMESTAMP" \
-    envsubst '${EPIC_ID} ${EPIC_TITLE} ${EPIC_GOAL} ${FEATURE_ID} ${FEATURE_TITLE} ${FEATURE_GOAL} ${TASK_ID} ${TASK_TITLE} ${TASK_DESCRIPTION} ${ACCEPTANCE_CRITERIA} ${TIMESTAMP}' \
-    > "$WORKTREE_DIR/worklog.md"
+# --- Clear cleanup trap: worktree setup succeeded ---
+trap - ERR
 
 # --- Context quality report ---
 echo "Context:"

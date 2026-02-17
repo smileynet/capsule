@@ -138,7 +138,7 @@ if $HAS_BD; then
     # Get task metadata
     BEAD_JSON=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null) || true
     if [ -n "$BEAD_JSON" ]; then
-        BEAD_TITLE=$(echo "$BEAD_JSON" | jq -r '.[0].title // empty' 2>/dev/null) || true
+        BEAD_TITLE=$(printf '%s\n' "$BEAD_JSON" | jq -r '.[0].title // empty' 2>/dev/null) || true
 
         # Walk parent chain to find feature and epic
         source "$SCRIPT_DIR/lib/resolve-parent-chain.sh"
@@ -148,8 +148,8 @@ if $HAS_BD; then
         if [ -n "$FEATURE_ID" ]; then
             SIBLING_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$FEATURE_ID" --all --json 2>/dev/null) || true
             if [ -n "$SIBLING_JSON" ]; then
-                TOTAL=$(echo "$SIBLING_JSON" | jq 'length' 2>/dev/null) || TOTAL=0
-                CLOSED=$(echo "$SIBLING_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || CLOSED=0
+                TOTAL=$(printf '%s\n' "$SIBLING_JSON" | jq 'length' 2>/dev/null) || TOTAL=0
+                CLOSED=$(printf '%s\n' "$SIBLING_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || CLOSED=0
                 FEATURE_PROGRESS="$CLOSED of $TOTAL tasks closed"
             fi
         fi
@@ -158,8 +158,8 @@ if $HAS_BD; then
         if [ -n "$EPIC_ID" ]; then
             EPIC_CHILDREN_JSON=$(cd "$PROJECT_DIR" && bd list --parent="$EPIC_ID" --all --json 2>/dev/null) || true
             if [ -n "$EPIC_CHILDREN_JSON" ]; then
-                EPIC_TOTAL=$(echo "$EPIC_CHILDREN_JSON" | jq 'length' 2>/dev/null) || EPIC_TOTAL=0
-                EPIC_CLOSED=$(echo "$EPIC_CHILDREN_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || EPIC_CLOSED=0
+                EPIC_TOTAL=$(printf '%s\n' "$EPIC_CHILDREN_JSON" | jq 'length' 2>/dev/null) || EPIC_TOTAL=0
+                EPIC_CLOSED=$(printf '%s\n' "$EPIC_CHILDREN_JSON" | jq '[.[] | select(.status == "closed")] | length' 2>/dev/null) || EPIC_CLOSED=0
                 EPIC_PROGRESS="$EPIC_CLOSED of $EPIC_TOTAL features closed"
             fi
         fi

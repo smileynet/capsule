@@ -247,7 +247,7 @@ else
 fi
 
 # Verify signal JSON was returned
-SIGNAL_STATUS=$(echo "$SIGNOFF_OUTPUT" | jq -r '.status' 2>/dev/null || echo "")
+SIGNAL_STATUS=$(printf '%s\n' "$SIGNOFF_OUTPUT" | jq -r '.status' 2>/dev/null || echo "")
 if [ "$SIGNAL_STATUS" = "PASS" ]; then
     pass "sign-off returned valid PASS signal"
 else

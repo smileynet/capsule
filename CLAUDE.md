@@ -5,7 +5,8 @@
 ```bash
 make build      # Build binary with version info
 make test       # Run unit tests (-short)
-make test-full  # Run all tests (no -short)
+make test-full  # Run all tests (no -short) + shell tests
+make test-scripts # Run shell tests in tests/scripts/
 make smoke      # Run end-to-end smoke tests (builds binary)
 make lint       # Run golangci-lint
 make clean      # Remove binary and test cache
@@ -46,7 +47,7 @@ docs/                     # Architecture and conventions
 |-------|------|-----------|
 | Every edit | PostToolUse hook | `goimports` + `go build` + `go vet` (scoped to edited package) |
 | Every commit | Pre-commit hook | Incremental lint + `-short` tests (staged packages only) |
-| Feature close | Manual before `bd close` | `make lint && make test-full` |
+| Feature close | Manual before `bd close` | `make lint && make test-full` (includes shell tests) |
 | Epic close | Manual before `bd close` | `make lint && make test-full && make smoke` |
 
 - **Linter config**: `.golangci.yml` (errorlint, gocritic enabled)

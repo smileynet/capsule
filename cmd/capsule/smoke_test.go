@@ -250,6 +250,45 @@ func TestSmoke_OrchestratorWiring(t *testing.T) {
 	})
 }
 
+// TestSmoke_DashboardTTY exercises the dashboard command at the binary level,
+// validating TTY detection from cap-kxw.
+func TestSmoke_DashboardTTY(t *testing.T) {
+	projectRoot := findProjectRoot(t)
+	binary := filepath.Join(projectRoot, "capsule")
+
+	// Ensure binary exists.
+	if _, err := os.Stat(binary); err != nil {
+		cmd := exec.Command("go", "build",
+			"-ldflags", "-X main.version=smoke-test -X main.commit=abc1234 -X main.date=2026-01-01",
+			"-o", binary, "./cmd/capsule")
+		cmd.Dir = projectRoot
+		out, buildErr := cmd.CombinedOutput()
+		if buildErr != nil {
+			t.Fatalf("go build failed: %v\n%s", buildErr, out)
+		}
+		t.Cleanup(func() { os.Remove(binary) })
+	}
+
+	t.Run("capsule dashboard without TTY exits with error", func(t *testing.T) {
+		// Given: the binary running without a TTY (test subprocess has no terminal)
+		// When: capsule dashboard is invoked
+		cmd := exec.Command(binary, "dashboard")
+		cmd.Dir = projectRoot
+		out, err := cmd.CombinedOutput()
+
+		// Then: it exits non-zero
+		if err == nil {
+			t.Fatal("expected non-zero exit code without TTY")
+		}
+
+		// And: the error mentions TTY requirement
+		output := string(out)
+		if !strings.Contains(output, "terminal") && !strings.Contains(output, "TTY") {
+			t.Errorf("expected error about TTY requirement, got: %q", output)
+		}
+	})
+}
+
 // TestSmoke_PipelinePause exercises the SIGUSR1 pause trigger end-to-end.
 // It starts a capsule pipeline with a slow mock provider, sends SIGUSR1 mid-flight,
 // and verifies that the process exits with code 3 and prints the pause message.

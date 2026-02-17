@@ -96,7 +96,7 @@ if command -v bd >/dev/null 2>&1; then
     BEAD_JSON=$(cd "$PROJECT_DIR" && bd show "$BEAD_ID" --json 2>/dev/null) || true
     if [ -n "$BEAD_JSON" ]; then
         # Extract non-parent-child dependencies that are not closed
-        BLOCKERS=$(echo "$BEAD_JSON" | jq -r '
+        BLOCKERS=$(printf '%s\n' "$BEAD_JSON" | jq -r '
           [.[0].dependencies[]? |
            select(.dependency_type != "parent-child") |
            select(.status != "closed")] |
@@ -165,12 +165,12 @@ run_phase_pair() {
             echo "  ERROR: $review_phase failed" >&2
             printf '%s\n' "$review_output" >&2
             [ -n "$attempts_var" ] && printf -v "$attempts_var" '%s' "$attempt"
-            LAST_FEEDBACK=$(echo "$review_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$review_output")
+            LAST_FEEDBACK=$(printf '%s\n' "$review_output" | jq -r '.feedback // empty' 2>/dev/null || printf '%s\n' "$review_output")
             return 2
         fi
 
         # NEEDS_WORK — extract feedback for next attempt
-        feedback=$(echo "$review_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$review_output")
+        feedback=$(printf '%s\n' "$review_output" | jq -r '.feedback // empty' 2>/dev/null || printf '%s\n' "$review_output")
         echo "  $review_phase: NEEDS_WORK (attempt $attempt/$max_retries)"
     done
 
@@ -207,12 +207,12 @@ run_signoff() {
             echo "  ERROR: sign-off failed" >&2
             printf '%s\n' "$signoff_output" >&2
             SIGNOFF_ATTEMPTS=$attempt
-            LAST_FEEDBACK=$(echo "$signoff_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$signoff_output")
+            LAST_FEEDBACK=$(printf '%s\n' "$signoff_output" | jq -r '.feedback // empty' 2>/dev/null || printf '%s\n' "$signoff_output")
             return 2
         fi
 
         # NEEDS_WORK — re-run execute phase before retrying sign-off
-        feedback=$(echo "$signoff_output" | jq -r '.feedback // empty' 2>/dev/null || echo "$signoff_output")
+        feedback=$(printf '%s\n' "$signoff_output" | jq -r '.feedback // empty' 2>/dev/null || printf '%s\n' "$signoff_output")
         echo "  sign-off: NEEDS_WORK — re-running execute (attempt $attempt/$max_retries)"
 
         local exec_exit=0

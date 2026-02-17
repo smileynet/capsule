@@ -37,7 +37,7 @@ LAST_JSON=""
 
 # Try each line from the bottom as a potential single-line JSON object
 while IFS= read -r line; do
-    if [ -n "$line" ] && echo "$line" | jq empty 2>/dev/null; then
+    if [ -n "$line" ] && printf '%s\n' "$line" | jq empty 2>/dev/null; then
         LAST_JSON="$line"
         break
     fi
@@ -50,13 +50,13 @@ fi
 
 # --- Validate required fields ---
 for field in status feedback files_changed summary; do
-    if ! echo "$LAST_JSON" | jq -e "has(\"$field\")" >/dev/null; then
+    if ! printf '%s\n' "$LAST_JSON" | jq -e "has(\"$field\")" >/dev/null; then
         error_signal "Missing required field: $field"
     fi
 done
 
 # --- Validate status value ---
-STATUS_VAL=$(echo "$LAST_JSON" | jq -r '.status')
+STATUS_VAL=$(printf '%s\n' "$LAST_JSON" | jq -r '.status')
 case "$STATUS_VAL" in
     PASS|NEEDS_WORK|ERROR) ;;
     *)
@@ -65,10 +65,10 @@ case "$STATUS_VAL" in
 esac
 
 # --- Validate files_changed is array of strings ---
-if ! echo "$LAST_JSON" | jq -e '.files_changed | type == "array" and all(type == "string")' >/dev/null; then
+if ! printf '%s\n' "$LAST_JSON" | jq -e '.files_changed | type == "array" and all(type == "string")' >/dev/null; then
     error_signal "files_changed must be an array of strings"
 fi
 
 # --- Output validated signal ---
-echo "$LAST_JSON" | jq -c .
+printf '%s\n' "$LAST_JSON" | jq -c .
 exit 0

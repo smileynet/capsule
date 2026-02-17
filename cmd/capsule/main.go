@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"sync/atomic"
@@ -13,10 +14,13 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/campaign"
 	"github.com/smileynet/capsule/internal/config"
+	"github.com/smileynet/capsule/internal/dashboard"
 	"github.com/smileynet/capsule/internal/gate"
 	"github.com/smileynet/capsule/internal/orchestrator"
 	"github.com/smileynet/capsule/internal/prompt"
@@ -35,11 +39,12 @@ var (
 
 // CLI is the top-level command structure for capsule.
 type CLI struct {
-	Version  kong.VersionFlag `help:"Show version." short:"V"`
-	Run      RunCmd           `cmd:"" help:"Run a capsule pipeline."`
-	Campaign CampaignCmd      `cmd:"" help:"Run a campaign for a feature or epic."`
-	Abort    AbortCmd         `cmd:"" help:"Abort a running capsule."`
-	Clean    CleanCmd         `cmd:"" help:"Clean up capsule worktree and artifacts."`
+	Version   kong.VersionFlag `help:"Show version." short:"V"`
+	Run       RunCmd           `cmd:"" help:"Run a capsule pipeline."`
+	Campaign  CampaignCmd      `cmd:"" help:"Run a campaign for a feature or epic."`
+	Dashboard DashboardCmd     `cmd:"" help:"Open interactive dashboard TUI."`
+	Abort     AbortCmd         `cmd:"" help:"Abort a running capsule."`
+	Clean     CleanCmd         `cmd:"" help:"Clean up capsule worktree and artifacts."`
 }
 
 // RunCmd executes a capsule pipeline for a given bead.
@@ -198,6 +203,13 @@ func (r *RunCmd) Run() error {
 	pipelineCtx, pipelineCancel := context.WithCancel(context.Background())
 	defer pipelineCancel()
 
+	// Resolve bead title early for display header (best-effort).
+	// Note: the bead is resolved again in runPipeline for worklog context.
+	// The duplication is intentional — the header resolve is fire-and-forget
+	// (no warnings), while runPipeline's resolve logs warnings to the writer.
+	bdClient := bead.NewClient(".")
+	beadCtx, _ := bdClient.Resolve(r.BeadID)
+
 	// Build display bridge and display.
 	bridge := tui.NewBridge()
 	display := tui.NewDisplay(tui.DisplayOptions{
@@ -205,6 +217,8 @@ func (r *RunCmd) Run() error {
 		ForcePlain: r.NoTUI,
 		Phases:     phaseNames(phases),
 		CancelFunc: pipelineCancel,
+		BeadID:     r.BeadID,
+		BeadTitle:  beadCtx.TaskTitle,
 	})
 
 	pauseCheck, stopPause := setupPauseTrigger()
@@ -214,7 +228,6 @@ func (r *RunCmd) Run() error {
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
 	wlMgr := worklog.NewManager("templates/worklog.md.template", ".capsule/logs")
-	bdClient := bead.NewClient(".")
 	gateRunner := gate.NewRunner()
 
 	orch := orchestrator.New(p,
@@ -262,7 +275,7 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 
 	// Post-pipeline lifecycle: merge → cleanup → close bead.
 	// Best-effort: pipeline success is the hard requirement.
-	r.runPostPipeline(w, wt, bd)
+	postPipeline(w, r.BeadID, wt, bd)
 	return nil
 }
 
@@ -298,11 +311,10 @@ func (r *RunCmd) resolveBeadContext(w io.Writer, bd beadResolver) worklog.BeadCo
 	return beadCtx
 }
 
-// runPostPipeline performs merge, cleanup, and bead closing after a successful pipeline.
-// Failures print warnings but don't affect the exit code.
-func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
-	id := r.BeadID
-
+// postPipeline performs merge, cleanup, and bead closing after a successful pipeline.
+// Callable from both RunCmd and DashboardCmd. Failures print warnings to w but are
+// otherwise best-effort.
+func postPipeline(w io.Writer, beadID string, wt mergeOps, bd beadResolver) {
 	// Detect main branch.
 	mainBranch, err := wt.DetectMainBranch()
 	if err != nil {
@@ -311,25 +323,25 @@ func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
 	}
 
 	// Merge to main.
-	commitMsg := fmt.Sprintf("%s: pipeline complete", id)
-	err = wt.MergeToMain(id, mainBranch, commitMsg)
+	commitMsg := fmt.Sprintf("%s: pipeline complete", beadID)
+	err = wt.MergeToMain(beadID, mainBranch, commitMsg)
 	if err != nil {
 		if errors.Is(err, worktree.ErrMergeConflict) {
-			_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", id, mainBranch)
+			_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", beadID, mainBranch)
 			_, _ = fmt.Fprintf(w, "  To fix:\n")
 			_, _ = fmt.Fprintf(w, "    git checkout %s\n", mainBranch)
-			_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", id)
+			_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", beadID)
 			_, _ = fmt.Fprintf(w, "    # resolve conflicts, then:\n")
-			_, _ = fmt.Fprintf(w, "    capsule clean %s\n", id)
+			_, _ = fmt.Fprintf(w, "    capsule clean %s\n", beadID)
 			return
 		}
 		_, _ = fmt.Fprintf(w, "warning: merge failed: %v\n", err)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", id, mainBranch)
+	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", beadID, mainBranch)
 
 	// Cleanup: remove worktree and branch.
-	if err := wt.Remove(id, true); err != nil {
+	if err := wt.Remove(beadID, true); err != nil {
 		_, _ = fmt.Fprintf(w, "warning: cleanup failed: %v\n", err)
 	}
 	if err := wt.Prune(); err != nil {
@@ -337,13 +349,13 @@ func (r *RunCmd) runPostPipeline(w io.Writer, wt mergeOps, bd beadResolver) {
 	}
 
 	// Close bead.
-	if err := bd.Close(id); err != nil {
+	if err := bd.Close(beadID); err != nil {
 		_, _ = fmt.Fprintf(w, "warning: bead close failed: %v\n", err)
 	} else {
-		_, _ = fmt.Fprintf(w, "Closed %s\n", id)
+		_, _ = fmt.Fprintf(w, "Closed %s\n", beadID)
 	}
 
-	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", id)
+	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", beadID)
 }
 
 // AbortCmd aborts a running capsule by removing the worktree.
@@ -417,6 +429,241 @@ func (c *CleanCmd) run(w io.Writer, mgr worktreeOps) error {
 
 	_, _ = fmt.Fprintf(w, "Cleaned capsule %s\n", c.BeadID)
 	return nil
+}
+
+// --- Dashboard command ---
+
+// DashboardCmd opens the interactive dashboard TUI.
+type DashboardCmd struct{}
+
+// teaRunner abstracts Bubble Tea program execution for testing.
+type teaRunner interface {
+	Run() (tea.Model, error)
+}
+
+// Run builds real dependencies and launches the dashboard TUI.
+func (d *DashboardCmd) Run() error {
+	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+		return fmt.Errorf("dashboard: requires a terminal (TTY)")
+	}
+
+	if _, err := exec.LookPath("bd"); err != nil {
+		return fmt.Errorf("dashboard: bd is not installed (required for bead management)")
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("dashboard: %w", err)
+	}
+
+	// Create provider via registry.
+	reg := provider.NewRegistry()
+	reg.Register("claude", func() (provider.Executor, error) {
+		return provider.NewClaudeProvider(provider.WithTimeout(cfg.Runtime.Timeout)), nil
+	})
+	p, err := reg.NewProvider(cfg.Runtime.Provider)
+	if err != nil {
+		return fmt.Errorf("dashboard: %w", err)
+	}
+
+	// Resolve pipeline phases.
+	phases, err := orchestrator.LoadPhases(cfg.Pipeline.Phases)
+	if err != nil {
+		return fmt.Errorf("dashboard: loading phases: %w", err)
+	}
+
+	bdClient := bead.NewClient(".")
+	lister := &beadListerAdapter{client: bdClient}
+	resolver := &beadResolverAdapter{client: bdClient}
+	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
+
+	ppFunc := func(beadID string) error {
+		postPipeline(io.Discard, beadID, wtMgr, bdClient)
+		return nil
+	}
+
+	pipelineAdapter := &dashboardPipelineAdapter{
+		providerExec: p,
+		promptLoader: prompt.NewLoader("prompts"),
+		wtMgr:        wtMgr,
+		wlMgr:        worklog.NewManager("templates/worklog.md.template", ".capsule/logs"),
+		gateRunner:   gate.NewRunner(),
+		phases:       phases,
+		bdClient:     bdClient,
+	}
+
+	campaignAdapter := &dashboardCampaignAdapter{
+		beadClient: newCampaignBeadClient("."),
+		stateStore: state.NewFileStore(".capsule/campaigns"),
+		campaignCfg: campaign.Config{
+			FailureMode:      cfg.Campaign.FailureMode,
+			CircuitBreaker:   cfg.Campaign.CircuitBreaker,
+			DiscoveryFiling:  cfg.Campaign.DiscoveryFiling,
+			CrossRunContext:  cfg.Campaign.CrossRunContext,
+			ValidationPhases: cfg.Campaign.ValidationPhases,
+		},
+	}
+
+	archiveReader := dashboard.NewFileArchiveReader(".capsule/logs")
+
+	m := dashboard.NewModel(
+		dashboard.WithBeadLister(lister),
+		dashboard.WithBeadResolver(resolver),
+		dashboard.WithPostPipelineFunc(ppFunc),
+		dashboard.WithPipelineRunner(pipelineAdapter),
+		dashboard.WithPhaseNames(phaseNames(phases)),
+		dashboard.WithCampaignRunner(campaignAdapter),
+		dashboard.WithArchiveReader(archiveReader),
+	)
+
+	prog := tea.NewProgram(m, tea.WithAltScreen())
+	return d.run(true, prog)
+}
+
+// run executes the tea program, enabling testable wiring.
+func (d *DashboardCmd) run(isTTY bool, prog teaRunner) error {
+	if !isTTY {
+		return fmt.Errorf("dashboard: requires a terminal (TTY)")
+	}
+	_, err := prog.Run()
+	return err
+}
+
+// --- Dashboard adapter types ---
+
+// dashboardPipelineAdapter implements dashboard.PipelineRunner by building
+// a fresh orchestrator per run with the provided statusFn callback.
+type dashboardPipelineAdapter struct {
+	providerExec provider.Executor
+	promptLoader *prompt.Loader
+	wtMgr        *worktree.Manager
+	wlMgr        *worklog.Manager
+	gateRunner   *gate.Runner
+	phases       []orchestrator.PhaseDefinition
+	bdClient     *bead.Client
+}
+
+func (a *dashboardPipelineAdapter) RunPipeline(ctx context.Context, input dashboard.PipelineInput, statusFn func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+	// Build status callback that converts orchestrator updates to dashboard messages.
+	cb := func(su orchestrator.StatusUpdate) {
+		msg := dashboard.PhaseUpdateMsg{
+			Phase:    su.Phase,
+			Status:   dashboard.PhaseStatus(su.Status),
+			Attempt:  su.Attempt,
+			MaxRetry: su.MaxRetry,
+			Duration: su.Duration,
+		}
+		if su.Signal != nil {
+			msg.Summary = su.Signal.Summary
+			msg.FilesChanged = su.Signal.FilesChanged
+			msg.Feedback = su.Signal.Feedback
+		}
+		statusFn(msg)
+	}
+
+	orch := orchestrator.New(a.providerExec,
+		orchestrator.WithPromptLoader(a.promptLoader),
+		orchestrator.WithWorktreeManager(a.wtMgr),
+		orchestrator.WithWorklogManager(a.wlMgr),
+		orchestrator.WithGateRunner(a.gateRunner),
+		orchestrator.WithPhases(a.phases),
+		orchestrator.WithStatusCallback(cb),
+	)
+
+	// Resolve bead context (best-effort).
+	beadCtx, _ := a.bdClient.Resolve(input.BeadID)
+
+	orchInput := orchestrator.PipelineInput{
+		BeadID:         input.BeadID,
+		Title:          beadCtx.TaskTitle,
+		Bead:           beadCtx,
+		SiblingContext: input.SiblingContext,
+	}
+
+	output, err := orch.RunPipeline(ctx, orchInput)
+	if err != nil {
+		return dashboard.PipelineOutput{}, err
+	}
+
+	// Convert phase results.
+	reports := make([]dashboard.PhaseReport, len(output.PhaseResults))
+	for i, pr := range output.PhaseResults {
+		reports[i] = dashboard.PhaseReport{
+			PhaseName:    pr.PhaseName,
+			Status:       dashboard.PhaseStatus(pr.Signal.Status),
+			Summary:      pr.Signal.Summary,
+			FilesChanged: pr.Signal.FilesChanged,
+			Feedback:     pr.Signal.Feedback,
+			Duration:     pr.Duration,
+		}
+	}
+
+	return dashboard.PipelineOutput{
+		Success:      output.Completed,
+		PhaseReports: reports,
+	}, nil
+}
+
+// beadListerAdapter wraps *bead.Client to implement dashboard.BeadLister.
+type beadListerAdapter struct {
+	client *bead.Client
+}
+
+func (a *beadListerAdapter) Ready() ([]dashboard.BeadSummary, error) {
+	summaries, err := a.client.Ready()
+	if err != nil {
+		return nil, err
+	}
+	beads := make([]dashboard.BeadSummary, len(summaries))
+	for i, s := range summaries {
+		beads[i] = dashboard.BeadSummary{
+			ID:       s.ID,
+			Title:    s.Title,
+			Priority: s.Priority,
+			Type:     s.Type,
+		}
+	}
+	return beads, nil
+}
+
+func (a *beadListerAdapter) Closed(limit int) ([]dashboard.BeadSummary, error) {
+	summaries, err := a.client.Closed(limit)
+	if err != nil {
+		return nil, err
+	}
+	beads := make([]dashboard.BeadSummary, len(summaries))
+	for i, s := range summaries {
+		beads[i] = dashboard.BeadSummary{
+			ID:       s.ID,
+			Title:    s.Title,
+			Priority: s.Priority,
+			Type:     s.Type,
+		}
+	}
+	return beads, nil
+}
+
+// beadResolverAdapter wraps *bead.Client to implement dashboard.BeadResolver.
+type beadResolverAdapter struct {
+	client *bead.Client
+}
+
+func (a *beadResolverAdapter) Resolve(id string) (dashboard.BeadDetail, error) {
+	ctx, err := a.client.Resolve(id)
+	if err != nil {
+		return dashboard.BeadDetail{}, err
+	}
+	// Priority and Type are zero-valued: worklog.BeadContext does not carry them.
+	return dashboard.BeadDetail{
+		ID:           ctx.TaskID,
+		Title:        ctx.TaskTitle,
+		Description:  ctx.TaskDescription,
+		Acceptance:   ctx.AcceptanceCriteria,
+		EpicID:       ctx.EpicID,
+		EpicTitle:    ctx.EpicTitle,
+		FeatureID:    ctx.FeatureID,
+		FeatureTitle: ctx.FeatureTitle,
+	}, nil
 }
 
 // --- Campaign adapter types ---
@@ -547,6 +794,218 @@ func setupPauseTrigger() (check func() bool, stop func()) {
 	}
 }
 
+// --- Dashboard campaign adapter types ---
+
+// dashboardCampaignAdapter implements dashboard.CampaignRunner by building a
+// campaign.Runner and bridging its lifecycle events to tea.Msg via statusFn.
+type dashboardCampaignAdapter struct {
+	beadClient  campaign.BeadClient
+	stateStore  campaign.StateStore
+	campaignCfg campaign.Config
+}
+
+func (a *dashboardCampaignAdapter) RunCampaign(
+	ctx context.Context,
+	parentID string,
+	statusFn func(tea.Msg),
+	pipelineFn func(context.Context, dashboard.PipelineInput, func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error),
+) error {
+	cb := &dashboardCampaignCallback{statusFn: statusFn}
+	pr := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+	runner := campaign.NewRunner(pr, a.beadClient, a.stateStore, a.campaignCfg, cb)
+	return runner.Run(ctx, parentID)
+}
+
+// dashboardCampaignPipelineRunner implements campaign.PipelineRunner by
+// bridging dashboard's pipelineFn (which accepts dashboard types) to the
+// campaign's orchestrator-typed interface.
+type dashboardCampaignPipelineRunner struct {
+	pipelineFn func(context.Context, dashboard.PipelineInput, func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error)
+}
+
+func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input orchestrator.PipelineInput) (orchestrator.PipelineOutput, error) {
+	if r.pipelineFn == nil {
+		return orchestrator.PipelineOutput{}, fmt.Errorf("no pipeline runner configured")
+	}
+
+	// Convert orchestrator input to dashboard input.
+	dashInput := dashboard.PipelineInput{
+		BeadID:         input.BeadID,
+		SiblingContext: input.SiblingContext,
+	}
+
+	output, err := r.pipelineFn(ctx, dashInput, func(dashboard.PhaseUpdateMsg) {})
+	if err != nil {
+		return orchestrator.PipelineOutput{}, err
+	}
+
+	// Convert dashboard output to orchestrator output.
+	results := make([]orchestrator.PhaseResult, len(output.PhaseReports))
+	for i, pr := range output.PhaseReports {
+		results[i] = orchestrator.PhaseResult{
+			PhaseName: pr.PhaseName,
+			Signal: provider.Signal{
+				Status:       dashboardStatusToProvider(pr.Status),
+				Summary:      pr.Summary,
+				FilesChanged: pr.FilesChanged,
+				Feedback:     pr.Feedback,
+			},
+			Duration: pr.Duration,
+		}
+	}
+
+	return orchestrator.PipelineOutput{
+		PhaseResults: results,
+		Completed:    output.Success,
+	}, nil
+}
+
+// providerStatusToDashboard maps a provider.Status to the corresponding
+// dashboard.PhaseStatus. Unknown statuses map to dashboard.PhaseError.
+func providerStatusToDashboard(s provider.Status) dashboard.PhaseStatus {
+	switch s {
+	case provider.StatusPass:
+		return dashboard.PhasePassed
+	case provider.StatusNeedsWork:
+		return dashboard.PhaseFailed
+	case provider.StatusError:
+		return dashboard.PhaseError
+	case provider.StatusSkip:
+		return dashboard.PhaseSkipped
+	default:
+		return dashboard.PhaseError
+	}
+}
+
+// dashboardStatusToProvider maps a dashboard.PhaseStatus to the corresponding
+// provider.Status. Unknown statuses map to provider.StatusError.
+func dashboardStatusToProvider(s dashboard.PhaseStatus) provider.Status {
+	switch s {
+	case dashboard.PhasePassed:
+		return provider.StatusPass
+	case dashboard.PhaseFailed:
+		return provider.StatusNeedsWork
+	case dashboard.PhaseError:
+		return provider.StatusError
+	case dashboard.PhaseSkipped:
+		return provider.StatusSkip
+	default:
+		return provider.StatusError
+	}
+}
+
+// dashboardCampaignCallback implements campaign.Callback by converting
+// campaign lifecycle events to dashboard tea.Msg types.
+//
+// taskIndex and taskTotal are mutated during callback invocations.
+// This struct must only be called from the campaign runner goroutine.
+type dashboardCampaignCallback struct {
+	statusFn  func(tea.Msg)
+	taskIndex int
+	taskTotal int
+}
+
+func (c *dashboardCampaignCallback) OnCampaignStart(parentID string, tasks []campaign.BeadInfo) {
+	c.taskTotal = len(tasks)
+	c.taskIndex = 0
+	infos := make([]dashboard.CampaignTaskInfo, len(tasks))
+	for i, t := range tasks {
+		infos[i] = dashboard.CampaignTaskInfo{
+			BeadID:   t.ID,
+			Title:    t.Title,
+			Priority: t.Priority,
+		}
+	}
+	// ParentTitle is intentionally omitted: the campaign.Callback interface
+	// does not carry it, so the dashboard model falls back to the title
+	// set during dispatch (see CampaignStartMsg handler in model.go).
+	c.statusFn(dashboard.CampaignStartMsg{
+		ParentID: parentID,
+		Tasks:    infos,
+	})
+}
+
+func (c *dashboardCampaignCallback) OnTaskStart(beadID string) {
+	c.statusFn(dashboard.CampaignTaskStartMsg{
+		BeadID: beadID,
+		Index:  c.taskIndex,
+		Total:  c.taskTotal,
+	})
+}
+
+func (c *dashboardCampaignCallback) OnTaskComplete(result campaign.TaskResult) {
+	var totalDuration time.Duration
+	for _, pr := range result.PhaseResults {
+		totalDuration += pr.Duration
+	}
+
+	var reports []dashboard.PhaseReport
+	if len(result.PhaseResults) > 0 {
+		reports = make([]dashboard.PhaseReport, len(result.PhaseResults))
+		for i, pr := range result.PhaseResults {
+			reports[i] = dashboard.PhaseReport{
+				PhaseName:    pr.PhaseName,
+				Status:       providerStatusToDashboard(pr.Signal.Status),
+				Summary:      pr.Signal.Summary,
+				Feedback:     pr.Signal.Feedback,
+				FilesChanged: pr.Signal.FilesChanged,
+				Duration:     pr.Duration,
+			}
+		}
+	}
+
+	c.statusFn(dashboard.CampaignTaskDoneMsg{
+		BeadID:       result.BeadID,
+		Index:        c.taskIndex,
+		Success:      result.Status == campaign.TaskCompleted,
+		Duration:     totalDuration,
+		PhaseReports: reports,
+	})
+	c.taskIndex++
+}
+
+func (c *dashboardCampaignCallback) OnTaskFail(beadID string, _ error) {
+	c.statusFn(dashboard.CampaignTaskDoneMsg{
+		BeadID:  beadID,
+		Index:   c.taskIndex,
+		Success: false,
+	})
+	c.taskIndex++
+}
+
+func (c *dashboardCampaignCallback) OnDiscoveryFiled(_ provider.Finding, _ string) {
+	// Discovery filing is silent in dashboard mode.
+}
+
+func (c *dashboardCampaignCallback) OnValidationStart() {
+	// Validation is not surfaced in dashboard campaign mode.
+}
+
+func (c *dashboardCampaignCallback) OnValidationComplete(_ campaign.TaskResult) {
+	// Validation is not surfaced in dashboard campaign mode.
+}
+
+func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {
+	passed, failed, skipped := 0, 0, 0
+	for _, t := range s.Tasks {
+		switch t.Status {
+		case campaign.TaskCompleted:
+			passed++
+		case campaign.TaskFailed:
+			failed++
+		case campaign.TaskSkipped:
+			skipped++
+		}
+	}
+	c.statusFn(dashboard.CampaignDoneMsg{
+		ParentID:   s.ParentBeadID,
+		TotalTasks: len(s.Tasks),
+		Passed:     passed,
+		Failed:     failed,
+		Skipped:    skipped,
+	})
+}
+
 // Exit codes.
 const (
 	exitSuccess  = 0 // No error.
@@ -567,6 +1026,10 @@ func exitCode(err error) int {
 	if errors.As(err, &pe) {
 		return exitPipeline
 	}
+	// Campaign runtime errors map to pipeline exit code (not setup).
+	if errors.Is(err, campaign.ErrNoTasks) || errors.Is(err, campaign.ErrCircuitBroken) {
+		return exitPipeline
+	}
 	return exitSetup
 }
 
@@ -580,6 +1043,7 @@ func bridgeStatusCallback(bridge *tui.Bridge) orchestrator.StatusCallback {
 			Progress: su.Progress,
 			Attempt:  su.Attempt,
 			MaxRetry: su.MaxRetry,
+			Duration: su.Duration,
 		}
 		if su.Signal != nil {
 			msg.Summary = su.Signal.Summary

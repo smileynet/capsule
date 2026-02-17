@@ -138,7 +138,7 @@ else
 fi
 
 # Verify signal JSON was returned
-SIGNAL_STATUS=$(echo "$PHASE_OUTPUT" | jq -r '.status' 2>/dev/null || echo "")
+SIGNAL_STATUS=$(printf '%s\n' "$PHASE_OUTPUT" | jq -r '.status' 2>/dev/null || echo "")
 if [ "$SIGNAL_STATUS" = "PASS" ]; then
     pass "execute returned valid PASS signal"
 else
@@ -195,7 +195,7 @@ else
 fi
 
 # Verify review signal
-REVIEW_STATUS=$(echo "$REVIEW_OUTPUT" | jq -r '.status' 2>/dev/null || echo "")
+REVIEW_STATUS=$(printf '%s\n' "$REVIEW_OUTPUT" | jq -r '.status' 2>/dev/null || echo "")
 if [ "$REVIEW_STATUS" = "PASS" ]; then
     pass "execute-review returned valid PASS signal with feedback"
 else
@@ -204,7 +204,7 @@ else
 fi
 
 # Verify feedback is present and meaningful
-REVIEW_FEEDBACK=$(echo "$REVIEW_OUTPUT" | jq -r '.feedback' 2>/dev/null || echo "")
+REVIEW_FEEDBACK=$(printf '%s\n' "$REVIEW_OUTPUT" | jq -r '.feedback' 2>/dev/null || echo "")
 if [ -n "$REVIEW_FEEDBACK" ] && [ "$REVIEW_FEEDBACK" != "null" ]; then
     pass "execute-review feedback is present and non-empty"
 else
@@ -253,7 +253,7 @@ else
 fi
 
 # Given: feedback extracted from NEEDS_WORK signal for retry
-RETRY_FEEDBACK=$(echo "$NEEDS_WORK_OUTPUT" | jq -r '.feedback' 2>/dev/null || echo "")
+RETRY_FEEDBACK=$(printf '%s\n' "$NEEDS_WORK_OUTPUT" | jq -r '.feedback' 2>/dev/null || echo "")
 
 # When: execute is retried with --feedback
 CAPTURE_FILE="$PROJECT_DIR/.capsule/captured-prompt.txt"
@@ -438,7 +438,7 @@ else
 fi
 
 # Verify feedback mentions scope
-SCOPE_FEEDBACK=$(echo "$SCOPE_OUTPUT" | jq -r '.feedback' 2>/dev/null || echo "")
+SCOPE_FEEDBACK=$(printf '%s\n' "$SCOPE_OUTPUT" | jq -r '.feedback' 2>/dev/null || echo "")
 if echo "$SCOPE_FEEDBACK" | grep -qi "scope"; then
     pass "Scope creep feedback contains 'scope' reference"
 else
@@ -480,7 +480,7 @@ SIGNAL_OUTPUT=$("$RUN_PHASE" execute "$WORKTREE_DIR" 2>/dev/null) || true
 
 FIELDS_OK=true
 for field in status feedback files_changed summary; do
-    if [ "$(echo "$SIGNAL_OUTPUT" | jq "has(\"$field\")")" != "true" ]; then
+    if [ "$(printf '%s\n' "$SIGNAL_OUTPUT" | jq "has(\"$field\")")" != "true" ]; then
         fail "Signal missing required field: $field"
         FIELDS_OK=false
     fi
@@ -489,7 +489,7 @@ if [ "$FIELDS_OK" = true ]; then
     pass "Signal JSON contains all required fields (status, feedback, files_changed, summary)"
 fi
 
-IS_ARRAY=$(echo "$SIGNAL_OUTPUT" | jq '.files_changed | type == "array"')
+IS_ARRAY=$(printf '%s\n' "$SIGNAL_OUTPUT" | jq '.files_changed | type == "array"')
 if [ "$IS_ARRAY" = "true" ]; then
     pass "files_changed is an array"
 else

@@ -13,22 +13,21 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
-# Prerequisites: required tools installed
+# --- Prerequisite checks ---
 for cmd in git bd; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "ERROR: $cmd is required but not installed"
+        echo "ERROR: $cmd is required but not installed" >&2
         exit 1
     fi
 done
 
-# Prerequisite: setup script exists
 if [ ! -f "$SETUP_SCRIPT" ]; then
-    echo "ERROR: scripts/setup-template.sh not found"
+    echo "ERROR: scripts/setup-template.sh not found" >&2
     exit 1
 fi
 
 if [ ! -x "$SETUP_SCRIPT" ]; then
-    echo "ERROR: scripts/setup-template.sh is not executable"
+    echo "ERROR: scripts/setup-template.sh is not executable" >&2
     exit 1
 fi
 
@@ -65,11 +64,16 @@ else
     fail "git log shows no commits"
 fi
 
-# ---------- Test 3: bd ready lists the 2 task beads ----------
-echo "[3/7] bd ready lists task beads"
+# ---------- Test 3: .beads/ directory exists and bd ready lists the 2 task beads ----------
+echo "[3/7] .beads/ directory exists and bd ready lists task beads"
 # Given: a project directory created by setup-template.sh
-# When: running bd ready in the project
-# Then: 2 task beads are listed
+# When: checking for .beads/ directory and running bd ready
+# Then: .beads/ directory exists and 2 task beads are listed
+if [ -d "$PROJECT_DIR/.beads" ]; then
+    pass ".beads/ directory exists"
+else
+    fail ".beads/ directory not found in project"
+fi
 READY_OUTPUT=$(cd "$PROJECT_DIR" && bd ready 2>&1)
 TASK_COUNT=$(echo "$READY_OUTPUT" | grep -c "demo-1\.1\." || true)
 if [ "$TASK_COUNT" -eq 2 ]; then
@@ -83,17 +87,17 @@ fi
 echo "[4/7] bd show has full metadata"
 # Given: a project directory with beads initialized
 # When: running bd show on a task bead
-# Then: output contains title, description, and parent reference
+# Then: output contains title, description, acceptance criteria, and parent reference
 SHOW_OUTPUT=$(cd "$PROJECT_DIR" && bd show demo-1.1.1 2>&1)
 SHOW_OK=true
-for field in "Validate email format" "DESCRIPTION" "demo-1.1"; do
+for field in "Validate email format" "DESCRIPTION" "ACCEPTANCE CRITERIA" "ValidateEmail returns nil for valid emails" "demo-1.1"; do
     if ! echo "$SHOW_OUTPUT" | grep -q "$field"; then
         fail "bd show demo-1.1.1 missing expected content: $field"
         SHOW_OK=false
     fi
 done
 if [ "$SHOW_OK" = true ]; then
-    pass "bd show has title, description, and parent reference"
+    pass "bd show has title, description, acceptance criteria, and parent reference"
 fi
 
 # ---------- Test 5: Deterministic state across runs ----------
@@ -105,8 +109,10 @@ PROJECT_DIR_DET=$("$SETUP_SCRIPT" 2>/dev/null)
 CLEANUP_DIRS+=("$PROJECT_DIR_DET")
 FILES1=$(cd "$PROJECT_DIR" && find . -not -path './.git/*' -not -path './.beads/beads.db*' -not -name 'last-touched' | sort)
 FILES2=$(cd "$PROJECT_DIR_DET" && find . -not -path './.git/*' -not -path './.beads/beads.db*' -not -name 'last-touched' | sort)
-BD_LIST1=$(cd "$PROJECT_DIR" && bd list 2>&1)
-BD_LIST2=$(cd "$PROJECT_DIR_DET" && bd list 2>&1)
+# Strip parenthesized dependency info (blocks:/blocked by:) from bd list
+# output since bd may order dependencies non-deterministically.
+BD_LIST1=$(cd "$PROJECT_DIR" && bd list 2>&1 | sed 's/ ([^)]*)//')
+BD_LIST2=$(cd "$PROJECT_DIR_DET" && bd list 2>&1 | sed 's/ ([^)]*)//')
 if [ "$FILES1" = "$FILES2" ] && [ "$BD_LIST1" = "$BD_LIST2" ]; then
     pass "file tree and bd list are identical across runs"
 else

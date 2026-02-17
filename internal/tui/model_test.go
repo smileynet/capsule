@@ -212,6 +212,34 @@ func TestModel_Update_StatusUpdateMsg_TracksDuration(t *testing.T) {
 	}
 }
 
+func TestModel_View_BeadHeader(t *testing.T) {
+	m := NewModel([]string{"test-writer"}, WithBeadHeader("cap-042", "Fix login bug"))
+
+	view := m.View()
+
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 {
+		t.Fatal("view should have at least one line")
+	}
+	if !strings.Contains(lines[0], "cap-042") {
+		t.Errorf("first line should contain bead ID, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "Fix login bug") {
+		t.Errorf("first line should contain bead title, got: %q", lines[0])
+	}
+}
+
+func TestModel_View_NoBeadHeader_WhenEmpty(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	view := m.View()
+
+	// Without bead header, first line should be a phase line
+	if strings.Contains(view, "cap-") {
+		t.Error("view should not contain any bead ID prefix when no header configured")
+	}
+}
+
 func TestModel_View_StatusIndicators(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -673,6 +701,89 @@ func TestModel_Update_WindowSizeMsg_ResizesViewport(t *testing.T) {
 	}
 	if updated.viewport.Height == 0 {
 		t.Error("viewport height should be set after WindowSizeMsg")
+	}
+}
+
+// --- Elapsed time ticker tests ---
+
+func TestModel_Update_StatusUpdateMsg_Running_SetsPhaseStartedAt(t *testing.T) {
+	m := NewModel([]string{"test-writer", "test-review"})
+	msg := StatusUpdateMsg{Phase: "test-writer", Status: StatusRunning}
+
+	newModel, _ := m.Update(msg)
+	updated := newModel.(Model)
+
+	if updated.phaseStartedAt.IsZero() {
+		t.Error("phaseStartedAt should be set when a phase starts running")
+	}
+}
+
+func TestModel_Update_StatusUpdateMsg_Running_ResetsPhaseStartedAt(t *testing.T) {
+	m := NewModel([]string{"test-writer", "test-review"})
+	m.Update(StatusUpdateMsg{Phase: "test-writer", Status: StatusRunning})
+	time.Sleep(2 * time.Millisecond)
+
+	newModel, _ := m.Update(StatusUpdateMsg{Phase: "test-review", Status: StatusRunning})
+	updated := newModel.(Model)
+
+	// phaseStartedAt should be reset (not zero)
+	if updated.phaseStartedAt.IsZero() {
+		t.Error("phaseStartedAt should be set for new running phase")
+	}
+}
+
+func TestModel_View_ElapsedTime_ForRunningPhase(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.phases[0].Status = StatusRunning
+	m.phaseStartedAt = time.Now().Add(-42 * time.Second)
+
+	view := m.View()
+
+	if !strings.Contains(view, "(42s)") {
+		t.Errorf("running phase should show elapsed time '(42s)', got:\n%s", view)
+	}
+}
+
+func TestModel_View_ElapsedTime_NotShownForPendingPhase(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	// phases are pending by default
+
+	view := m.View()
+
+	if strings.Contains(view, "s)") {
+		t.Errorf("pending phase should not show elapsed time, got:\n%s", view)
+	}
+}
+
+func TestModel_Update_ElapsedTickMsg_ReturnsTickWhenRunning(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	m.phases[0].Status = StatusRunning
+	m.phaseStartedAt = time.Now()
+
+	_, cmd := m.Update(elapsedTickMsg{})
+
+	if cmd == nil {
+		t.Error("elapsedTickMsg should produce a follow-up tick when a phase is running")
+	}
+}
+
+func TestModel_Update_ElapsedTickMsg_NoTickWhenNotRunning(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+
+	_, cmd := m.Update(elapsedTickMsg{})
+
+	if cmd != nil {
+		t.Error("elapsedTickMsg should not produce a tick when no phase is running")
+	}
+}
+
+func TestModel_Init_ReturnsElapsedTick(t *testing.T) {
+	m := NewModel([]string{"test-writer"})
+	cmd := m.Init()
+
+	// Init should return a batch that includes both the spinner tick and elapsed tick.
+	if cmd == nil {
+		t.Fatal("Init() should return a non-nil Cmd")
 	}
 }
 

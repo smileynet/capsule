@@ -224,6 +224,31 @@ func TestPlainDisplay_RendersFeedbackOnFailure(t *testing.T) {
 	}
 }
 
+func TestPlainDisplay_RendersFeedbackOnError(t *testing.T) {
+	var buf bytes.Buffer
+	d := &PlainDisplay{w: &buf}
+	ctx := context.Background()
+
+	ch := make(chan DisplayEvent, 2)
+	ch <- StatusUpdateMsg{
+		Phase:    "execute",
+		Status:   StatusError,
+		Progress: "3/6",
+		Feedback: "Could not read worklog.md",
+	}
+	ch <- PipelineDoneMsg{}
+	close(ch)
+
+	if err := d.Run(ctx, ch); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Could not read worklog.md") {
+		t.Errorf("output should show feedback on error, got:\n%s", out)
+	}
+}
+
 func TestPlainDisplay_HandlesContextCancellation(t *testing.T) {
 	var buf bytes.Buffer
 	d := &PlainDisplay{w: &buf}

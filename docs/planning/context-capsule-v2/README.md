@@ -1,6 +1,6 @@
 # Context: Capsule v2
 
-**Status:** finalized
+**Status:** archived
 **Created:** 2026-02-06
 **Updated:** 2026-02-06
 
@@ -20,6 +20,7 @@ worklog tracking, and structured signal contracts.
 | 4 | Robust Task Pipeline | Re-scoped | 3 | 9 |
 | 5 | Multi-CLI Support | Placeholder | 2 | — |
 | 6 | Task Dashboard TUI | Re-scoped | 3 | 12 |
+| 7 | Dashboard TUI Enhancements | Fully scoped | 4 | 15 |
 
 **Total scoped:** 20 features, 60 tasks across 4 epics
 

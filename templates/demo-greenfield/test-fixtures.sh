@@ -40,7 +40,7 @@ LINE_NUM=0
 ALL_VALID=true
 while IFS= read -r line; do
     LINE_NUM=$((LINE_NUM + 1))
-    if ! echo "$line" | jq empty 2>/dev/null; then
+    if ! printf '%s\n' "$line" | jq empty 2>/dev/null; then
         fail "line $LINE_NUM is not valid JSON"
         ALL_VALID=false
     fi
@@ -52,9 +52,9 @@ fi
 echo "=== Test: Required fields present ==="
 FIELDS_OK=true
 while IFS= read -r line; do
-    ID=$(echo "$line" | jq -r '.id')
+    ID=$(printf '%s\n' "$line" | jq -r '.id')
     for field in id title description issue_type status priority dependencies; do
-        if ! echo "$line" | jq -e ".$field" >/dev/null 2>&1; then
+        if ! printf '%s\n' "$line" | jq -e ".$field" >/dev/null 2>&1; then
             fail "$ID missing field: $field"
             FIELDS_OK=false
         fi
@@ -112,12 +112,12 @@ fi
 echo "=== Test: No shorthand parent/depends_on fields ==="
 SHORTHAND_OK=true
 while IFS= read -r line; do
-    ID=$(echo "$line" | jq -r '.id')
-    if echo "$line" | jq -e '.parent' >/dev/null 2>&1; then
+    ID=$(printf '%s\n' "$line" | jq -r '.id')
+    if printf '%s\n' "$line" | jq -e '.parent' >/dev/null 2>&1; then
         fail "$ID has shorthand 'parent' field"
         SHORTHAND_OK=false
     fi
-    if echo "$line" | jq -e '.depends_on' >/dev/null 2>&1; then
+    if printf '%s\n' "$line" | jq -e '.depends_on' >/dev/null 2>&1; then
         fail "$ID has shorthand 'depends_on' field"
         SHORTHAND_OK=false
     fi
