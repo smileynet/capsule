@@ -148,6 +148,10 @@ func (c *Config) Validate() error {
 	if c.Pipeline.Retry.BackoffFactor < 0 {
 		return fmt.Errorf("config: pipeline.retry.backoff_factor must be non-negative, got %v", c.Pipeline.Retry.BackoffFactor)
 	}
+	// BackoffFactor in (0, 1.0) would shrink timeouts on retry; reject.
+	if c.Pipeline.Retry.BackoffFactor > 0 && c.Pipeline.Retry.BackoffFactor < 1.0 {
+		return fmt.Errorf("config: pipeline.retry.backoff_factor must be 0 (disabled) or >= 1.0, got %v", c.Pipeline.Retry.BackoffFactor)
+	}
 	switch c.Campaign.FailureMode {
 	case "", "abort", "continue":
 		// valid

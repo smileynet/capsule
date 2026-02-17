@@ -482,6 +482,9 @@ func (d *DashboardCmd) Run() error {
 		return nil
 	}
 
+	pauseCheck, stopPause := setupPauseTrigger()
+	defer stopPause()
+
 	pipelineAdapter := &dashboardPipelineAdapter{
 		providerExec: p,
 		promptLoader: prompt.NewLoader("prompts"),
@@ -490,6 +493,7 @@ func (d *DashboardCmd) Run() error {
 		gateRunner:   gate.NewRunner(),
 		phases:       phases,
 		bdClient:     bdClient,
+		pauseCheck:   pauseCheck,
 	}
 
 	campaignAdapter := &dashboardCampaignAdapter{
@@ -541,6 +545,7 @@ type dashboardPipelineAdapter struct {
 	gateRunner   *gate.Runner
 	phases       []orchestrator.PhaseDefinition
 	bdClient     *bead.Client
+	pauseCheck   func() bool
 }
 
 func (a *dashboardPipelineAdapter) RunPipeline(ctx context.Context, input dashboard.PipelineInput, statusFn func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
@@ -561,14 +566,18 @@ func (a *dashboardPipelineAdapter) RunPipeline(ctx context.Context, input dashbo
 		statusFn(msg)
 	}
 
-	orch := orchestrator.New(a.providerExec,
+	opts := []orchestrator.Option{
 		orchestrator.WithPromptLoader(a.promptLoader),
 		orchestrator.WithWorktreeManager(a.wtMgr),
 		orchestrator.WithWorklogManager(a.wlMgr),
 		orchestrator.WithGateRunner(a.gateRunner),
 		orchestrator.WithPhases(a.phases),
 		orchestrator.WithStatusCallback(cb),
-	)
+	}
+	if a.pauseCheck != nil {
+		opts = append(opts, orchestrator.WithPauseRequested(a.pauseCheck))
+	}
+	orch := orchestrator.New(a.providerExec, opts...)
 
 	// Resolve bead context (best-effort).
 	beadCtx, _ := a.bdClient.Resolve(input.BeadID)

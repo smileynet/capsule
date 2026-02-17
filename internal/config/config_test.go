@@ -508,6 +508,23 @@ func TestValidate_PipelineFields(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "backoff_factor between 0 and 1 is invalid",
+			modify:  func(c *Config) { c.Pipeline.Retry.BackoffFactor = 0.5 },
+			wantErr: true,
+		},
+		{
+			name:   "backoff_factor 0 is valid (disabled)",
+			modify: func(c *Config) { c.Pipeline.Retry.BackoffFactor = 0 },
+		},
+		{
+			name:   "backoff_factor 1.0 is valid",
+			modify: func(c *Config) { c.Pipeline.Retry.BackoffFactor = 1.0 },
+		},
+		{
+			name:   "backoff_factor 2.0 is valid",
+			modify: func(c *Config) { c.Pipeline.Retry.BackoffFactor = 2.0 },
+		},
+		{
 			name:    "invalid failure_mode",
 			modify:  func(c *Config) { c.Campaign.FailureMode = "invalid" },
 			wantErr: true,

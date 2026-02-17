@@ -331,14 +331,17 @@ func TestRunPhasePair_HappyPath(t *testing.T) {
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
 	// When runPhasePair executes
-	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 
-	// Then it succeeds with a PASS signal
+	// Then it succeeds with a PASS signal on the last result
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if signal.Status != provider.StatusPass {
-		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[1].Signal.Status != provider.StatusPass {
+		t.Errorf("last result signal = %q, want %q", results[1].Signal.Status, provider.StatusPass)
 	}
 	// And both phases executed exactly once
 	if got := len(sp.calls); got != 2 {
@@ -364,14 +367,18 @@ func TestRunPhasePair_RetryOnNeedsWork(t *testing.T) {
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
 	// When runPhasePair executes
-	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 
 	// Then it succeeds after retry
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if signal.Status != provider.StatusPass {
-		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	// And 4 results recorded: worker+reviewer per attempt
+	if len(results) != 4 {
+		t.Fatalf("got %d results, want 4", len(results))
+	}
+	if results[3].Signal.Status != provider.StatusPass {
+		t.Errorf("last result signal = %q, want %q", results[3].Signal.Status, provider.StatusPass)
 	}
 	// And 4 provider calls were made (2 per attempt)
 	if got := len(sp.calls); got != 4 {
@@ -436,7 +443,7 @@ func TestRunPhasePair_WorkerError(t *testing.T) {
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
 	// When runPhasePair executes
-	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 
 	// Then it returns a PipelineError for the worker phase
 	var pe *PipelineError
@@ -448,6 +455,10 @@ func TestRunPhasePair_WorkerError(t *testing.T) {
 	}
 	if pe.Signal.Status != provider.StatusError {
 		t.Errorf("Signal.Status = %q, want %q", pe.Signal.Status, provider.StatusError)
+	}
+	// And partial results contain only the worker ERROR
+	if len(results) != 1 {
+		t.Errorf("got %d results, want 1 (worker ERROR only)", len(results))
 	}
 	// And the reviewer never ran
 	if got := len(sp.calls); got != 1 {
@@ -500,7 +511,7 @@ func TestRunPhasePair_MaxRetriesExceeded(t *testing.T) {
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
 	// When runPhasePair executes
-	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 
 	// Then it fails with retries exhausted
 	var pe *PipelineError
@@ -512,6 +523,10 @@ func TestRunPhasePair_MaxRetriesExceeded(t *testing.T) {
 	}
 	if want := `pipeline: phase "reviewer" attempt 3: max retries (3) exceeded`; pe.Error() != want {
 		t.Errorf("Error() = %q, want %q", pe.Error(), want)
+	}
+	// And all 6 results were recorded (3 attempts x 2 phases)
+	if len(results) != 6 {
+		t.Errorf("got %d results, want 6 (all attempts should be recorded)", len(results))
 	}
 	// And all 6 provider calls were made (3 attempts x 2 phases)
 	if got := len(sp.calls); got != 6 {
@@ -610,9 +625,13 @@ func TestRunPhasePair_ProviderError(t *testing.T) {
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
 	// When runPhasePair executes
-	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 
-	// Then it returns a PipelineError wrapping the provider error
+	// Then partial results are empty (provider error before signal parsed)
+	if len(results) != 0 {
+		t.Errorf("got %d results, want 0 (provider error before phase result)", len(results))
+	}
+	// And it returns a PipelineError wrapping the provider error
 	var pe *PipelineError
 	if !errors.As(err, &pe) {
 		t.Fatalf("expected PipelineError, got %T: %v", err, err)
@@ -717,12 +736,12 @@ func TestRunPhasePair_BackoffMultipliesTimeout(t *testing.T) {
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
 	// When runPhasePair executes with 2 attempts
-	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if signal.Status != provider.StatusPass {
-		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	if len(results) == 0 || results[len(results)-1].Signal.Status != provider.StatusPass {
+		t.Errorf("last result signal = %q, want %q", results[len(results)-1].Signal.Status, provider.StatusPass)
 	}
 
 	// Then 4 provider calls were made
@@ -828,12 +847,12 @@ func TestRunPhasePair_EscalateProviderSwitchesAfterN(t *testing.T) {
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
 	// When runPhasePair executes
-	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if signal.Status != provider.StatusPass {
-		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	if len(results) == 0 || results[len(results)-1].Signal.Status != provider.StatusPass {
+		t.Errorf("last result signal = %q, want %q", results[len(results)-1].Signal.Status, provider.StatusPass)
 	}
 
 	// Then default provider was called for attempt 1 (worker + reviewer)
@@ -873,12 +892,12 @@ func TestRunPhasePair_EscalateProviderNoEffectWhenEmpty(t *testing.T) {
 	reviewer := o.phases[1]
 	pCtx := prompt.Context{BeadID: "cap-1"}
 
-	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	results, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if signal.Status != provider.StatusPass {
-		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	if len(results) == 0 || results[len(results)-1].Signal.Status != provider.StatusPass {
+		t.Errorf("last result signal = %q, want %q", results[len(results)-1].Signal.Status, provider.StatusPass)
 	}
 	// All 4 calls should go to the default provider
 	if len(defaultProv.calls) != 4 {
@@ -1021,7 +1040,7 @@ func TestRunPipeline_ReviewerRetryFlow(t *testing.T) {
 	input := PipelineInput{BeadID: "cap-1"}
 
 	// When RunPipeline executes
-	_, err := o.RunPipeline(context.Background(), input)
+	output, err := o.RunPipeline(context.Background(), input)
 
 	// Then it completes successfully after retry
 	if err != nil {
@@ -1030,6 +1049,23 @@ func TestRunPipeline_ReviewerRetryFlow(t *testing.T) {
 	// And 8 provider calls were made
 	if got := len(sp.calls); got != 8 {
 		t.Errorf("provider called %d times, want 8", got)
+	}
+	// And output.PhaseResults includes retry attempt results
+	// Expected: test-writer(1), test-review(1/NEEDS_WORK), test-writer(2), test-review(2/PASS),
+	//           execute, execute-review, sign-off, merge = 8 results
+	if got := len(output.PhaseResults); got != 8 {
+		t.Fatalf("got %d PhaseResults, want 8", got)
+	}
+	// Retry results (indices 2,3) should have Attempt=2
+	if output.PhaseResults[2].Attempt != 2 {
+		t.Errorf("PhaseResults[2].Attempt = %d, want 2", output.PhaseResults[2].Attempt)
+	}
+	if output.PhaseResults[3].Attempt != 2 {
+		t.Errorf("PhaseResults[3].Attempt = %d, want 2", output.PhaseResults[3].Attempt)
+	}
+	// The final reviewer retry result should be PASS
+	if output.PhaseResults[3].Signal.Status != provider.StatusPass {
+		t.Errorf("PhaseResults[3].Signal.Status = %q, want %q", output.PhaseResults[3].Signal.Status, provider.StatusPass)
 	}
 }
 
