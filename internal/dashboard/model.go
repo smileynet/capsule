@@ -436,13 +436,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
-		switch {
-		case m.mode == ModePipeline:
+		switch m.mode {
+		case ModePipeline:
 			m.pipeline, cmd = m.pipeline.Update(msg)
-		case m.mode == ModeCampaign:
+		case ModeCampaign:
 			m.campaign, cmd = m.campaign.Update(msg)
-		case m.mode == ModeBrowse && (m.browse.loading || m.resolvingID != ""):
-			m.browseSpinner, cmd = m.browseSpinner.Update(msg)
+		case ModeBrowse:
+			if m.browse.loading || m.resolvingID != "" {
+				m.browseSpinner, cmd = m.browseSpinner.Update(msg)
+			} else {
+				return m, nil
+			}
 		default:
 			return m, nil
 		}

@@ -222,18 +222,14 @@ func (cs campaignState) formatTaskReport(task CampaignTaskInfo, reports []PhaseR
 	fmt.Fprintf(&b, "%s\n", task.Title)
 
 	for _, r := range reports {
-		var statusText string
 		var renderedStatus string
 		switch r.Status {
 		case PhaseFailed, PhaseError:
-			statusText = "Failed"
-			renderedStatus = pipeFailedStyle.Render(statusText)
+			renderedStatus = pipeFailedStyle.Render("Failed")
 		case PhaseSkipped:
-			statusText = "Skipped"
-			renderedStatus = pipeSkippedStyle.Render(statusText)
+			renderedStatus = pipeSkippedStyle.Render("Skipped")
 		default:
-			statusText = "Passed"
-			renderedStatus = pipePassedStyle.Render(statusText)
+			renderedStatus = pipePassedStyle.Render("Passed")
 		}
 		fmt.Fprintf(&b, "\n%s  %s", r.PhaseName, renderedStatus)
 		if r.Duration > 0 {
