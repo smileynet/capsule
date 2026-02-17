@@ -1042,7 +1042,8 @@ func exitCode(err error) int {
 		return exitPipeline
 	}
 	// Campaign runtime errors map to pipeline exit code (not setup).
-	if errors.Is(err, campaign.ErrNoTasks) || errors.Is(err, campaign.ErrCircuitBroken) {
+	if errors.Is(err, campaign.ErrNoTasks) || errors.Is(err, campaign.ErrCircuitBroken) ||
+		errors.Is(err, campaign.ErrMaxDepth) || errors.Is(err, campaign.ErrCycle) {
 		return exitPipeline
 	}
 	return exitSetup

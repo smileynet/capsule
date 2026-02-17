@@ -27,10 +27,10 @@ func (m Model) viewSummaryRight() string {
 
 	success := m.pipelineErr == nil && (m.pipelineOutput == nil || m.pipelineOutput.Success)
 	if success {
-		fmt.Fprintf(&b, "%s  Pipeline Passed\n", pipePassedStyle.Render("✓"))
+		fmt.Fprintf(&b, "%s  Pipeline Passed\n", pipePassedStyle.Render(SymbolCheck))
 		fmt.Fprintf(&b, "\n%d/%d phases passed in %.1fs", passed, total, totalDuration.Seconds())
 	} else {
-		fmt.Fprintf(&b, "%s  Pipeline Failed\n", pipeFailedStyle.Render("✗"))
+		fmt.Fprintf(&b, "%s  Pipeline Failed\n", pipeFailedStyle.Render(SymbolCross))
 		if m.pipelineErr != nil {
 			fmt.Fprintf(&b, "\nError: %s", m.pipelineErr)
 		}
@@ -85,16 +85,16 @@ func (m Model) viewCampaignSummaryRight() string {
 
 	switch {
 	case m.campaignErr != nil:
-		fmt.Fprintf(&b, "%s  Campaign Error\n", pipeFailedStyle.Render("✗"))
+		fmt.Fprintf(&b, "%s  Campaign Error\n", pipeFailedStyle.Render(SymbolCross))
 		fmt.Fprintf(&b, "\nError: %s", m.campaignErr)
 		if done.TotalTasks > 0 {
 			fmt.Fprintf(&b, "\n\n%d/%d tasks passed", done.Passed, done.TotalTasks)
 		}
 	case done.Failed == 0:
-		fmt.Fprintf(&b, "%s  Campaign Passed\n", pipePassedStyle.Render("✓"))
+		fmt.Fprintf(&b, "%s  Campaign Passed\n", pipePassedStyle.Render(SymbolCheck))
 		fmt.Fprintf(&b, "\n%d/%d tasks passed", done.Passed, done.TotalTasks)
 	default:
-		fmt.Fprintf(&b, "%s  Campaign Failed\n", pipeFailedStyle.Render("✗"))
+		fmt.Fprintf(&b, "%s  Campaign Failed\n", pipeFailedStyle.Render(SymbolCross))
 		fmt.Fprintf(&b, "\n%d/%d tasks passed, %d failed", done.Passed, done.TotalTasks, done.Failed)
 	}
 	if done.Skipped > 0 {

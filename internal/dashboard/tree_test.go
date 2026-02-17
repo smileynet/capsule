@@ -5,6 +5,17 @@ import (
 	"testing"
 )
 
+// isChildOf checks if childID is a direct child of parentID.
+// Used in tests to verify tree semantics; the tree builder uses findParent instead.
+func isChildOf(childID, parentID string) bool {
+	prefix := parentID + "."
+	if !strings.HasPrefix(childID, prefix) {
+		return false
+	}
+	suffix := childID[len(prefix):]
+	return len(suffix) > 0 && !strings.Contains(suffix, ".")
+}
+
 func TestBuildTree_FlatList(t *testing.T) {
 	// Given: beads with no parent-child relationships
 	beads := []BeadSummary{

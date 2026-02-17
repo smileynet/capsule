@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"sort"
-	"strings"
 )
 
 // treeNode represents a bead and its children in a hierarchical tree.
@@ -23,18 +22,6 @@ type flatNode struct {
 type treeStats struct {
 	Total  int
 	Closed int
-}
-
-// isChildOf checks if childID is a direct child of parentID.
-// "demo-1.1" is a child of "demo-1" because it starts with "demo-1." and has content after the dot.
-func isChildOf(childID, parentID string) bool {
-	prefix := parentID + "."
-	if !strings.HasPrefix(childID, prefix) {
-		return false
-	}
-	// Direct child: no additional dots after the prefix.
-	suffix := childID[len(prefix):]
-	return len(suffix) > 0 && !strings.Contains(suffix, ".")
 }
 
 // buildTree groups beads into a hierarchy using ID prefix matching.
