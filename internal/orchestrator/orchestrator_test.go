@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/smileynet/capsule/internal/prompt"
 	"github.com/smileynet/capsule/internal/provider"
@@ -99,6 +102,23 @@ func (m *mockWorklogMgr) Archive(string, string) error {
 	return m.archiveErr
 }
 
+// deadlineCapturingProvider wraps a Provider and records context deadlines.
+type deadlineCapturingProvider struct {
+	inner    Provider
+	timeouts []time.Duration // Approximate timeout remaining at each call (0 = no deadline).
+}
+
+func (d *deadlineCapturingProvider) Name() string { return d.inner.Name() }
+
+func (d *deadlineCapturingProvider) Execute(ctx context.Context, p, workDir string) (provider.Result, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		d.timeouts = append(d.timeouts, time.Until(deadline))
+	} else {
+		d.timeouts = append(d.timeouts, 0)
+	}
+	return d.inner.Execute(ctx, p, workDir)
+}
+
 // --- Signal helpers ---
 
 func makeSignalJSON(status provider.Status, feedback, summary string) string {
@@ -145,6 +165,14 @@ func twoPhases() []PhaseDefinition {
 	return []PhaseDefinition{
 		{Name: "worker", Kind: Worker, MaxRetries: 3},
 		{Name: "reviewer", Kind: Reviewer, MaxRetries: 3, RetryTarget: "worker"},
+	}
+}
+
+func threePhases() []PhaseDefinition {
+	return []PhaseDefinition{
+		{Name: "phase-a", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-b", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-c", Kind: Worker, MaxRetries: 1},
 	}
 }
 
@@ -482,12 +510,88 @@ func TestRunPhasePair_MaxRetriesExceeded(t *testing.T) {
 	if pe.Attempt != 3 {
 		t.Errorf("Attempt = %d, want 3", pe.Attempt)
 	}
-	if want := `pipeline: phase "reviewer" attempt 3: failed after 3 attempts`; pe.Error() != want {
+	if want := `pipeline: phase "reviewer" attempt 3: max retries (3) exceeded`; pe.Error() != want {
 		t.Errorf("Error() = %q, want %q", pe.Error(), want)
 	}
 	// And all 6 provider calls were made (3 attempts x 2 phases)
 	if got := len(sp.calls); got != 6 {
 		t.Errorf("provider called %d times, want 6", got)
+	}
+}
+
+func TestRunPhasePair_UsesResolveRetryStrategy(t *testing.T) {
+	// Given phases with MaxRetries=0 (meaning "use pipeline defaults")
+	// and pipeline defaults set to MaxAttempts=2
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), needsWorkResponse("fix 1"), // attempt 1
+		passResponse(), needsWorkResponse("fix 2"), // attempt 2
+	}}
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 0},
+		{Name: "reviewer", Kind: Reviewer, MaxRetries: 0, RetryTarget: "worker"},
+	}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 2}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+
+	// Then it fails after 2 attempts (from pipeline defaults, not phase MaxRetries=0)
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if pe.Attempt != 2 {
+		t.Errorf("Attempt = %d, want 2", pe.Attempt)
+	}
+	// And exactly 4 provider calls were made (2 attempts x 2 phases)
+	if got := len(sp.calls); got != 4 {
+		t.Errorf("provider called %d times, want 4", got)
+	}
+}
+
+func TestRunPhasePair_PhaseOverrideTakesPrecedence(t *testing.T) {
+	// Given phases with MaxRetries=2 and pipeline defaults with MaxAttempts=5
+	// Phase-level should win.
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), needsWorkResponse("fix 1"), // attempt 1
+		passResponse(), needsWorkResponse("fix 2"), // attempt 2
+	}}
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 2},
+		{Name: "reviewer", Kind: Reviewer, MaxRetries: 2, RetryTarget: "worker"},
+	}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 5}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+
+	// Then it fails after 2 attempts (from phase MaxRetries, not pipeline default of 5)
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if pe.Attempt != 2 {
+		t.Errorf("Attempt = %d, want 2", pe.Attempt)
+	}
+	// And exactly 4 provider calls (not 10)
+	if got := len(sp.calls); got != 4 {
+		t.Errorf("provider called %d times, want 4", got)
 	}
 }
 
@@ -583,6 +687,238 @@ func TestRunPhasePair_StatusCallbacks(t *testing.T) {
 		if u.BeadID != "cap-42" {
 			t.Errorf("update[%d].BeadID = %q, want %q", i, u.BeadID, "cap-42")
 		}
+	}
+}
+
+func TestRunPhasePair_BackoffMultipliesTimeout(t *testing.T) {
+	// Given phases with Timeout=30s and BackoffFactor=2.0,
+	// the effective timeout should double on each retry attempt.
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+		passResponse(),                      // attempt 2: worker (retry)
+		passResponse(),                      // attempt 2: reviewer
+	}}
+	dc := &deadlineCapturingProvider{inner: sp}
+
+	baseTimeout := 30 * time.Second
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, Timeout: baseTimeout},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker", Timeout: baseTimeout},
+	}
+	o := New(dc,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 3, BackoffFactor: 2.0}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes with 2 attempts
+	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+
+	// Then 4 provider calls were made
+	if len(dc.timeouts) != 4 {
+		t.Fatalf("got %d captured timeouts, want 4", len(dc.timeouts))
+	}
+
+	// Attempt 1: worker and reviewer get base timeout (30s * 2^0 = 30s)
+	// Attempt 2: worker and reviewer get doubled timeout (30s * 2^1 = 60s)
+	tolerance := 2 * time.Second
+	wantTimeouts := []time.Duration{
+		30 * time.Second, // attempt 1: worker
+		30 * time.Second, // attempt 1: reviewer
+		60 * time.Second, // attempt 2: worker
+		60 * time.Second, // attempt 2: reviewer
+	}
+	for i, want := range wantTimeouts {
+		got := dc.timeouts[i]
+		diff := got - want
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > tolerance {
+			t.Errorf("timeout[%d] = %v, want ~%v (diff %v)", i, got, want, diff)
+		}
+	}
+}
+
+func TestRunPhasePair_BackoffNoEffectWhenNoTimeout(t *testing.T) {
+	// Given phases without Timeout and BackoffFactor=2.0,
+	// the provider should receive contexts without deadlines.
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+		passResponse(),                      // attempt 2: worker (retry)
+		passResponse(),                      // attempt 2: reviewer
+	}}
+	dc := &deadlineCapturingProvider{inner: sp}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(dc,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{MaxAttempts: 3, BackoffFactor: 2.0}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then 4 provider calls were made
+	if len(dc.timeouts) != 4 {
+		t.Fatalf("got %d captured timeouts, want 4", len(dc.timeouts))
+	}
+
+	// And all timeouts should be 0 (no deadline set)
+	for i, timeout := range dc.timeouts {
+		if timeout != 0 {
+			t.Errorf("timeout[%d] = %v, want 0 (no deadline)", i, timeout)
+		}
+	}
+}
+
+func TestRunPhasePair_EscalateProviderSwitchesAfterN(t *testing.T) {
+	// Given a retry strategy with EscalateProvider="alternate" and EscalateAfter=1,
+	// the first attempt should use the default provider,
+	// and the second attempt (after escalation) should use the alternate provider.
+	defaultProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker (default)
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer (default)
+	}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // attempt 2: worker (escalated)
+		passResponse(), // attempt 2: reviewer (escalated)
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithProviders(map[string]Provider{"alternate": alternateProv}),
+		WithRetryDefaults(RetryStrategy{
+			MaxAttempts:      3,
+			EscalateProvider: "alternate",
+			EscalateAfter:    1,
+		}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When runPhasePair executes
+	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+
+	// Then default provider was called for attempt 1 (worker + reviewer)
+	if len(defaultProv.calls) != 2 {
+		t.Errorf("default provider called %d times, want 2", len(defaultProv.calls))
+	}
+	// And alternate provider was called for attempt 2 (worker + reviewer)
+	if len(alternateProv.calls) != 2 {
+		t.Errorf("alternate provider called %d times, want 2", len(alternateProv.calls))
+	}
+}
+
+func TestRunPhasePair_EscalateProviderNoEffectWhenEmpty(t *testing.T) {
+	// Given a retry strategy without EscalateProvider,
+	// all attempts should use the default provider.
+	defaultProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+		passResponse(),                      // attempt 2: worker
+		passResponse(),                      // attempt 2: reviewer
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithRetryDefaults(RetryStrategy{
+			MaxAttempts:   3,
+			EscalateAfter: 1,
+		}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	signal, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+	// All 4 calls should go to the default provider
+	if len(defaultProv.calls) != 4 {
+		t.Errorf("default provider called %d times, want 4", len(defaultProv.calls))
+	}
+}
+
+func TestRunPhasePair_EscalateProviderUnknownReturnsError(t *testing.T) {
+	// Given an EscalateProvider that is not registered,
+	// the retry loop should return an error when escalation is triggered.
+	defaultProv := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                      // attempt 1: worker
+		needsWorkResponse("fix formatting"), // attempt 1: reviewer
+	}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker},
+		{Name: "reviewer", Kind: Reviewer, RetryTarget: "worker"},
+	}
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		// No WithProviders — "nonexistent" won't be found.
+		WithRetryDefaults(RetryStrategy{
+			MaxAttempts:      3,
+			EscalateProvider: "nonexistent",
+			EscalateAfter:    1,
+		}),
+	)
+
+	worker := o.phases[0]
+	reviewer := o.phases[1]
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	_, err := o.runPhasePair(context.Background(), worker, reviewer, pCtx, "/tmp/wt", "1/1", "", 1)
+	if err == nil {
+		t.Fatal("expected error for unknown escalation provider, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error = %q, want mention of provider name", err.Error())
 	}
 }
 
@@ -1270,5 +1606,1089 @@ func TestFindPhase_NotFound(t *testing.T) {
 	// Then it is not found
 	if ok {
 		t.Fatal("expected not to find phase")
+	}
+}
+
+// --- evaluateCondition tests ---
+
+func TestEvaluateCondition_EmptyAlwaysRuns(t *testing.T) {
+	// Given an empty condition string
+	// When evaluateCondition is called
+	ok, err := evaluateCondition("", t.TempDir())
+
+	// Then the phase should run (condition met)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("empty condition should return true (always run)")
+	}
+}
+
+func TestEvaluateCondition_FilesMatch_Found(t *testing.T) {
+	// Given a temp directory with a .go file
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When evaluateCondition checks for *.go files
+	ok, err := evaluateCondition("files_match:*.go", dir)
+
+	// Then the condition is met
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("files_match:*.go should match main.go")
+	}
+}
+
+func TestEvaluateCondition_FilesMatch_NotFound(t *testing.T) {
+	// Given a temp directory with no .xyz files
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// When evaluateCondition checks for *.xyz files
+	ok, err := evaluateCondition("files_match:*.xyz", dir)
+
+	// Then the condition is NOT met
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("files_match:*.xyz should not match any files")
+	}
+}
+
+func TestEvaluateCondition_UnrecognizedCondition(t *testing.T) {
+	// Given an unrecognized condition format
+	// When evaluateCondition is called
+	_, err := evaluateCondition("unknown_check:foo", t.TempDir())
+
+	// Then it returns an error
+	if err == nil {
+		t.Fatal("expected error for unrecognized condition")
+	}
+	if !strings.Contains(err.Error(), "unrecognized condition") {
+		t.Errorf("error = %q, want mention of unrecognized condition", err.Error())
+	}
+}
+
+// --- RunPipeline condition tests ---
+
+func TestRunPipeline_ConditionSkipsPhase(t *testing.T) {
+	// Given a pipeline where a phase has a condition that won't match
+	var updates []StatusUpdate
+	cb := func(su StatusUpdate) { updates = append(updates, su) }
+
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker (runs, no condition)
+		// reviewer is skipped (condition not met) — no provider call
+		passResponse(), // merge (runs, no condition)
+	}}
+	wt := &mockWorktreeMgr{path: t.TempDir()} // empty dir, no .xyz files
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "reviewer", Kind: Reviewer, MaxRetries: 1, RetryTarget: "worker",
+			Condition: "files_match:*.xyz"},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+		WithStatusCallback(cb),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	output, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And only 2 provider calls were made (reviewer was skipped)
+	if got := len(sp.calls); got != 2 {
+		t.Errorf("provider called %d times, want 2", got)
+	}
+	// And the reviewer phase emitted a PhaseSkipped callback
+	var foundSkipped bool
+	for _, u := range updates {
+		if u.Phase == "reviewer" && u.Status == PhaseSkipped {
+			foundSkipped = true
+		}
+	}
+	if !foundSkipped {
+		t.Error("expected PhaseSkipped callback for reviewer (condition not met)")
+	}
+	// And PhaseResults includes all 3 phases (with skip for reviewer)
+	if got := len(output.PhaseResults); got != 3 {
+		t.Errorf("PhaseResults = %d, want 3", got)
+	}
+}
+
+func TestRunPipeline_ConditionRunsPhaseWhenMet(t *testing.T) {
+	// Given a pipeline where a phase has a condition that WILL match
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.go"), []byte("package x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+		passResponse(), // conditional-worker (condition met, runs normally)
+		passResponse(), // merge
+	}}
+	wt := &mockWorktreeMgr{path: dir}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "conditional-worker", Kind: Worker, MaxRetries: 1,
+			Condition: "files_match:*.go"},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And all 3 provider calls were made (conditional phase ran)
+	if got := len(sp.calls); got != 3 {
+		t.Errorf("provider called %d times, want 3", got)
+	}
+}
+
+func TestRunPipeline_ConditionErrorAborts(t *testing.T) {
+	// Given a pipeline where a phase has an unrecognized condition
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // worker
+	}}
+	wt := &mockWorktreeMgr{path: t.TempDir()}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},
+		{Name: "checker", Kind: Worker, MaxRetries: 1,
+			Condition: "bogus:stuff"},
+		{Name: "merge", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns a PipelineError for the checker phase
+	var pe *PipelineError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected PipelineError, got %T: %v", err, err)
+	}
+	if pe.Phase != "checker" {
+		t.Errorf("Phase = %q, want %q", pe.Phase, "checker")
+	}
+	if !strings.Contains(pe.Err.Error(), "unrecognized condition") {
+		t.Errorf("error = %q, want mention of unrecognized condition", pe.Err.Error())
+	}
+}
+
+// --- Provider override tests ---
+
+func TestExecutePhase_UsesNamedProvider(t *testing.T) {
+	// Given an orchestrator with a default provider and a named alternate
+	defaultProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithProviders(map[string]Provider{"alternate": alternateProv}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1, Provider: "alternate"}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	signal, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if signal.Status != provider.StatusPass {
+		t.Errorf("signal.Status = %q, want %q", signal.Status, provider.StatusPass)
+	}
+	// And the alternate provider was called (not the default)
+	if len(alternateProv.calls) != 1 {
+		t.Errorf("alternate provider called %d times, want 1", len(alternateProv.calls))
+	}
+	if len(defaultProv.calls) != 0 {
+		t.Errorf("default provider called %d times, want 0", len(defaultProv.calls))
+	}
+}
+
+func TestExecutePhase_DefaultProviderWhenEmpty(t *testing.T) {
+	// Given an orchestrator with a default provider and no Provider override on the phase
+	defaultProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithProviders(map[string]Provider{"alternate": alternateProv}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1} // No Provider set
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds using the default provider
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(defaultProv.calls) != 1 {
+		t.Errorf("default provider called %d times, want 1", len(defaultProv.calls))
+	}
+	if len(alternateProv.calls) != 0 {
+		t.Errorf("alternate provider called %d times, want 0", len(alternateProv.calls))
+	}
+}
+
+func TestExecutePhase_UnknownProviderError(t *testing.T) {
+	// Given an orchestrator with no named providers registered
+	o := New(&sequenceProvider{},
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1, Provider: "nonexistent"}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called with a non-existent provider name
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it returns an error mentioning the unknown provider
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error = %q, want mention of provider name", err.Error())
+	}
+}
+
+// --- Timeout tests ---
+
+// contextCapturingProvider records the context it receives so tests can inspect deadlines.
+type contextCapturingProvider struct {
+	responses []mockResponse
+	ctxs      []context.Context
+	callIdx   int
+}
+
+func (m *contextCapturingProvider) Name() string { return "ctx-capture" }
+
+func (m *contextCapturingProvider) Execute(ctx context.Context, p, workDir string) (provider.Result, error) {
+	m.ctxs = append(m.ctxs, ctx)
+	if m.callIdx >= len(m.responses) {
+		return provider.Result{}, fmt.Errorf("unexpected call %d", m.callIdx+1)
+	}
+	resp := m.responses[m.callIdx]
+	m.callIdx++
+	return resp.result, resp.err
+}
+
+func TestExecutePhase_TimeoutSetsDeadline(t *testing.T) {
+	// Given a phase with a 5-second Timeout
+	cp := &contextCapturingProvider{responses: []mockResponse{passResponse()}}
+	o := New(cp,
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1, Timeout: 5 * time.Second}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the provider received a context with a deadline
+	if len(cp.ctxs) != 1 {
+		t.Fatalf("got %d calls, want 1", len(cp.ctxs))
+	}
+	deadline, ok := cp.ctxs[0].Deadline()
+	if !ok {
+		t.Fatal("expected context to have a deadline, but it doesn't")
+	}
+	// The deadline should be roughly 5 seconds from now (allow some slack)
+	remaining := time.Until(deadline)
+	if remaining < 4*time.Second || remaining > 6*time.Second {
+		t.Errorf("deadline in %v, want ~5s", remaining)
+	}
+}
+
+func TestExecutePhase_NoTimeoutNoDeadline(t *testing.T) {
+	// Given a phase with no Timeout (zero value)
+	cp := &contextCapturingProvider{responses: []mockResponse{passResponse()}}
+	o := New(cp,
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	phase := PhaseDefinition{Name: "worker", Kind: Worker, MaxRetries: 1} // Timeout is zero
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called with a context that has no deadline
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the provider received a context WITHOUT a deadline
+	if len(cp.ctxs) != 1 {
+		t.Fatalf("got %d calls, want 1", len(cp.ctxs))
+	}
+	if _, ok := cp.ctxs[0].Deadline(); ok {
+		t.Error("expected context without deadline when Timeout is zero")
+	}
+}
+
+// contextCapturingGateRunner wraps a GateRunner to capture the context passed to Run.
+type contextCapturingGateRunner struct {
+	inner       GateRunner
+	capturedCtx context.Context
+}
+
+func (m *contextCapturingGateRunner) Run(ctx context.Context, command, workDir string) (provider.Signal, error) {
+	m.capturedCtx = ctx
+	return m.inner.Run(ctx, command, workDir)
+}
+
+func TestExecutePhase_TimeoutAppliesToGate(t *testing.T) {
+	// Given a gate phase with a timeout
+	gr := &mockGateRunner{
+		signals: []provider.Signal{{
+			Status: provider.StatusPass, Feedback: "ok", Summary: "passed",
+			FilesChanged: []string{}, Findings: []provider.Finding{},
+		}},
+	}
+	wrappedGR := &contextCapturingGateRunner{inner: gr}
+
+	o := New(&sequenceProvider{},
+		WithPromptLoader(&mockPromptLoader{}),
+		WithGateRunner(wrappedGR),
+	)
+
+	phase := PhaseDefinition{Name: "lint", Kind: Gate, Command: "make lint", Timeout: 3 * time.Second}
+	pCtx := prompt.Context{BeadID: "cap-1"}
+
+	// When executePhase is called
+	_, err := o.executePhase(context.Background(), phase, pCtx, "/tmp/wt")
+
+	// Then it succeeds
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the gate runner received a context with a deadline
+	if wrappedGR.capturedCtx == nil {
+		t.Fatal("gate runner was not called")
+	}
+	if _, ok := wrappedGR.capturedCtx.Deadline(); !ok {
+		t.Error("expected gate context to have a deadline")
+	}
+}
+
+// --- Checkpoint tests ---
+
+// mockCheckpointStore records checkpoint saves and returns pre-loaded data for test assertions.
+type mockCheckpointStore struct {
+	saved   []PipelineCheckpoint
+	saveErr error
+
+	// Pre-loaded checkpoint for LoadCheckpoint.
+	loadCP    PipelineCheckpoint
+	loadFound bool
+	loadErr   error
+}
+
+func (m *mockCheckpointStore) SaveCheckpoint(cp PipelineCheckpoint) error {
+	m.saved = append(m.saved, cp)
+	return m.saveErr
+}
+
+func (m *mockCheckpointStore) LoadCheckpoint(string) (PipelineCheckpoint, bool, error) {
+	return m.loadCP, m.loadFound, m.loadErr
+}
+
+func (m *mockCheckpointStore) RemoveCheckpoint(string) error {
+	return nil
+}
+
+func TestRunPipeline_CheckpointAfterEachPhase(t *testing.T) {
+	// Given a 3-phase pipeline with a checkpoint store
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the checkpoint store was called 3 times (once per phase)
+	if got := len(cs.saved); got != 3 {
+		t.Fatalf("checkpoint saves = %d, want 3", got)
+	}
+	// And each checkpoint accumulates results
+	if got := len(cs.saved[0].PhaseResults); got != 1 {
+		t.Errorf("checkpoint[0] results = %d, want 1", got)
+	}
+	if got := len(cs.saved[1].PhaseResults); got != 2 {
+		t.Errorf("checkpoint[1] results = %d, want 2", got)
+	}
+	if got := len(cs.saved[2].PhaseResults); got != 3 {
+		t.Errorf("checkpoint[2] results = %d, want 3", got)
+	}
+	// And each checkpoint has bead ID and timestamp set
+	for i, cp := range cs.saved {
+		if cp.BeadID != "cap-42" {
+			t.Errorf("checkpoint[%d].BeadID = %q, want %q", i, cp.BeadID, "cap-42")
+		}
+		if cp.SavedAt.IsZero() {
+			t.Errorf("checkpoint[%d].SavedAt is zero", i)
+		}
+	}
+	// And phase names accumulate correctly
+	if cs.saved[0].PhaseResults[0].PhaseName != "phase-a" {
+		t.Errorf("checkpoint[0] phase = %q, want %q", cs.saved[0].PhaseResults[0].PhaseName, "phase-a")
+	}
+	if cs.saved[1].PhaseResults[1].PhaseName != "phase-b" {
+		t.Errorf("checkpoint[1] phase = %q, want %q", cs.saved[1].PhaseResults[1].PhaseName, "phase-b")
+	}
+	if cs.saved[2].PhaseResults[2].PhaseName != "phase-c" {
+		t.Errorf("checkpoint[2] phase = %q, want %q", cs.saved[2].PhaseResults[2].PhaseName, "phase-c")
+	}
+}
+
+func TestRunPipeline_CheckpointNilIsNoop(t *testing.T) {
+	// Given a pipeline with no checkpoint store (nil)
+	sp := &sequenceProvider{responses: nPassResponses(6)}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error (no panic from nil store)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunPipeline_CheckpointOnConditionSkip(t *testing.T) {
+	// Given a pipeline where a phase is skipped by condition
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // phase-a
+		// phase-b skipped by condition
+		passResponse(), // phase-c
+	}}
+	wt := &mockWorktreeMgr{path: t.TempDir()} // empty dir, no .xyz files
+	cs := &mockCheckpointStore{}
+
+	phases := []PhaseDefinition{
+		{Name: "phase-a", Kind: Worker, MaxRetries: 1},
+		{Name: "phase-b", Kind: Worker, MaxRetries: 1, Condition: "files_match:*.xyz"},
+		{Name: "phase-c", Kind: Worker, MaxRetries: 1},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithWorktreeManager(wt),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the checkpoint store was called 3 times (including the skipped phase)
+	if got := len(cs.saved); got != 3 {
+		t.Fatalf("checkpoint saves = %d, want 3", got)
+	}
+	// And the second checkpoint includes a SKIP result
+	if cs.saved[1].PhaseResults[1].Signal.Status != provider.StatusSkip {
+		t.Errorf("checkpoint[1] phase-b status = %q, want %q",
+			cs.saved[1].PhaseResults[1].Signal.Status, provider.StatusSkip)
+	}
+}
+
+func TestRunPipeline_CheckpointErrorIgnored(t *testing.T) {
+	// Given a checkpoint store that always fails
+	sp := &sequenceProvider{responses: nPassResponses(6)}
+	cs := &mockCheckpointStore{saveErr: fmt.Errorf("disk full")}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error (checkpoint failures are best-effort)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the store was still called for each phase
+	if got := len(cs.saved); got != 6 {
+		t.Errorf("checkpoint saves = %d, want 6", got)
+	}
+}
+
+func TestRunPipeline_CheckpointOnError(t *testing.T) {
+	// Given a 3-phase pipeline where phase-c returns ERROR
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),
+		passResponse(),
+		errorResponse("build failed"),
+	}}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns an error (phase-c failed)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// And the checkpoint store saved results for all 3 phases
+	// (including the failed phase, so resume knows what completed)
+	if got := len(cs.saved); got != 3 {
+		t.Fatalf("checkpoint saves = %d, want 3", got)
+	}
+	// And the last checkpoint has all 3 phase results
+	if got := len(cs.saved[2].PhaseResults); got != 3 {
+		t.Errorf("final checkpoint results = %d, want 3", got)
+	}
+}
+
+func TestRunPipeline_PhaseProviderOverride(t *testing.T) {
+	// Given a 2-phase pipeline where the second phase uses a named provider
+	defaultProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+	alternateProv := &sequenceProvider{responses: []mockResponse{passResponse()}}
+
+	phases := []PhaseDefinition{
+		{Name: "worker", Kind: Worker, MaxRetries: 1},                                // uses default
+		{Name: "merge", Kind: Worker, MaxRetries: 1, Provider: "alternate-provider"}, // uses alternate
+	}
+
+	o := New(defaultProv,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(phases),
+		WithProviders(map[string]Provider{"alternate-provider": alternateProv}),
+	)
+
+	input := PipelineInput{BeadID: "cap-1"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And the default provider handled the first phase
+	if len(defaultProv.calls) != 1 {
+		t.Errorf("default provider called %d times, want 1", len(defaultProv.calls))
+	}
+	// And the alternate provider handled the second phase
+	if len(alternateProv.calls) != 1 {
+		t.Errorf("alternate provider called %d times, want 1", len(alternateProv.calls))
+	}
+}
+
+// --- Checkpoint resume tests ---
+
+func TestRunPipeline_ResumeSkipsCompletedPhases(t *testing.T) {
+	// Given a 3-phase pipeline with a checkpoint showing phase-a and phase-b completed
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // only phase-c should run
+	}}
+	cs := &mockCheckpointStore{
+		loadFound: true,
+		loadCP: PipelineCheckpoint{
+			BeadID: "cap-42",
+			PhaseResults: []PhaseResult{
+				{PhaseName: "phase-a", Signal: provider.Signal{Status: provider.StatusPass}},
+				{PhaseName: "phase-b", Signal: provider.Signal{Status: provider.StatusPass}},
+			},
+		},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	output, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And only phase-c was executed (the provider was called once)
+	if got := len(sp.calls); got != 1 {
+		t.Errorf("provider called %d times, want 1", got)
+	}
+	// And the output contains only the phase-c result (not replayed checkpoint data)
+	if got := len(output.PhaseResults); got != 1 {
+		t.Errorf("PhaseResults = %d, want 1", got)
+	}
+	if output.PhaseResults[0].PhaseName != "phase-c" {
+		t.Errorf("PhaseResults[0].PhaseName = %q, want %q", output.PhaseResults[0].PhaseName, "phase-c")
+	}
+}
+
+func TestRunPipeline_ResumeSkipsSkippedPhases(t *testing.T) {
+	// Given a checkpoint where phase-b was SKIP (condition not met)
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // only phase-c should run
+	}}
+	cs := &mockCheckpointStore{
+		loadFound: true,
+		loadCP: PipelineCheckpoint{
+			BeadID: "cap-42",
+			PhaseResults: []PhaseResult{
+				{PhaseName: "phase-a", Signal: provider.Signal{Status: provider.StatusPass}},
+				{PhaseName: "phase-b", Signal: provider.Signal{Status: provider.StatusSkip}},
+			},
+		},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And only phase-c was executed
+	if got := len(sp.calls); got != 1 {
+		t.Errorf("provider called %d times, want 1", got)
+	}
+}
+
+func TestRunPipeline_ResumeRerunsErrorPhases(t *testing.T) {
+	// Given a checkpoint where phase-b had ERROR (should be re-run)
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // phase-b re-run
+		passResponse(), // phase-c
+	}}
+	cs := &mockCheckpointStore{
+		loadFound: true,
+		loadCP: PipelineCheckpoint{
+			BeadID: "cap-42",
+			PhaseResults: []PhaseResult{
+				{PhaseName: "phase-a", Signal: provider.Signal{Status: provider.StatusPass}},
+				{PhaseName: "phase-b", Signal: provider.Signal{Status: provider.StatusError}},
+			},
+		},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And both phase-b (re-run) and phase-c were executed
+	if got := len(sp.calls); got != 2 {
+		t.Errorf("provider called %d times, want 2", got)
+	}
+}
+
+func TestRunPipeline_ResumeRerunsNeedsWorkPhases(t *testing.T) {
+	// Given a checkpoint where phase-b had NEEDS_WORK (interrupted mid-retry)
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // phase-b re-run
+		passResponse(), // phase-c
+	}}
+	cs := &mockCheckpointStore{
+		loadFound: true,
+		loadCP: PipelineCheckpoint{
+			BeadID: "cap-42",
+			PhaseResults: []PhaseResult{
+				{PhaseName: "phase-a", Signal: provider.Signal{Status: provider.StatusPass}},
+				{PhaseName: "phase-b", Signal: provider.Signal{Status: provider.StatusNeedsWork}},
+			},
+		},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And both phase-b (re-run) and phase-c were executed
+	if got := len(sp.calls); got != 2 {
+		t.Errorf("provider called %d times, want 2", got)
+	}
+}
+
+func TestRunPipeline_ResumeCheckpointLoadErrorIsBestEffort(t *testing.T) {
+	// Given a checkpoint store that returns an error on load
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{
+		loadErr: fmt.Errorf("corrupt checkpoint"),
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error (load failure is best-effort)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And all 3 phases ran (no skip from broken checkpoint)
+	if got := len(sp.calls); got != 3 {
+		t.Errorf("provider called %d times, want 3", got)
+	}
+}
+
+func TestRunPipeline_ResumeMergesWithInputSkipPhases(t *testing.T) {
+	// Given both input.SkipPhases and a checkpoint with completed phases
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(), // only phase-c should run
+	}}
+	cs := &mockCheckpointStore{
+		loadFound: true,
+		loadCP: PipelineCheckpoint{
+			BeadID: "cap-42",
+			PhaseResults: []PhaseResult{
+				{PhaseName: "phase-a", Signal: provider.Signal{Status: provider.StatusPass}},
+			},
+		},
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+	)
+
+	// phase-b from input, phase-a from checkpoint
+	input := PipelineInput{BeadID: "cap-42", SkipPhases: []string{"phase-b"}}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And only phase-c was executed (phase-a from checkpoint, phase-b from input)
+	if got := len(sp.calls); got != 1 {
+		t.Errorf("provider called %d times, want 1", got)
+	}
+}
+
+// --- Pause tests ---
+
+func TestRunPipeline_PauseBeforeSecondPhase(t *testing.T) {
+	// Given a 3-phase pipeline where pause is requested after phase-a completes
+	pauseCheckCount := 0
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	pauseAfterFirst := func() bool {
+		// Called before each phase: false before phase-a, true before phase-b.
+		pauseCheckCount++
+		return pauseCheckCount > 1
+	}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+		WithPauseRequested(pauseAfterFirst),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns ErrPipelinePaused
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And only 1 phase executed (phase-a)
+	if got := len(sp.calls); got != 1 {
+		t.Errorf("provider called %d times, want 1", got)
+	}
+	// And a checkpoint was saved
+	if got := len(cs.saved); got < 1 {
+		t.Error("expected at least 1 checkpoint save on pause")
+	}
+}
+
+func TestRunPipeline_PauseNilFuncRunsAll(t *testing.T) {
+	// Given a 3-phase pipeline with no WithPauseRequested (nil)
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	output, err := o.RunPipeline(context.Background(), input)
+
+	// Then all phases run successfully
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := len(sp.calls); got != 3 {
+		t.Errorf("provider called %d times, want 3", got)
+	}
+	if !output.Completed {
+		t.Error("expected Completed=true")
+	}
+}
+
+func TestRunPipeline_PauseNeverRequestedRunsAll(t *testing.T) {
+	// Given a 3-phase pipeline where pause is never requested
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithPauseRequested(func() bool { return false }),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	output, err := o.RunPipeline(context.Background(), input)
+
+	// Then all phases run successfully
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := len(sp.calls); got != 3 {
+		t.Errorf("provider called %d times, want 3", got)
+	}
+	if !output.Completed {
+		t.Error("expected Completed=true")
+	}
+}
+
+func TestRunPipeline_PauseSavesCheckpoint(t *testing.T) {
+	// Given a 3-phase pipeline with pause after phase-a, with a checkpoint store
+	pauseCheckCount := 0
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+		WithPauseRequested(func() bool {
+			pauseCheckCount++
+			return pauseCheckCount > 1
+		}),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it pauses
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And checkpoints were saved: once after phase-a, and once on pause
+	if got := len(cs.saved); got < 2 {
+		t.Errorf("checkpoint saves = %d, want >= 2 (phase + pause)", got)
+	}
+	// And the last checkpoint has the phase-a result
+	last := cs.saved[len(cs.saved)-1]
+	if last.BeadID != "cap-42" {
+		t.Errorf("checkpoint BeadID = %q, want %q", last.BeadID, "cap-42")
+	}
+	if got := len(last.PhaseResults); got != 1 {
+		t.Errorf("checkpoint results = %d, want 1", got)
+	}
+	if last.PhaseResults[0].PhaseName != "phase-a" {
+		t.Errorf("checkpoint phase = %q, want %q", last.PhaseResults[0].PhaseName, "phase-a")
+	}
+}
+
+func TestRunPipeline_PauseAfterRetryPair(t *testing.T) {
+	// Given a worker-reviewer pair that succeeds on retry, then pause before next phase
+	pauseCheckCount := 0
+	sp := &sequenceProvider{responses: []mockResponse{
+		passResponse(),                 // test-writer (initial)
+		needsWorkResponse("fix tests"), // test-review (NEEDS_WORK)
+		passResponse(),                 // test-writer (retry)
+		passResponse(),                 // test-review (retry → PASS)
+		// execute, execute-review, sign-off, merge would follow but pause stops it
+	}}
+
+	// Pause check is called before each phase in the main loop.
+	// Phase 0 = test-writer (check 1: false), Phase 1 = test-review (check 2: false),
+	// then retry pair runs within the test-review switch case.
+	// Next iteration: Phase 2 = execute (check 3: true → pause).
+	pauseFunc := func() bool {
+		pauseCheckCount++
+		return pauseCheckCount > 2
+	}
+
+	cs := &mockCheckpointStore{}
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithCheckpointStore(cs),
+		WithPauseRequested(pauseFunc),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns ErrPipelinePaused (after test-writer/test-review retry pair)
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And the retry pair completed (4 provider calls: 2 initial + 2 retry)
+	if got := len(sp.calls); got != 4 {
+		t.Errorf("provider called %d times, want 4", got)
+	}
+}
+
+func TestRunPipeline_PauseBeforeAnyPhase(t *testing.T) {
+	// Given pause returns true immediately
+	sp := &sequenceProvider{responses: nPassResponses(3)}
+	cs := &mockCheckpointStore{}
+
+	o := New(sp,
+		WithPromptLoader(&mockPromptLoader{}),
+		WithPhases(threePhases()),
+		WithCheckpointStore(cs),
+		WithPauseRequested(func() bool { return true }),
+	)
+
+	input := PipelineInput{BeadID: "cap-42"}
+
+	// When RunPipeline executes
+	_, err := o.RunPipeline(context.Background(), input)
+
+	// Then it returns ErrPipelinePaused
+	if !errors.Is(err, ErrPipelinePaused) {
+		t.Fatalf("expected ErrPipelinePaused, got %v", err)
+	}
+	// And zero phases executed
+	if got := len(sp.calls); got != 0 {
+		t.Errorf("provider called %d times, want 0", got)
+	}
+	// And a checkpoint was saved (with empty results)
+	if got := len(cs.saved); got != 1 {
+		t.Errorf("checkpoint saves = %d, want 1", got)
+	}
+	if got := len(cs.saved[0].PhaseResults); got != 0 {
+		t.Errorf("checkpoint results = %d, want 0", got)
 	}
 }

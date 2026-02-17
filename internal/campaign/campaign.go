@@ -15,8 +15,9 @@ import (
 
 // Sentinel errors for caller-checkable conditions.
 var (
-	ErrCircuitBroken = errors.New("campaign: circuit breaker tripped")
-	ErrNoTasks       = errors.New("campaign: no ready tasks found")
+	ErrCircuitBroken  = errors.New("campaign: circuit breaker tripped")
+	ErrNoTasks        = errors.New("campaign: no ready tasks found")
+	ErrCampaignPaused = errors.New("campaign: paused")
 )
 
 // PipelineRunner abstracts the orchestrator for campaign use.
@@ -174,6 +175,13 @@ func (r *Runner) Run(ctx context.Context, parentID string) error {
 		output, err := r.pipeline.RunPipeline(ctx, input)
 
 		if err != nil {
+			if errors.Is(err, orchestrator.ErrPipelinePaused) {
+				task.Status = TaskPending
+				state.Status = CampaignPaused
+				_ = r.store.Save(state)
+				return ErrCampaignPaused
+			}
+
 			task.Status = TaskFailed
 			task.Error = err.Error()
 			state.ConsecFailures++

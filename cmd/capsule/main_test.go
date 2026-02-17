@@ -433,6 +433,26 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		}
 	})
 
+	t.Run("exitCode returns 3 for pipeline paused", func(t *testing.T) {
+		// Given ErrPipelinePaused
+		// When exitCode is called
+		code := exitCode(orchestrator.ErrPipelinePaused)
+		// Then it returns 3
+		if code != 3 {
+			t.Errorf("exitCode(ErrPipelinePaused) = %d, want 3", code)
+		}
+	})
+
+	t.Run("exitCode returns 3 for campaign paused", func(t *testing.T) {
+		// Given ErrCampaignPaused
+		// When exitCode is called
+		code := exitCode(campaign.ErrCampaignPaused)
+		// Then it returns 3
+		if code != 3 {
+			t.Errorf("exitCode(ErrCampaignPaused) = %d, want 3", code)
+		}
+	})
+
 	t.Run("exitCode returns 1 for campaign ErrNoTasks", func(t *testing.T) {
 		// Given a campaign.ErrNoTasks error
 		err := campaign.ErrNoTasks
@@ -518,6 +538,40 @@ func TestFeature_OrchestratorWiring(t *testing.T) {
 		// And post-pipeline did NOT run
 		if wt.merged {
 			t.Error("merge should not run after pipeline failure")
+		}
+	})
+
+	t.Run("RunCmd paused skips post-pipeline and shows message", func(t *testing.T) {
+		// Given a RunCmd where the runner returns ErrPipelinePaused
+		var buf bytes.Buffer
+		cmd := &RunCmd{BeadID: "cap-pause", Provider: "claude", Timeout: 60}
+		runner := &mockPipelineRunner{err: orchestrator.ErrPipelinePaused}
+		wt := &mockMergeOps{mainBranch: "main"}
+		bd := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-pause"}}
+		bridge := tui.NewBridge()
+		display := tui.NewDisplay(tui.DisplayOptions{Writer: &buf, ForcePlain: true})
+
+		// When run is called
+		err := cmd.run(&buf, runner, wt, bd, display, bridge, context.Background())
+
+		// Then ErrPipelinePaused is returned
+		if !errors.Is(err, orchestrator.ErrPipelinePaused) {
+			t.Fatalf("expected ErrPipelinePaused, got %v", err)
+		}
+		// And post-pipeline did NOT run
+		if wt.merged {
+			t.Error("merge should not run after pause")
+		}
+		if bd.closed {
+			t.Error("bead close should not run after pause")
+		}
+		// And the pause message was printed
+		output := buf.String()
+		if !strings.Contains(output, "Pipeline paused") {
+			t.Errorf("output missing pause message, got: %q", output)
+		}
+		if !strings.Contains(output, "capsule run cap-pause") {
+			t.Errorf("output missing resume hint, got: %q", output)
 		}
 	})
 

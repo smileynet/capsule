@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/smileynet/capsule/internal/prompt"
@@ -45,6 +48,20 @@ type WorklogManager interface {
 	Archive(worktreePath, beadID string) error
 }
 
+// CheckpointStore persists pipeline state for pause/resume.
+type CheckpointStore interface {
+	SaveCheckpoint(cp PipelineCheckpoint) error
+	LoadCheckpoint(beadID string) (PipelineCheckpoint, bool, error)
+	RemoveCheckpoint(beadID string) error
+}
+
+// PipelineCheckpoint holds the state of a pipeline at a point in time.
+type PipelineCheckpoint struct {
+	BeadID       string        `json:"bead_id"`
+	PhaseResults []PhaseResult `json:"phase_results"`
+	SavedAt      time.Time     `json:"saved_at"`
+}
+
 // PipelineInput provides the context needed to run a pipeline.
 type PipelineInput struct {
 	BeadID         string
@@ -58,11 +75,11 @@ type PipelineInput struct {
 
 // PhaseResult records the outcome of a single phase execution with timing metadata.
 type PhaseResult struct {
-	PhaseName string
-	Signal    provider.Signal
-	Attempt   int
-	Duration  time.Duration
-	Timestamp time.Time
+	PhaseName string          `json:"phase_name"`
+	Signal    provider.Signal `json:"signal"`
+	Attempt   int             `json:"attempt"`
+	Duration  time.Duration   `json:"duration"`
+	Timestamp time.Time       `json:"timestamp"`
 }
 
 // PipelineOutput is the result of running a pipeline.
@@ -70,6 +87,9 @@ type PipelineOutput struct {
 	PhaseResults []PhaseResult
 	Completed    bool
 }
+
+// ErrPipelinePaused indicates the pipeline was gracefully paused between phases.
+var ErrPipelinePaused = errors.New("pipeline paused")
 
 // PipelineError indicates a pipeline failure with phase context.
 type PipelineError struct {
@@ -99,25 +119,27 @@ func (e *PipelineError) Unwrap() error {
 }
 
 // RetryStrategy holds resolved retry settings for a phase.
-// TODO(cap-6vp): Wire into runPhasePair to replace direct MaxRetries usage.
 type RetryStrategy struct {
 	MaxAttempts      int
-	BackoffFactor    float64 // TODO(cap-6vp): apply as timeout multiplier per retry attempt.
-	EscalateProvider string  // TODO(cap-6vp): switch provider after EscalateAfter attempts.
+	BackoffFactor    float64 // Timeout multiplier per retry: timeout * BackoffFactor^(attempt-1).
+	EscalateProvider string  // Switch to this provider after EscalateAfter attempts.
 	EscalateAfter    int
 }
 
 // Orchestrator sequences pipeline phases with retry logic.
 type Orchestrator struct {
-	provider       Provider
-	promptLoader   PromptLoader
-	worktreeMgr    WorktreeManager
-	worklogMgr     WorklogManager
-	gateRunner     GateRunner
-	phases         []PhaseDefinition
-	statusCallback StatusCallback
-	baseBranch     string
-	retryDefaults  RetryStrategy
+	provider        Provider
+	providers       map[string]Provider // Named provider overrides for per-phase routing.
+	promptLoader    PromptLoader
+	worktreeMgr     WorktreeManager
+	worklogMgr      WorklogManager
+	gateRunner      GateRunner
+	checkpointStore CheckpointStore
+	phases          []PhaseDefinition
+	statusCallback  StatusCallback
+	pauseRequested  func() bool // Returns true when a pause has been requested.
+	baseBranch      string
+	retryDefaults   RetryStrategy
 }
 
 // Option configures an Orchestrator.
@@ -181,6 +203,26 @@ func WithBaseBranch(branch string) Option {
 	return func(o *Orchestrator) { o.baseBranch = branch }
 }
 
+// WithProviders registers named providers for per-phase routing.
+// When a PhaseDefinition.Provider is set, executePhase looks up the
+// named provider from this map instead of using the default.
+func WithProviders(providers map[string]Provider) Option {
+	return func(o *Orchestrator) { o.providers = providers }
+}
+
+// WithCheckpointStore enables pipeline checkpointing.
+// When set, phase results are persisted after each phase completes.
+func WithCheckpointStore(s CheckpointStore) Option {
+	return func(o *Orchestrator) { o.checkpointStore = s }
+}
+
+// WithPauseRequested sets a function that signals graceful pause.
+// When the function returns true, the pipeline stops between phases,
+// saves a checkpoint, and returns ErrPipelinePaused.
+func WithPauseRequested(fn func() bool) Option {
+	return func(o *Orchestrator) { o.pauseRequested = fn }
+}
+
 // RunPipeline executes all pipeline phases for the given bead.
 // It creates a worktree and worklog, executes phases sequentially,
 // retries on NEEDS_WORK, and archives the worklog on completion.
@@ -198,10 +240,19 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 		baseBranch = o.baseBranch
 	}
 
-	// Build skip set for resume.
+	// Build skip set for resume from input and checkpoint.
 	skipSet := make(map[string]bool, len(input.SkipPhases))
 	for _, name := range input.SkipPhases {
 		skipSet[name] = true
+	}
+	if o.checkpointStore != nil {
+		if cp, found, err := o.checkpointStore.LoadCheckpoint(beadID); err == nil && found {
+			for _, pr := range cp.PhaseResults {
+				if pr.Signal.Status == provider.StatusPass || pr.Signal.Status == provider.StatusSkip {
+					skipSet[pr.PhaseName] = true
+				}
+			}
+		}
 	}
 
 	// Create worktree.
@@ -232,12 +283,46 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 
 	// Execute phases sequentially.
 	for i, phase := range o.phases {
+		// Check for pause before starting a new phase.
+		if o.isPauseRequested() {
+			o.saveCheckpoint(beadID, output)
+			return output, ErrPipelinePaused
+		}
+
 		// Skip phases for resume.
 		if skipSet[phase.Name] {
 			continue
 		}
 
 		progress := fmt.Sprintf("%d/%d", i+1, len(o.phases))
+
+		// Evaluate phase condition before execution.
+		met, err := evaluateCondition(phase.Condition, wtPath)
+		if err != nil {
+			return output, &PipelineError{Phase: phase.Name, Err: err}
+		}
+		if !met {
+			skipSignal := provider.Signal{
+				Status:       provider.StatusSkip,
+				Feedback:     fmt.Sprintf("condition not met: %s", phase.Condition),
+				Summary:      "skipped by condition",
+				FilesChanged: []string{},
+				Findings:     []provider.Finding{},
+			}
+			output.PhaseResults = append(output.PhaseResults, PhaseResult{
+				PhaseName: phase.Name,
+				Signal:    skipSignal,
+				Timestamp: time.Now(),
+			})
+			o.saveCheckpoint(beadID, output)
+			o.notify(StatusUpdate{
+				BeadID: beadID, Phase: phase.Name,
+				Status: PhaseSkipped, Progress: progress,
+				Attempt: 1, MaxRetry: phase.MaxRetries,
+				Signal: &skipSignal,
+			})
+			continue
+		}
 
 		o.notify(StatusUpdate{
 			BeadID: beadID, Phase: phase.Name,
@@ -260,6 +345,7 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 			Duration:  phaseDuration,
 			Timestamp: phaseStart,
 		})
+		o.saveCheckpoint(beadID, output)
 
 		switch signal.Status {
 		case provider.StatusPass:
@@ -340,7 +426,35 @@ func (o *Orchestrator) RunPipeline(ctx context.Context, input PipelineInput) (Pi
 func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseDefinition,
 	basePCtx prompt.Context, wtPath, progress, feedback string, startAttempt int) (provider.Signal, error) {
 
-	for attempt := startAttempt; attempt <= reviewer.MaxRetries; attempt++ {
+	rs := o.ResolveRetryStrategy(reviewer)
+	maxAttempts := rs.MaxAttempts
+
+	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
+		// Apply backoff to phase timeouts for this attempt.
+		w, r := worker, reviewer
+		if rs.BackoffFactor > 1.0 {
+			multiplier := math.Pow(rs.BackoffFactor, float64(attempt-1))
+			if w.Timeout > 0 {
+				w.Timeout = time.Duration(float64(w.Timeout) * multiplier)
+			}
+			if r.Timeout > 0 {
+				r.Timeout = time.Duration(float64(r.Timeout) * multiplier)
+			}
+		}
+
+		// Escalate to a different provider after N attempts.
+		if rs.EscalateProvider != "" && attempt > rs.EscalateAfter {
+			if _, ok := o.providers[rs.EscalateProvider]; !ok {
+				return provider.Signal{}, &PipelineError{
+					Phase:   worker.Name,
+					Attempt: attempt,
+					Err:     fmt.Errorf("escalation provider %q not registered", rs.EscalateProvider),
+				}
+			}
+			w.Provider = rs.EscalateProvider
+			r.Provider = rs.EscalateProvider
+		}
+
 		// Run worker with feedback.
 		workerCtx := basePCtx
 		workerCtx.Feedback = feedback
@@ -348,11 +462,11 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 		o.notify(StatusUpdate{
 			BeadID: basePCtx.BeadID, Phase: worker.Name,
 			Status: PhaseRunning, Progress: progress,
-			Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+			Attempt: attempt, MaxRetry: maxAttempts,
 		})
 
 		workerStart := time.Now()
-		workerSignal, err := o.executePhase(ctx, worker, workerCtx, wtPath)
+		workerSignal, err := o.executePhase(ctx, w, workerCtx, wtPath)
 		workerDuration := time.Since(workerStart)
 		if err != nil {
 			return provider.Signal{}, &PipelineError{Phase: worker.Name, Attempt: attempt, Err: err}
@@ -365,7 +479,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: worker.Name,
 				Status: PhaseError, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Duration: workerDuration, Signal: &workerSignal,
 			})
 			return workerSignal, &PipelineError{Phase: worker.Name, Attempt: attempt, Signal: workerSignal}
@@ -374,7 +488,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 		o.notify(StatusUpdate{
 			BeadID: basePCtx.BeadID, Phase: worker.Name,
 			Status: PhasePassed, Progress: progress,
-			Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+			Attempt: attempt, MaxRetry: maxAttempts,
 			Duration: workerDuration, Signal: &workerSignal,
 		})
 
@@ -382,11 +496,11 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 		o.notify(StatusUpdate{
 			BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 			Status: PhaseRunning, Progress: progress,
-			Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+			Attempt: attempt, MaxRetry: maxAttempts,
 		})
 
 		reviewerStart := time.Now()
-		reviewerSignal, err := o.executePhase(ctx, reviewer, basePCtx, wtPath)
+		reviewerSignal, err := o.executePhase(ctx, r, basePCtx, wtPath)
 		reviewerDuration := time.Since(reviewerStart)
 		if err != nil {
 			return provider.Signal{}, &PipelineError{Phase: reviewer.Name, Attempt: attempt, Err: err}
@@ -398,7 +512,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhasePassed, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Duration: reviewerDuration, Signal: &reviewerSignal,
 			})
 			return reviewerSignal, nil
@@ -407,7 +521,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhaseError, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Duration: reviewerDuration, Signal: &reviewerSignal,
 			})
 			return reviewerSignal, &PipelineError{Phase: reviewer.Name, Attempt: attempt, Signal: reviewerSignal}
@@ -416,7 +530,7 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 			o.notify(StatusUpdate{
 				BeadID: basePCtx.BeadID, Phase: reviewer.Name,
 				Status: PhaseFailed, Progress: progress,
-				Attempt: attempt, MaxRetry: reviewer.MaxRetries,
+				Attempt: attempt, MaxRetry: maxAttempts,
 				Duration: reviewerDuration, Signal: &reviewerSignal,
 			})
 			feedback = reviewerSignal.Feedback
@@ -425,19 +539,31 @@ func (o *Orchestrator) runPhasePair(ctx context.Context, worker, reviewer PhaseD
 
 	return provider.Signal{}, &PipelineError{
 		Phase:   reviewer.Name,
-		Attempt: reviewer.MaxRetries,
-		Err:     fmt.Errorf("failed after %d attempts", reviewer.MaxRetries),
+		Attempt: maxAttempts,
+		Err:     fmt.Errorf("max retries (%d) exceeded", maxAttempts),
 	}
 }
 
 // executePhase composes a prompt and executes a single phase.
 // For Gate phases, it delegates to the GateRunner.
 // For Worker and Reviewer phases, it composes a prompt and calls the provider.
+// When PhaseDefinition.Provider is set, the named provider is used instead of the default.
 func (o *Orchestrator) executePhase(ctx context.Context, phase PhaseDefinition,
 	pCtx prompt.Context, wtPath string) (provider.Signal, error) {
 
+	if phase.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, phase.Timeout)
+		defer cancel()
+	}
+
 	if phase.Kind == Gate {
 		return o.executeGate(ctx, phase, wtPath)
+	}
+
+	p, err := o.resolveProvider(phase)
+	if err != nil {
+		return provider.Signal{}, err
 	}
 
 	promptName := phase.PromptName()
@@ -446,7 +572,7 @@ func (o *Orchestrator) executePhase(ctx context.Context, phase PhaseDefinition,
 		return provider.Signal{}, fmt.Errorf("composing prompt for %s: %w", phase.Name, err)
 	}
 
-	result, err := o.provider.Execute(ctx, composed, wtPath)
+	result, err := p.Execute(ctx, composed, wtPath)
 	if err != nil {
 		return provider.Signal{}, fmt.Errorf("executing %s: %w", phase.Name, err)
 	}
@@ -457,6 +583,19 @@ func (o *Orchestrator) executePhase(ctx context.Context, phase PhaseDefinition,
 	}
 
 	return signal, nil
+}
+
+// resolveProvider returns the provider for a phase: the named override if set,
+// otherwise the orchestrator's default.
+func (o *Orchestrator) resolveProvider(phase PhaseDefinition) (Provider, error) {
+	if phase.Provider == "" {
+		return o.provider, nil
+	}
+	p, ok := o.providers[phase.Provider]
+	if !ok {
+		return nil, fmt.Errorf("phase %q: provider %q not registered", phase.Name, phase.Provider)
+	}
+	return p, nil
 }
 
 // executeGate runs a gate phase via the GateRunner.
@@ -477,6 +616,15 @@ func (o *Orchestrator) findPhase(name string) (PhaseDefinition, bool) {
 	return PhaseDefinition{}, false
 }
 
+// isPauseRequested returns true if a pause has been requested.
+// Safe to call when no pause function is configured (returns false).
+func (o *Orchestrator) isPauseRequested() bool {
+	if o.pauseRequested == nil {
+		return false
+	}
+	return o.pauseRequested()
+}
+
 // notify fires the status callback.
 func (o *Orchestrator) notify(su StatusUpdate) {
 	o.statusCallback(su)
@@ -490,6 +638,39 @@ func (o *Orchestrator) ResolveRetryStrategy(phase PhaseDefinition) RetryStrategy
 		rs.MaxAttempts = phase.MaxRetries
 	}
 	return rs
+}
+
+// evaluateCondition checks whether a phase's condition is met.
+// Empty condition means always run. "files_match:<glob>" checks for matching files in dir.
+// The glob is non-recursive (filepath.Glob); patterns like "*.go" match only in dir, not subdirectories.
+func evaluateCondition(condition, dir string) (bool, error) {
+	if condition == "" {
+		return true, nil
+	}
+
+	if strings.HasPrefix(condition, "files_match:") {
+		pattern := strings.TrimPrefix(condition, "files_match:")
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			return false, fmt.Errorf("evaluating condition %q: %w", condition, err)
+		}
+		return len(matches) > 0, nil
+	}
+
+	return false, fmt.Errorf("unrecognized condition: %q", condition)
+}
+
+// saveCheckpoint persists the current pipeline state (best-effort).
+func (o *Orchestrator) saveCheckpoint(beadID string, output PipelineOutput) {
+	if o.checkpointStore == nil {
+		return
+	}
+	// Best-effort: checkpoint failures don't abort the pipeline.
+	_ = o.checkpointStore.SaveCheckpoint(PipelineCheckpoint{
+		BeadID:       beadID,
+		PhaseResults: output.PhaseResults,
+		SavedAt:      time.Now(),
+	})
 }
 
 // logPhaseEntry records a phase result in the worklog (best-effort).

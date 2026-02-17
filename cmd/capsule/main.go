@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -90,6 +92,9 @@ func (c *CampaignCmd) Run() error {
 		return fmt.Errorf("campaign: loading phases: %w", err)
 	}
 
+	pauseCheck, stopPause := setupPauseTrigger()
+	defer stopPause()
+
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
@@ -103,6 +108,7 @@ func (c *CampaignCmd) Run() error {
 		orchestrator.WithGateRunner(gateRunner),
 		orchestrator.WithPhases(phases),
 		orchestrator.WithStatusCallback(plainTextCallback(os.Stdout)),
+		orchestrator.WithPauseRequested(pauseCheck),
 	)
 
 	// Build campaign dependencies.
@@ -215,6 +221,9 @@ func (r *RunCmd) Run() error {
 		BeadTitle:  beadCtx.TaskTitle,
 	})
 
+	pauseCheck, stopPause := setupPauseTrigger()
+	defer stopPause()
+
 	// Build orchestrator.
 	promptLoader := prompt.NewLoader("prompts")
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
@@ -228,6 +237,7 @@ func (r *RunCmd) Run() error {
 		orchestrator.WithGateRunner(gateRunner),
 		orchestrator.WithPhases(phases),
 		orchestrator.WithStatusCallback(bridgeStatusCallback(bridge)),
+		orchestrator.WithPauseRequested(pauseCheck),
 	)
 
 	return r.run(os.Stdout, orch, wtMgr, bdClient, display, bridge, pipelineCtx)
@@ -253,6 +263,11 @@ func (r *RunCmd) run(w io.Writer, runner pipelineRunner, wt mergeOps, bd beadRes
 
 	// Wait for display to finish (so it releases the terminal).
 	<-displayDone
+
+	if errors.Is(pipelineErr, orchestrator.ErrPipelinePaused) {
+		_, _ = fmt.Fprintf(w, "Pipeline paused. Resume with: capsule run %s\n", r.BeadID)
+		return pipelineErr
+	}
 
 	if pipelineErr != nil {
 		return pipelineErr
@@ -761,6 +776,24 @@ func severityToPriorityCLI(severity string) int {
 	}
 }
 
+// setupPauseTrigger registers SIGUSR1 to flip an atomic bool.
+// The returned function checks whether pause was requested.
+// The returned stop function deregisters the signal and must be deferred.
+func setupPauseTrigger() (check func() bool, stop func()) {
+	var paused atomic.Bool
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGUSR1)
+	go func() {
+		if _, ok := <-sigCh; ok {
+			paused.Store(true)
+		}
+	}()
+	return paused.Load, func() {
+		signal.Stop(sigCh)
+		close(sigCh)
+	}
+}
+
 // --- Dashboard campaign adapter types ---
 
 // dashboardCampaignAdapter implements dashboard.CampaignRunner by building a
@@ -975,15 +1008,19 @@ func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {
 
 // Exit codes.
 const (
-	exitSuccess  = 0
-	exitPipeline = 1
-	exitSetup    = 2
+	exitSuccess  = 0 // No error.
+	exitPipeline = 1 // Pipeline phase failure or context cancellation.
+	exitSetup    = 2 // Config, provider, or wiring error.
+	exitPaused   = 3 // Pipeline or campaign paused via SIGUSR1.
 )
 
 // exitCode maps an error to the appropriate exit code.
 func exitCode(err error) int {
 	if err == nil {
 		return exitSuccess
+	}
+	if errors.Is(err, orchestrator.ErrPipelinePaused) || errors.Is(err, campaign.ErrCampaignPaused) {
+		return exitPaused
 	}
 	var pe *orchestrator.PipelineError
 	if errors.As(err, &pe) {

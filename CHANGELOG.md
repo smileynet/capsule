@@ -72,3 +72,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Null byte check in validateBeadID prevents path traversal
   - Defensive slice copy in applyBeadList prevents aliasing bugs
   - Plain priority labels in closed view prevent nested ANSI escape codes
+- Advanced retry strategies for pipeline phase pairs (cap-6vp.3)
+  - Unified retry configuration via ResolveRetryStrategy (phase-level MaxRetries override pipeline defaults)
+  - Configurable timeout backoff: BackoffFactor multiplies effective timeout per retry attempt
+  - Provider escalation: switch to a more capable provider after N failed attempts via EscalateProvider/EscalateAfter
