@@ -31,12 +31,12 @@ pipeline:
     max_attempts: 3   # default: 3
 
     # Multiplier for exponential backoff between retries.
-    backoff_factor: 1.5   # default: 1.5
+    backoff_factor: 1.5   # default: 1.0
 
 campaign:
-  # How to handle task failures: "stop" aborts the campaign, "continue" skips
+  # How to handle task failures: "abort" aborts the campaign, "continue" skips
   # the failed task and proceeds with remaining work.
-  failure_mode: stop      # default: stop
+  failure_mode: abort     # default: abort
 
   # Number of consecutive failures before halting the campaign regardless
   # of failure_mode.
@@ -44,4 +44,4 @@ campaign:
 
   # Carry context (summaries, decisions) from completed tasks into subsequent
   # task runs within the same campaign.
-  cross_run_context: true  # default: true
+  cross_run_context: true  # default: false
