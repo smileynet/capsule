@@ -6,7 +6,8 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
 # Detect staged Go files and exit early if none
-staged=$(git diff --cached --name-only -- '*.go')
+# Exclude templates/ (separate Go modules, not part of main build)
+staged=$(git diff --cached --name-only -- '*.go' | grep -v '^templates/' || true)
 if [ -z "$staged" ]; then
   exit 0
 fi

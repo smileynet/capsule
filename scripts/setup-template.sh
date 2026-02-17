@@ -67,6 +67,11 @@ cp "$TEMPLATE_DIR/AGENTS.md" "$TARGET_DIR/AGENTS.md"
 [ -d "$TEMPLATE_DIR/src" ] && cp -r "$TEMPLATE_DIR/src" "$TARGET_DIR/src"
 [ -f "$TEMPLATE_DIR/README.md" ] && cp "$TEMPLATE_DIR/README.md" "$TARGET_DIR/README.md"
 
+if [ -f "$TEMPLATE_DIR/capsule.yaml" ]; then
+    mkdir -p "$TARGET_DIR/.capsule"
+    cp "$TEMPLATE_DIR/capsule.yaml" "$TARGET_DIR/.capsule/config.yaml"
+fi
+
 # --- Initialize beads and import fixtures ---
 (
     cd "$TARGET_DIR"

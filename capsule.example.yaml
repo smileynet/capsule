@@ -21,3 +21,27 @@ worktree:
   # Base directory for git worktrees, relative to project root.
   # Env: CAPSULE_WORKTREE_BASE_DIR
   base_dir: .capsule/worktrees   # default: .capsule/worktrees
+
+pipeline:
+  # Save checkpoints between pipeline phases for pause/resume.
+  checkpoint: true    # default: false
+
+  retry:
+    # Maximum retry attempts per phase on transient failure.
+    max_attempts: 3   # default: 3
+
+    # Multiplier for exponential backoff between retries.
+    backoff_factor: 1.5   # default: 1.5
+
+campaign:
+  # How to handle task failures: "stop" aborts the campaign, "continue" skips
+  # the failed task and proceeds with remaining work.
+  failure_mode: stop      # default: stop
+
+  # Number of consecutive failures before halting the campaign regardless
+  # of failure_mode.
+  circuit_breaker: 3      # default: 3
+
+  # Carry context (summaries, decisions) from completed tasks into subsequent
+  # task runs within the same campaign.
+  cross_run_context: true  # default: true

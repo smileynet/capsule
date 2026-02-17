@@ -1,6 +1,9 @@
 # Go binary
 /capsule
 
+# Instantiated demo projects
+tmp/
+
 # Go binaries built in template directories
 templates/*/src/demo-*
 !templates/*/src/demo-*.go
