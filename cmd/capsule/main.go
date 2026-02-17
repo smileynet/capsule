@@ -707,8 +707,14 @@ func (c *campaignBeadClient) ReadyChildren(parentID string) ([]campaign.BeadInfo
 }
 
 // isChildOf checks if childID is a direct child of parentID (e.g. "cap-123.1" is child of "cap-123").
+// Grandchildren like "cap-123.1.1" are NOT children of "cap-123".
 func isChildOf(childID, parentID string) bool {
-	return strings.HasPrefix(childID, parentID+".") && len(childID) > len(parentID)+1
+	prefix := parentID + "."
+	if !strings.HasPrefix(childID, prefix) {
+		return false
+	}
+	suffix := childID[len(prefix):]
+	return len(suffix) > 0 && !strings.Contains(suffix, ".")
 }
 
 func (c *campaignBeadClient) Show(id string) (campaign.BeadInfo, error) {

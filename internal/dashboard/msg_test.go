@@ -233,50 +233,6 @@ func TestCampaignStartMsg_ParentTitle(t *testing.T) {
 	}
 }
 
-func TestBrowse_EnterDispatchesWithBeadType(t *testing.T) {
-	// Given: a browse state with beads that have types
-	bs := newBrowseState()
-	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
-
-	// When: enter is pressed on the first bead (type="task")
-	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	// Then: DispatchMsg includes BeadType from the selected bead
-	if cmd == nil {
-		t.Fatal("enter should produce a command")
-	}
-	msg := cmd()
-	dispatch, ok := msg.(DispatchMsg)
-	if !ok {
-		t.Fatalf("enter command produced %T, want DispatchMsg", msg)
-	}
-	if dispatch.BeadType != "task" {
-		t.Errorf("dispatch BeadType = %q, want %q", dispatch.BeadType, "task")
-	}
-}
-
-func TestBrowse_EnterDispatchesWithBeadTitle(t *testing.T) {
-	// Given: a browse state with beads
-	bs := newBrowseState()
-	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
-
-	// When: enter is pressed on the first bead
-	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	// Then: DispatchMsg includes BeadTitle from the selected bead
-	if cmd == nil {
-		t.Fatal("enter should produce a command")
-	}
-	msg := cmd()
-	dispatch, ok := msg.(DispatchMsg)
-	if !ok {
-		t.Fatalf("enter command produced %T, want DispatchMsg", msg)
-	}
-	if dispatch.BeadTitle != "First task" {
-		t.Errorf("dispatch BeadTitle = %q, want %q", dispatch.BeadTitle, "First task")
-	}
-}
-
 // Compile-time check: stubCampaignRunner satisfies CampaignRunner.
 var _ CampaignRunner = (*stubCampaignRunner)(nil)
 

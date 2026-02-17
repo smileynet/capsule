@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // campaignState manages the task queue, embedded pipeline state, and
@@ -175,15 +174,15 @@ func (cs campaignState) View(width, height int) string {
 func (cs campaignState) taskIndicator(status CampaignTaskStatus) string {
 	switch status {
 	case CampaignTaskPending:
-		return pipePendingStyle.Render("○")
+		return pipePendingStyle.Render(SymbolPending)
 	case CampaignTaskRunning:
 		return cs.pipeline.spinner.View()
 	case CampaignTaskPassed:
-		return pipePassedStyle.Render("✓")
+		return pipePassedStyle.Render(SymbolCheck)
 	case CampaignTaskFailed:
-		return pipeFailedStyle.Render("✗")
+		return pipeFailedStyle.Render(SymbolCross)
 	case CampaignTaskSkipped:
-		return pipeSkippedStyle.Render("–")
+		return pipeSkippedStyle.Render(SymbolSkipped)
 	default:
 		return "?"
 	}
@@ -223,20 +222,20 @@ func (cs campaignState) formatTaskReport(task CampaignTaskInfo, reports []PhaseR
 	fmt.Fprintf(&b, "%s\n", task.Title)
 
 	for _, r := range reports {
-		var statusStyle lipgloss.Style
 		var statusText string
+		var renderedStatus string
 		switch r.Status {
 		case PhaseFailed, PhaseError:
-			statusStyle = pipeFailedStyle
 			statusText = "Failed"
+			renderedStatus = pipeFailedStyle.Render(statusText)
 		case PhaseSkipped:
-			statusStyle = pipeSkippedStyle
 			statusText = "Skipped"
+			renderedStatus = pipeSkippedStyle.Render(statusText)
 		default:
-			statusStyle = pipePassedStyle
 			statusText = "Passed"
+			renderedStatus = pipePassedStyle.Render(statusText)
 		}
-		fmt.Fprintf(&b, "\n%s  %s", r.PhaseName, statusStyle.Render(statusText))
+		fmt.Fprintf(&b, "\n%s  %s", r.PhaseName, renderedStatus)
 		if r.Duration > 0 {
 			fmt.Fprintf(&b, "  %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", r.Duration.Seconds())))
 		}

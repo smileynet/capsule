@@ -9,19 +9,46 @@ import (
 // MinLeftWidth is the minimum character width for the left pane.
 const MinLeftWidth = 28
 
+// --- Semantic symbol constants ---
+
+const (
+	SymbolPending  = "○"
+	SymbolProgress = "⧗"
+	SymbolCheck    = "✓"
+	SymbolCross    = "✗"
+	SymbolSkipped  = "–"
+)
+
+// --- Semantic color palette (ANSI named colors 0-15 for theme compliance) ---
+
+var (
+	colorActive  = lipgloss.AdaptiveColor{Light: "6", Dark: "14"} // Cyan: in-progress
+	colorSuccess = lipgloss.AdaptiveColor{Light: "2", Dark: "10"} // Green: completed
+	colorWarning = lipgloss.AdaptiveColor{Light: "3", Dark: "11"} // Yellow: blocked/warning
+	colorError   = lipgloss.AdaptiveColor{Light: "1", Dark: "9"}  // Red: failed
+	colorDim     = lipgloss.AdaptiveColor{Light: "245", Dark: "242"}
+	colorMeta    = lipgloss.AdaptiveColor{Light: "240", Dark: "244"}
+)
+
+// --- Semantic styles ---
+
+var (
+	activeStyle  = lipgloss.NewStyle().Foreground(colorActive)
+	successStyle = lipgloss.NewStyle().Foreground(colorSuccess)
+	errorStyle   = lipgloss.NewStyle().Foreground(colorError)
+	dimStyle     = lipgloss.NewStyle().Foreground(colorDim)
+	metaStyle    = lipgloss.NewStyle().Foreground(colorMeta)
+)
+
 // Priority badge colors indexed by priority level (0-4).
-// P0=red, P1=orange, P2=yellow, P3=blue, P4=gray.
+// P0=red, P1=yellow, P2=yellow, P3=blue, P4=gray.
 var priorityColors = [5]lipgloss.AdaptiveColor{
-	{Light: "1", Dark: "9"},     // P0: red
-	{Light: "208", Dark: "208"}, // P1: orange
-	{Light: "3", Dark: "11"},    // P2: yellow
+	colorError,                  // P0: red
+	colorWarning,                // P1: yellow (was extended 208; now ANSI 3 for theme compliance)
+	colorWarning,                // P2: yellow
 	{Light: "4", Dark: "12"},    // P3: blue
 	{Light: "240", Dark: "245"}, // P4: gray
 }
-
-// mutedText is a lipgloss style that dims text for closed/historical items.
-var mutedText = lipgloss.NewStyle().
-	Foreground(lipgloss.AdaptiveColor{Light: "245", Dark: "242"})
 
 // PriorityBadge returns a styled priority label like "P0", "P2", etc.
 func PriorityBadge(priority int) string {

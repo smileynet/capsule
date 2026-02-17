@@ -37,6 +37,7 @@ type BeadSummary struct {
 	Title    string
 	Priority int
 	Type     string
+	Closed   bool
 }
 
 // BeadDetail is the resolved detail of a single bead for the right pane.
@@ -121,12 +122,6 @@ type BeadListMsg struct {
 	Err   error
 }
 
-// ClosedBeadListMsg carries the result of a BeadLister.Closed() call.
-type ClosedBeadListMsg struct {
-	Beads []BeadSummary
-	Err   error
-}
-
 // BeadResolvedMsg carries the result of a BeadResolver.Resolve() call.
 type BeadResolvedMsg struct {
 	ID     string
@@ -166,10 +161,6 @@ type DispatchMsg struct {
 // RefreshBeadsMsg signals that the bead list should be reloaded.
 // browseState emits this on 'r'; Model.Update intercepts it and calls initBrowse.
 type RefreshBeadsMsg struct{}
-
-// ToggleHistoryMsg signals that the browse pane should switch to closed beads.
-// browseState emits this on 'h'; Model.Update intercepts it and fetches closed beads.
-type ToggleHistoryMsg struct{}
 
 // PostPipelineDoneMsg signals that post-pipeline lifecycle completed.
 // Displayed as a transient status line that auto-clears after statusLineDuration.

@@ -234,15 +234,19 @@ func formatBeadDetail(d BeadDetail) string {
 	return b.String()
 }
 
-// renderDetailContent formats a bead detail for the viewport. In closed mode
+// renderDetailContent formats a bead detail for the viewport. For closed beads
 // with an archive reader, it appends archived summary and worklog data.
 func (m Model) renderDetailContent(d BeadDetail) string {
-	if !m.browse.showClosed || m.archive == nil {
+	if m.archive == nil {
 		return formatBeadDetail(d)
 	}
-	summary, _ := m.archive.ReadSummary(d.ID)
-	worklog, _ := m.archive.ReadWorklog(d.ID)
-	return formatClosedBeadDetail(d, summary, worklog)
+	// Check if the selected bead is closed.
+	if bead, ok := m.browse.SelectedBead(); ok && bead.Closed {
+		summary, _ := m.archive.ReadSummary(d.ID)
+		worklog, _ := m.archive.ReadWorklog(d.ID)
+		return formatClosedBeadDetail(d, summary, worklog)
+	}
+	return formatBeadDetail(d)
 }
 
 // formatClosedBeadDetail renders a closed bead's detail with archived summary
@@ -293,8 +297,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case BeadListMsg:
 		m.browse, _ = m.browse.Update(msg)
 		if m.lastDispatchedID != "" {
-			for i, b := range m.browse.beads {
-				if b.ID == m.lastDispatchedID {
+			for i, fn := range m.browse.flatNodes {
+				if fn.Node.Bead.ID == m.lastDispatchedID {
 					m.browse.cursor = i
 					break
 				}
@@ -340,16 +344,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
 		}
 		return m, nil
-
-	case ToggleHistoryMsg:
-		if m.lister != nil {
-			return m, tea.Batch(initClosedBrowse(m.lister), m.browseSpinner.Tick)
-		}
-		return m, nil
-
-	case ClosedBeadListMsg:
-		m.browse, _ = m.browse.Update(msg)
-		return m.maybeResolve()
 
 	case DispatchMsg:
 		return m.handleDispatch(msg)
@@ -501,15 +495,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeBrowse {
 			m.browse.loading = true
 			m.browse.err = nil
-			m.browse.showClosed = false
-			m.browse.readyBeads = nil
 			return m, func() tea.Msg { return RefreshBeadsMsg{} }
-		}
-	case "h":
-		if m.mode == ModeBrowse && !m.browse.loading {
-			var cmd tea.Cmd
-			m.browse, cmd = m.browse.Update(msg)
-			return m, cmd
 		}
 	}
 
@@ -665,7 +651,7 @@ func (m Model) View() string {
 	leftPane := leftStyle.Render(m.viewLeft())
 	rightPane := rightStyle.Render(m.viewRight())
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-	helpView := m.help.View(HelpBindings(m.mode, m.browse.showClosed))
+	helpView := m.help.View(HelpBindings(m.mode))
 
 	if m.statusMsg != "" {
 		statusLine := pipeHeaderStyle.Render(m.statusMsg)

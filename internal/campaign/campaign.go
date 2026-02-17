@@ -18,7 +18,12 @@ var (
 	ErrCircuitBroken  = errors.New("campaign: circuit breaker tripped")
 	ErrNoTasks        = errors.New("campaign: no ready tasks found")
 	ErrCampaignPaused = errors.New("campaign: paused")
+	ErrMaxDepth       = errors.New("campaign: max recursion depth reached")
+	ErrCycle          = errors.New("campaign: cycle detected")
 )
+
+// maxCampaignDepth caps recursive campaign nesting (epic → feature → task).
+const maxCampaignDepth = 3
 
 // PipelineRunner abstracts the orchestrator for campaign use.
 type PipelineRunner interface {
@@ -141,8 +146,22 @@ func NewRunner(pipeline PipelineRunner, beads BeadClient, store StateStore, conf
 
 // Run executes a campaign for the given parent bead (feature or epic).
 // It discovers ready children, runs pipelines sequentially, handles failures,
-// files discoveries, and runs validation on completion.
+// files discoveries, and runs validation on completion. When a child is a
+// feature or epic, it recurses into a sub-campaign instead of running a pipeline.
 func (r *Runner) Run(ctx context.Context, parentID string) error {
+	return r.runRecursive(ctx, parentID, 0, make(map[string]bool))
+}
+
+// runRecursive is the internal recursive implementation of Run.
+func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, visited map[string]bool) error {
+	if depth > maxCampaignDepth {
+		return fmt.Errorf("%w: depth %d for %s", ErrMaxDepth, depth, parentID)
+	}
+	if visited[parentID] {
+		return fmt.Errorf("%w: %s", ErrCycle, parentID)
+	}
+	visited[parentID] = true
+
 	children, err := r.beads.ReadyChildren(parentID)
 	if err != nil {
 		return fmt.Errorf("campaign: listing children of %s: %w", parentID, err)
@@ -152,6 +171,12 @@ func (r *Runner) Run(ctx context.Context, parentID string) error {
 	}
 
 	r.callback.OnCampaignStart(parentID, children)
+
+	// Build type map from children for deciding recursion vs pipeline.
+	childTypes := make(map[string]string, len(children))
+	for _, c := range children {
+		childTypes[c.ID] = c.Type
+	}
 
 	state := r.initOrResumeState(parentID, children)
 	state.Status = CampaignRunning
@@ -171,8 +196,19 @@ func (r *Runner) Run(ctx context.Context, parentID string) error {
 		r.callback.OnTaskStart(task.BeadID)
 		task.Status = TaskRunning
 
-		input := r.buildPipelineInput(task.BeadID, state)
-		output, err := r.pipeline.RunPipeline(ctx, input)
+		// Feature/epic children recurse; tasks run a pipeline.
+		childType := childTypes[task.BeadID]
+		if childType == "feature" || childType == "epic" {
+			err = r.runRecursive(ctx, task.BeadID, depth+1, visited)
+		} else {
+			var output orchestrator.PipelineOutput
+			input := r.buildPipelineInput(task.BeadID, state)
+			output, err = r.pipeline.RunPipeline(ctx, input)
+			if err == nil {
+				task.PhaseResults = output.PhaseResults
+				r.fileDiscoveries(output, parentID)
+			}
+		}
 
 		if err != nil {
 			if errors.Is(err, orchestrator.ErrPipelinePaused) {
@@ -198,11 +234,9 @@ func (r *Runner) Run(ctx context.Context, parentID string) error {
 		}
 
 		task.Status = TaskCompleted
-		task.PhaseResults = output.PhaseResults
 		state.ConsecFailures = 0
 		r.callback.OnTaskComplete(*task)
 
-		r.fileDiscoveries(output, parentID)
 		r.runPostPipeline(task.BeadID)
 
 		state.CurrentTaskIdx = i + 1

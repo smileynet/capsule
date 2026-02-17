@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // phaseEntry tracks the display state of a single pipeline phase.
@@ -135,30 +134,30 @@ func (ps pipelineState) handleKey(msg tea.KeyMsg) pipelineState {
 	return ps
 }
 
-// Status indicator styles (reimplemented from tui.Model to avoid coupling).
+// Status indicator styles built from semantic palette.
 var (
-	pipePassedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	pipeFailedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	pipeRunningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	pipePendingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	pipeSkippedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	pipeDurationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	pipeRetryStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	pipeHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	pipePassedStyle   = successStyle
+	pipeFailedStyle   = errorStyle
+	pipeRunningStyle  = activeStyle
+	pipePendingStyle  = dimStyle
+	pipeSkippedStyle  = dimStyle
+	pipeDurationStyle = metaStyle
+	pipeRetryStyle    = metaStyle
+	pipeHeaderStyle   = dimStyle
 )
 
 func pipeIndicator(status PhaseStatus, spinnerView string) string {
 	switch status {
 	case PhasePending:
-		return pipePendingStyle.Render("○")
+		return pipePendingStyle.Render(SymbolPending)
 	case PhaseRunning:
 		return spinnerView
 	case PhasePassed:
-		return pipePassedStyle.Render("✓")
+		return pipePassedStyle.Render(SymbolCheck)
 	case PhaseFailed, PhaseError:
-		return pipeFailedStyle.Render("✗")
+		return pipeFailedStyle.Render(SymbolCross)
 	case PhaseSkipped:
-		return pipeSkippedStyle.Render("–")
+		return pipeSkippedStyle.Render(SymbolSkipped)
 	default:
 		return "?"
 	}

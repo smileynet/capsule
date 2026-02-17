@@ -13,25 +13,11 @@ func TestBrowseKeys_ContainsExpected(t *testing.T) {
 	allKeys := collectKeys(bindings)
 
 	// Then: all expected navigation and action keys are present
-	expected := []string{"up", "down", "enter", "tab", "r", "h", "q"}
+	expected := []string{"up", "down", "enter", "tab", "r", "q"}
 	for _, want := range expected {
 		if !containsKey(allKeys, want) {
 			t.Errorf("BrowseKeyMap missing key %q, got %v", want, allKeys)
 		}
-	}
-}
-
-func TestBrowseKeys_HistoryHelp(t *testing.T) {
-	// Given: the browse key map
-	km := BrowseKeyMap()
-
-	// Then: the History binding has appropriate help text
-	h := km.History.Help()
-	if h.Key != "h" {
-		t.Errorf("History key help = %q, want %q", h.Key, "h")
-	}
-	if h.Desc != "history" {
-		t.Errorf("History desc = %q, want %q", h.Desc, "history")
 	}
 }
 

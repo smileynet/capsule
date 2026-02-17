@@ -8,7 +8,7 @@ import (
 
 func TestHelpBindings_BrowseMode(t *testing.T) {
 	// Given: help bindings for browse mode
-	km := HelpBindings(ModeBrowse, false)
+	km := HelpBindings(ModeBrowse)
 	bindings := km.ShortHelp()
 	allKeys := collectKeys(bindings)
 
@@ -23,7 +23,7 @@ func TestHelpBindings_BrowseMode(t *testing.T) {
 
 func TestHelpBindings_PipelineMode(t *testing.T) {
 	// Given: help bindings for pipeline mode
-	km := HelpBindings(ModePipeline, false)
+	km := HelpBindings(ModePipeline)
 	bindings := km.ShortHelp()
 	allKeys := collectKeys(bindings)
 
@@ -38,7 +38,7 @@ func TestHelpBindings_PipelineMode(t *testing.T) {
 
 func TestHelpBindings_SummaryMode(t *testing.T) {
 	// Given: help bindings for summary mode
-	km := HelpBindings(ModeSummary, false)
+	km := HelpBindings(ModeSummary)
 	bindings := km.ShortHelp()
 
 	// Then: at least one binding is present
@@ -49,7 +49,7 @@ func TestHelpBindings_SummaryMode(t *testing.T) {
 
 func TestHelpBindings_CampaignMode(t *testing.T) {
 	// Given: help bindings for campaign mode
-	km := HelpBindings(ModeCampaign, false)
+	km := HelpBindings(ModeCampaign)
 	bindings := km.ShortHelp()
 	allKeys := collectKeys(bindings)
 
@@ -64,7 +64,7 @@ func TestHelpBindings_CampaignMode(t *testing.T) {
 
 func TestHelpBindings_CampaignSummaryMode(t *testing.T) {
 	// Given: help bindings for campaign summary mode
-	km := HelpBindings(ModeCampaignSummary, false)
+	km := HelpBindings(ModeCampaignSummary)
 	bindings := km.ShortHelp()
 
 	// Then: at least one binding is present
@@ -79,44 +79,22 @@ func TestHelpBindings_ImplementsKeyMap(t *testing.T) {
 
 	// Then: each returns a type satisfying help.KeyMap (ShortHelp + FullHelp)
 	for _, mode := range modes {
-		km := HelpBindings(mode, false)
+		km := HelpBindings(mode)
 		_ = km.ShortHelp()
 		_ = km.FullHelp()
 	}
 }
 
-func TestHelpBindings_BrowseShowsHistoryLabel(t *testing.T) {
-	// Given: help bindings for browse mode showing ready beads
-	km := HelpBindings(ModeBrowse, false)
+func TestHelpBindings_BrowseNoHistoryKey(t *testing.T) {
+	// Given: help bindings for browse mode
+	km := HelpBindings(ModeBrowse)
 	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
 
-	// Then: h key shows "history" label
-	for _, b := range bindings {
-		if containsKey(b.Keys(), "h") {
-			if b.Help().Desc != "history" {
-				t.Errorf("h key desc = %q, want %q", b.Help().Desc, "history")
-			}
-			return
-		}
+	// Then: 'h' key is not present (history toggle removed)
+	if containsKey(allKeys, "h") {
+		t.Error("browse help should not contain 'h' key (history removed)")
 	}
-	t.Error("browse help should contain 'h' key")
-}
-
-func TestHelpBindings_BrowseClosedShowsReadyLabel(t *testing.T) {
-	// Given: help bindings for browse mode showing closed beads
-	km := HelpBindings(ModeBrowse, true)
-	bindings := km.ShortHelp()
-
-	// Then: h key shows "ready" label
-	for _, b := range bindings {
-		if containsKey(b.Keys(), "h") {
-			if b.Help().Desc != "ready" {
-				t.Errorf("h key desc = %q, want %q", b.Help().Desc, "ready")
-			}
-			return
-		}
-	}
-	t.Error("browse help should contain 'h' key")
 }
 
 // Verify our key map types satisfy help.KeyMap at compile time.

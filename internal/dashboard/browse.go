@@ -10,15 +10,16 @@ import (
 // CursorMarker is the prefix shown on the selected bead row.
 const CursorMarker = "▸ "
 
+// closedBeadLimit is the maximum number of closed beads to fetch.
+const closedBeadLimit = 50
+
 // browseState manages the bead list, cursor, and loading/error states
-// for browse mode's left pane.
+// for browse mode's left pane. Shows all beads (open + closed) in a tree.
 type browseState struct {
-	beads      []BeadSummary
-	cursor     int
-	loading    bool
-	err        error
-	showClosed bool
-	readyBeads []BeadSummary // remembered ready beads for toggle-back
+	flatNodes []flatNode
+	cursor    int
+	loading   bool
+	err       error
 }
 
 // newBrowseState returns a browseState in the loading state.
@@ -26,34 +27,49 @@ func newBrowseState() browseState {
 	return browseState{loading: true}
 }
 
-// initBrowse returns a tea.Cmd that calls lister.Ready() asynchronously
-// and wraps the result in a BeadListMsg.
+// initBrowse returns a tea.Cmd that fetches both ready and closed beads,
+// merges them, and wraps the result in a BeadListMsg.
 func initBrowse(lister BeadLister) tea.Cmd {
 	return func() tea.Msg {
-		beads, err := lister.Ready()
-		return BeadListMsg{Beads: beads, Err: err}
+		ready, err := lister.Ready()
+		if err != nil {
+			return BeadListMsg{Err: err}
+		}
+		closed, err := lister.Closed(closedBeadLimit)
+		if err != nil {
+			// Closed fetch failure is non-fatal; show ready beads only.
+			return BeadListMsg{Beads: ready}
+		}
+		// Mark closed beads and merge.
+		for i := range closed {
+			closed[i].Closed = true
+		}
+		merged := mergeBeads(ready, closed)
+		return BeadListMsg{Beads: merged}
 	}
 }
 
-// closedBeadLimit is the maximum number of closed beads to fetch.
-const closedBeadLimit = 50
-
-// initClosedBrowse returns a tea.Cmd that calls lister.Closed() asynchronously
-// and wraps the result in a ClosedBeadListMsg.
-func initClosedBrowse(lister BeadLister) tea.Cmd {
-	return func() tea.Msg {
-		beads, err := lister.Closed(closedBeadLimit)
-		return ClosedBeadListMsg{Beads: beads, Err: err}
+// mergeBeads combines ready and closed bead lists, deduplicating by ID.
+// Ready beads take precedence over closed beads with the same ID.
+func mergeBeads(ready, closed []BeadSummary) []BeadSummary {
+	seen := make(map[string]bool, len(ready))
+	merged := make([]BeadSummary, 0, len(ready)+len(closed))
+	for _, b := range ready {
+		seen[b.ID] = true
+		merged = append(merged, b)
 	}
+	for _, b := range closed {
+		if !seen[b.ID] {
+			merged = append(merged, b)
+		}
+	}
+	return merged
 }
 
 // Update processes messages for the browse state.
 func (bs browseState) Update(msg tea.Msg) (browseState, tea.Cmd) {
 	switch msg := msg.(type) {
 	case BeadListMsg:
-		return bs.applyBeadList(msg.Beads, msg.Err), nil
-
-	case ClosedBeadListMsg:
 		return bs.applyBeadList(msg.Beads, msg.Err), nil
 
 	case tea.KeyMsg:
@@ -66,17 +82,17 @@ func (bs browseState) Update(msg tea.Msg) (browseState, tea.Cmd) {
 	return bs, nil
 }
 
-// applyBeadList applies a fetched bead list (or error) to the browse state,
-// clearing the loading indicator and resetting the cursor.
+// applyBeadList builds a tree from the merged bead list and flattens it.
 func (bs browseState) applyBeadList(beads []BeadSummary, err error) browseState {
 	bs.loading = false
 	if err != nil {
 		bs.err = err
-		bs.beads = nil
+		bs.flatNodes = nil
 		return bs
 	}
 	bs.err = nil
-	bs.beads = append([]BeadSummary(nil), beads...)
+	roots := buildTree(beads)
+	bs.flatNodes = flattenTree(roots)
 	bs.cursor = 0
 	return bs
 }
@@ -84,26 +100,30 @@ func (bs browseState) applyBeadList(beads []BeadSummary, err error) browseState 
 func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
-		if len(bs.beads) > 0 {
+		if len(bs.flatNodes) > 0 {
 			bs.cursor--
 			if bs.cursor < 0 {
-				bs.cursor = len(bs.beads) - 1
+				bs.cursor = len(bs.flatNodes) - 1
 			}
 		}
 		return bs, nil
 
 	case "down", "j":
-		if len(bs.beads) > 0 {
+		if len(bs.flatNodes) > 0 {
 			bs.cursor++
-			if bs.cursor >= len(bs.beads) {
+			if bs.cursor >= len(bs.flatNodes) {
 				bs.cursor = 0
 			}
 		}
 		return bs, nil
 
 	case "enter":
-		if len(bs.beads) > 0 && bs.cursor < len(bs.beads) && !bs.showClosed {
-			selected := bs.beads[bs.cursor]
+		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
+			node := bs.flatNodes[bs.cursor].Node
+			if node.Bead.Closed {
+				return bs, nil // Block dispatch on closed items.
+			}
+			selected := node.Bead
 			return bs, func() tea.Msg {
 				return DispatchMsg{BeadID: selected.ID, BeadType: selected.Type, BeadTitle: selected.Title}
 			}
@@ -114,22 +134,6 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		bs.loading = true
 		bs.err = nil
 		return bs, func() tea.Msg { return RefreshBeadsMsg{} }
-
-	case "h":
-		if bs.showClosed {
-			// Toggle back to ready: restore saved beads.
-			bs.showClosed = false
-			bs.beads = append([]BeadSummary(nil), bs.readyBeads...)
-			bs.cursor = 0
-			bs.err = nil
-			return bs, nil
-		}
-		// Toggle to closed: save ready beads, request fetch.
-		bs.showClosed = true
-		bs.readyBeads = append([]BeadSummary(nil), bs.beads...)
-		bs.loading = true
-		bs.err = nil
-		return bs, func() tea.Msg { return ToggleHistoryMsg{} }
 	}
 
 	return bs, nil
@@ -138,10 +142,18 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 // SelectedID returns the bead ID at the current cursor position,
 // or "" if the list is empty or still loading.
 func (bs browseState) SelectedID() string {
-	if len(bs.beads) == 0 || bs.cursor < 0 || bs.cursor >= len(bs.beads) {
+	if len(bs.flatNodes) == 0 || bs.cursor < 0 || bs.cursor >= len(bs.flatNodes) {
 		return ""
 	}
-	return bs.beads[bs.cursor].ID
+	return bs.flatNodes[bs.cursor].Node.Bead.ID
+}
+
+// SelectedBead returns the BeadSummary at the current cursor position.
+func (bs browseState) SelectedBead() (BeadSummary, bool) {
+	if len(bs.flatNodes) == 0 || bs.cursor < 0 || bs.cursor >= len(bs.flatNodes) {
+		return BeadSummary{}, false
+	}
+	return bs.flatNodes[bs.cursor].Node.Bead, true
 }
 
 // View renders the browse pane content for the given dimensions.
@@ -155,36 +167,58 @@ func (bs browseState) View(width, height int, spinnerView string) string {
 		return fmt.Sprintf("Error: %s\n\nPress r to retry", bs.err)
 	}
 
-	if len(bs.beads) == 0 {
-		if bs.showClosed {
-			return "No closed beads"
-		}
-		return "No ready beads — press r to refresh"
+	if len(bs.flatNodes) == 0 {
+		return "No beads — press r to refresh"
 	}
 
 	var b strings.Builder
-	for i, bead := range bs.beads {
+	for i, fn := range bs.flatNodes {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
+
+		// Cursor marker.
 		if i == bs.cursor {
 			b.WriteString(CursorMarker)
 		} else {
 			b.WriteString("  ")
 		}
 
-		if bs.showClosed {
-			line := fmt.Sprintf("%s P%d %s", bead.ID, bead.Priority, bead.Title)
+		bead := fn.Node.Bead
+		hasChildren := len(fn.Node.Children) > 0
+
+		// Tree prefix (box-drawing).
+		b.WriteString(fn.Prefix)
+
+		if bead.Closed {
+			// Closed items: dim text with check symbol, no priority badge.
+			line := fmt.Sprintf("%s %s %s", bead.ID, SymbolCheck, bead.Title)
 			if bead.Type != "" {
 				line += " [" + bead.Type + "]"
 			}
-			b.WriteString(mutedText.Render(line))
+			if hasChildren {
+				stats := treeProgress(fn.Node)
+				line += fmt.Sprintf(" %d/%d", stats.Closed, stats.Total)
+			}
+			b.WriteString(dimStyle.Render(line))
 		} else {
-			line := bead.ID + " " + PriorityBadge(bead.Priority) + " " + bead.Title
+			// Open items: normal text with priority badge.
+			b.WriteString(bead.ID)
+			b.WriteString(" ")
+			b.WriteString(PriorityBadge(bead.Priority))
+			b.WriteString(" ")
+			b.WriteString(bead.Title)
 			if bead.Type != "" {
-				line += " [" + bead.Type + "]"
+				b.WriteString(" [" + bead.Type + "]")
 			}
-			b.WriteString(line)
+			if hasChildren {
+				stats := treeProgress(fn.Node)
+				progress := fmt.Sprintf(" %d/%d", stats.Closed, stats.Total)
+				if stats.Closed == stats.Total && stats.Total > 0 {
+					progress += " " + successStyle.Render(SymbolCheck)
+				}
+				b.WriteString(progress)
+			}
 		}
 	}
 	return b.String()

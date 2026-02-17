@@ -1413,42 +1413,6 @@ func TestModel_DoublePressCtrlCForceQuits(t *testing.T) {
 
 // --- Global refresh key tests ---
 
-func TestModel_RefreshInClosedViewResetsToReady(t *testing.T) {
-	// Given: a model in browse mode showing closed beads (showClosed=true)
-	lister := &stubLister{
-		beads:       sampleBeads(),
-		closedBeads: []BeadSummary{{ID: "cap-c01", Title: "Done", Priority: 2, Type: "task"}},
-	}
-	m := NewModel(WithBeadLister(lister))
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
-	m = updated.(Model)
-	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
-	m = updated.(Model)
-	// Toggle to closed view
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m = updated.(Model)
-	// Execute the ToggleHistoryMsg
-	for _, msg := range execBatch(t, cmd) {
-		updated, _ = m.Update(msg)
-		m = updated.(Model)
-	}
-	// Deliver the closed beads
-	updated, _ = m.Update(ClosedBeadListMsg{Beads: lister.closedBeads})
-	m = updated.(Model)
-	if !m.browse.showClosed {
-		t.Fatal("precondition: showClosed should be true")
-	}
-
-	// When: r is pressed to refresh
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	m = updated.(Model)
-
-	// Then: showClosed is reset to false (refresh returns to ready view)
-	if m.browse.showClosed {
-		t.Error("refresh should reset showClosed to false")
-	}
-}
-
 func TestModel_RefreshWorksFromRightPane(t *testing.T) {
 	// Given: a model in browse mode with right pane focused and a lister
 	lister := &stubLister{beads: sampleBeads()}
@@ -2330,18 +2294,16 @@ func newClosedResolverModel(t *testing.T, w, h int) (Model, *stubResolver) {
 			"cap-c01": "# Worklog\n\nAll phases passed.",
 		},
 	}
-	closedBeads := []BeadSummary{
-		{ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task"},
-		{ID: "cap-c02", Title: "Done feature", Priority: 1, Type: "feature"},
+	// Unified view: mix of open and closed beads.
+	allBeads := []BeadSummary{
+		{ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task", Closed: true},
+		{ID: "cap-c02", Title: "Done feature", Priority: 1, Type: "feature", Closed: true},
 	}
 	resolver := &stubResolver{details: map[string]BeadDetail{
 		"cap-c01": {ID: "cap-c01", Title: "Done task", Priority: 2, Type: "task", Description: "Was completed."},
 		"cap-c02": {ID: "cap-c02", Title: "Done feature", Priority: 1, Type: "feature", Description: "Also done."},
 	}}
-	lister := &stubLister{
-		beads:       sampleBeads(),
-		closedBeads: closedBeads,
-	}
+	lister := &stubLister{beads: allBeads}
 	m := NewModel(
 		WithBeadLister(lister),
 		WithBeadResolver(resolver),
@@ -2349,23 +2311,10 @@ func newClosedResolverModel(t *testing.T, w, h int) (Model, *stubResolver) {
 	)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	m = updated.(Model)
-	// Load ready beads first; deliver debounce tick + resolve for cap-001.
-	updated, _ = m.Update(BeadListMsg{Beads: sampleBeads()})
+	// Deliver bead list (includes closed beads in unified view).
+	updated, _ = m.Update(BeadListMsg{Beads: allBeads})
 	m = updated.(Model)
-	updated, _ = m.Update(resolveDebounceMsg{ID: m.pendingResolveID})
-	m = updated.(Model)
-	updated, _ = m.Update(BeadResolvedMsg{ID: "cap-001", Detail: sampleDetail()})
-	m = updated.(Model)
-	// Toggle to closed view.
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	m = updated.(Model)
-	for _, msg := range execBatch(t, cmd) {
-		updated, _ = m.Update(msg)
-		m = updated.(Model)
-	}
-	// Deliver closed beads and complete debounce cycle for cap-c01.
-	updated, _ = m.Update(ClosedBeadListMsg{Beads: closedBeads})
-	m = updated.(Model)
+	// Complete debounce cycle for cap-c01 (first bead).
 	updated, _ = m.Update(resolveDebounceMsg{ID: m.pendingResolveID})
 	m = updated.(Model)
 	return m, resolver
