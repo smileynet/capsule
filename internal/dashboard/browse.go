@@ -125,7 +125,7 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 			}
 			selected := node.Bead
 			return bs, func() tea.Msg {
-				return DispatchMsg{BeadID: selected.ID, BeadType: selected.Type, BeadTitle: selected.Title}
+				return ConfirmRequestMsg{BeadID: selected.ID, BeadType: selected.Type, BeadTitle: selected.Title}
 			}
 		}
 		return bs, nil

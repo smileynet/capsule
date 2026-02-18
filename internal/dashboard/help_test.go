@@ -73,9 +73,24 @@ func TestHelpBindings_CampaignSummaryMode(t *testing.T) {
 	}
 }
 
+func TestHelpBindings_ConfirmMode(t *testing.T) {
+	// Given: help bindings for confirm mode
+	km := HelpBindings(ModeConfirm)
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: enter and esc are present
+	if !containsKey(allKeys, "enter") {
+		t.Error("confirm help should contain 'enter' key")
+	}
+	if !containsKey(allKeys, "esc") {
+		t.Error("confirm help should contain 'esc' key")
+	}
+}
+
 func TestHelpBindings_ImplementsKeyMap(t *testing.T) {
 	// Given: all dashboard modes
-	modes := []Mode{ModeBrowse, ModePipeline, ModeSummary, ModeCampaign, ModeCampaignSummary}
+	modes := []Mode{ModeBrowse, ModePipeline, ModeSummary, ModeCampaign, ModeCampaignSummary, ModeConfirm}
 
 	// Then: each returns a type satisfying help.KeyMap (ShortHelp + FullHelp)
 	for _, mode := range modes {
@@ -103,4 +118,5 @@ var (
 	_ help.KeyMap = pipelineKeys{}
 	_ help.KeyMap = summaryKeys{}
 	_ help.KeyMap = campaignKeys{}
+	_ help.KeyMap = confirmKeys{}
 )

@@ -11,7 +11,7 @@ import (
 func TestCampaignModeConstants(t *testing.T) {
 	// Given: the new campaign mode constants
 	// Then: they are distinct from existing modes
-	modes := []Mode{ModeBrowse, ModePipeline, ModeSummary, ModeCampaign, ModeCampaignSummary}
+	modes := []Mode{ModeBrowse, ModePipeline, ModeSummary, ModeCampaign, ModeCampaignSummary, ModeConfirm}
 	seen := make(map[Mode]bool)
 	for _, m := range modes {
 		if seen[m] {

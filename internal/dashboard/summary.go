@@ -37,6 +37,13 @@ func (m Model) viewSummaryRight() string {
 		fmt.Fprintf(&b, "\n\n%d/%d phases passed", passed, total)
 	}
 
+	// "Next:" action text.
+	if m.postPipeline != nil {
+		b.WriteString("\n\nNext: merge to main, close bead, cleanup worktree")
+	} else {
+		b.WriteString("\n\nNext: return to browse")
+	}
+
 	return b.String()
 }
 
@@ -100,6 +107,17 @@ func (m Model) viewCampaignSummaryRight() string {
 	if done.Skipped > 0 {
 		fmt.Fprintf(&b, ", %d skipped", done.Skipped)
 	}
+
+	// Validation result (if campaign had a validation step).
+	if vr := m.campaign.validationResult; vr != nil {
+		if vr.Success {
+			fmt.Fprintf(&b, "\n%s Feature validation passed", pipePassedStyle.Render(SymbolCheck))
+		} else {
+			fmt.Fprintf(&b, "\n%s Feature validation failed", pipeFailedStyle.Render(SymbolCross))
+		}
+	}
+
+	b.WriteString("\n\nNext: return to browse")
 
 	return b.String()
 }

@@ -108,6 +108,101 @@ func collectKeys(bindings []key.Binding) []string {
 	return keys
 }
 
+func TestConfirmKeys_ContainsExpected(t *testing.T) {
+	// Given: the confirm key map
+	km := ConfirmKeyMap()
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: enter and esc are present
+	expected := []string{"enter", "esc"}
+	for _, want := range expected {
+		if !containsKey(allKeys, want) {
+			t.Errorf("ConfirmKeyMap missing key %q, got %v", want, allKeys)
+		}
+	}
+}
+
+func TestConfirmKeys_NoQuit(t *testing.T) {
+	// Given: the confirm key map
+	km := ConfirmKeyMap()
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: q is not included (Esc is the cancel key)
+	if containsKey(allKeys, "q") {
+		t.Error("ConfirmKeyMap should not contain 'q' key")
+	}
+}
+
+func TestBrowseKeyMapForBead_Task(t *testing.T) {
+	// Given: a task bead type
+	km := BrowseKeyMapForBead("task", 0)
+
+	// Then: Enter label says "run pipeline"
+	h := km.Enter.Help()
+	if !containsText(h.Desc, "run pipeline") {
+		t.Errorf("task Enter desc = %q, want 'run pipeline'", h.Desc)
+	}
+}
+
+func TestBrowseKeyMapForBead_FeatureWithChildren(t *testing.T) {
+	// Given: a feature bead type with 4 children
+	km := BrowseKeyMapForBead("feature", 4)
+
+	// Then: Enter label says "run campaign (4 tasks)"
+	h := km.Enter.Help()
+	if !containsText(h.Desc, "run campaign (4 tasks)") {
+		t.Errorf("feature Enter desc = %q, want 'run campaign (4 tasks)'", h.Desc)
+	}
+}
+
+func TestBrowseKeyMapForBead_EpicWithChildren(t *testing.T) {
+	// Given: an epic bead type with 2 children
+	km := BrowseKeyMapForBead("epic", 2)
+
+	// Then: Enter label says "run campaign (2 tasks)"
+	h := km.Enter.Help()
+	if !containsText(h.Desc, "run campaign (2 tasks)") {
+		t.Errorf("epic Enter desc = %q, want 'run campaign (2 tasks)'", h.Desc)
+	}
+}
+
+func TestBrowseKeyMapForBead_FeatureNoChildren(t *testing.T) {
+	// Given: a feature bead type with no children
+	km := BrowseKeyMapForBead("feature", 0)
+
+	// Then: Enter label says "run pipeline" (no children = pipeline)
+	h := km.Enter.Help()
+	if !containsText(h.Desc, "run pipeline") {
+		t.Errorf("feature (no children) Enter desc = %q, want 'run pipeline'", h.Desc)
+	}
+}
+
+func TestPipelineSummaryKeyMap_WithPostPipeline(t *testing.T) {
+	// Given: summary key map with post-pipeline configured
+	km := PipelineSummaryKeyMap(true)
+	bindings := km.ShortHelp()
+
+	// Then: the label includes "merge + close"
+	h := bindings[0].Help()
+	if !containsText(h.Desc, "merge + close") {
+		t.Errorf("summary with postPipeline desc = %q, want 'merge + close'", h.Desc)
+	}
+}
+
+func TestPipelineSummaryKeyMap_WithoutPostPipeline(t *testing.T) {
+	// Given: summary key map without post-pipeline
+	km := PipelineSummaryKeyMap(false)
+	bindings := km.ShortHelp()
+
+	// Then: the label just says "continue"
+	h := bindings[0].Help()
+	if h.Desc != "continue" {
+		t.Errorf("summary without postPipeline desc = %q, want 'continue'", h.Desc)
+	}
+}
+
 func containsKey(keys []string, want string) bool {
 	for _, k := range keys {
 		if k == want {

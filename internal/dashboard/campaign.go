@@ -23,6 +23,9 @@ type campaignState struct {
 	pipeline      pipelineState
 	completed     int
 	failed        int
+
+	validating       bool                       // true while validation pipeline is running
+	validationResult *CampaignValidationDoneMsg // set on validation completion
 }
 
 // newCampaignState creates a campaignState for the given parent and tasks.
@@ -165,6 +168,22 @@ func (cs campaignState) View(width, height int) string {
 					}
 				}
 			}
+		}
+	}
+
+	// Validation row (shown after all tasks when validation is active or complete).
+	if cs.validating {
+		b.WriteString("\n  ")
+		fmt.Fprintf(&b, "%s Feature validation", cs.pipeline.spinner.View())
+	} else if cs.validationResult != nil {
+		b.WriteString("\n  ")
+		if cs.validationResult.Success {
+			fmt.Fprintf(&b, "%s Feature validation", pipePassedStyle.Render(SymbolCheck))
+		} else {
+			fmt.Fprintf(&b, "%s Feature validation", pipeFailedStyle.Render(SymbolCross))
+		}
+		if cs.validationResult.Duration > 0 {
+			fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", cs.validationResult.Duration.Seconds())))
 		}
 	}
 

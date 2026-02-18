@@ -68,6 +68,9 @@ type Model struct {
 	campaignDone   *CampaignDoneMsg // set on CampaignDoneMsg or synthesized on channel close
 	campaignErr    error            // set on CampaignErrorMsg from runner failure
 
+	confirm       confirmState
+	hasValidation bool // true when campaign validation phases are configured
+
 	archive ArchiveReader
 
 	statusMsg string // Transient status shown between panes and help bar; cleared by statusClearMsg.
@@ -130,6 +133,12 @@ func WithPostPipelineFunc(fn PostPipelineFunc) ModelOption {
 // WithCampaignRunner sets the CampaignRunner used to dispatch campaigns.
 func WithCampaignRunner(r CampaignRunner) ModelOption {
 	return func(m *Model) { m.campaignRunner = r }
+}
+
+// WithCampaignValidation sets whether campaign validation phases are configured.
+// When true, the confirmation screen shows a validation step after task execution.
+func WithCampaignValidation(v bool) ModelOption {
+	return func(m *Model) { m.hasValidation = v }
 }
 
 // WithArchiveReader sets the ArchiveReader used to fetch archived pipeline
@@ -345,6 +354,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ConfirmRequestMsg:
+		return m.handleConfirmRequest(msg)
+
 	case DispatchMsg:
 		return m.handleDispatch(msg)
 
@@ -369,6 +381,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.campaignErr = msg.Err
 		return m, listenForEvents(m.eventCh)
 
+	case CampaignValidationStartMsg:
+		m.campaign.validating = true
+		return m, listenForEvents(m.eventCh)
+
+	case CampaignValidationDoneMsg:
+		m.campaign.validating = false
+		m.campaign.validationResult = &msg
+		return m, listenForEvents(m.eventCh)
+
 	case PhaseUpdateMsg:
 		if m.mode == ModeCampaign {
 			var cmd tea.Cmd
@@ -389,9 +410,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PostPipelineDoneMsg:
 		if msg.Err != nil {
-			m.statusMsg = fmt.Sprintf("%s: post-pipeline failed: %s", msg.BeadID, msg.Err)
+			m.statusMsg = fmt.Sprintf("%s %s: post-pipeline failed: %s", SymbolCross, msg.BeadID, msg.Err)
 		} else {
-			m.statusMsg = fmt.Sprintf("%s: post-pipeline complete", msg.BeadID)
+			m.statusMsg = fmt.Sprintf("%s %s: merged to main, bead closed, worktree removed", SymbolCheck, msg.BeadID)
 		}
 		return m, tea.Tick(statusLineDuration, func(time.Time) tea.Msg {
 			return statusClearMsg{}
@@ -469,6 +490,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.returnToBrowseFromCampaign()
 	}
 
+	// Confirm mode: Enter dispatches, Esc/q returns to browse.
+	if m.mode == ModeConfirm {
+		switch msg.String() {
+		case "enter":
+			m.mode = ModeBrowse // Temporarily set back before dispatch routing.
+			return m.handleDispatch(DispatchMsg{
+				BeadID:    m.confirm.beadID,
+				BeadType:  m.confirm.beadType,
+				BeadTitle: m.confirm.beadTitle,
+			})
+		case "esc", "q":
+			m.mode = ModeBrowse
+			m.focus = PaneLeft
+			return m, nil
+		}
+		return m, nil // Swallow all other keys in confirm mode.
+	}
+
 	// Global keys.
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -537,6 +576,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	return m, nil
+}
+
+// handleConfirmRequest builds a confirmState and transitions to ModeConfirm.
+func (m Model) handleConfirmRequest(msg ConfirmRequestMsg) (tea.Model, tea.Cmd) {
+	cs := confirmState{
+		beadID:        msg.BeadID,
+		beadType:      msg.BeadType,
+		beadTitle:     msg.BeadTitle,
+		hasValidation: m.hasValidation,
+	}
+	// For features/epics, collect open children from the browse tree.
+	if msg.BeadType == "feature" || msg.BeadType == "epic" {
+		cs.children = collectOpenChildren(m.browse.flatNodes, msg.BeadID)
+	}
+	m.confirm = cs
+	m.mode = ModeConfirm
 	return m, nil
 }
 
@@ -627,6 +683,30 @@ func (m Model) contentHeight() int {
 	return max(m.height-borderChrome-helpBarHeight, 1)
 }
 
+// helpBindings returns context-aware help bindings.
+// In browse mode, the Enter label varies by selected bead type.
+// In confirm mode, only Enter/Esc are shown.
+// In summary mode with postPipeline, the continue label reflects lifecycle actions.
+func (m Model) helpBindings() help.KeyMap {
+	switch m.mode {
+	case ModeConfirm:
+		return ConfirmKeyMap()
+	case ModeBrowse:
+		if bead, ok := m.browse.SelectedBead(); ok && !bead.Closed {
+			childCount := 0
+			if bead.Type == "feature" || bead.Type == "epic" {
+				childCount = countOpenChildren(m.browse.flatNodes, bead.ID)
+			}
+			return BrowseKeyMapForBead(bead.Type, childCount)
+		}
+		return BrowseKeyMapForBead("", 0)
+	case ModeSummary:
+		return PipelineSummaryKeyMap(m.postPipeline != nil)
+	default:
+		return HelpBindings(m.mode)
+	}
+}
+
 // View renders the two-pane layout with help bar.
 func (m Model) View() string {
 	if m.width == 0 || m.height == 0 {
@@ -655,7 +735,7 @@ func (m Model) View() string {
 	leftPane := leftStyle.Render(m.viewLeft())
 	rightPane := rightStyle.Render(m.viewRight())
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-	helpView := m.help.View(HelpBindings(m.mode))
+	helpView := m.help.View(m.helpBindings())
 
 	if m.statusMsg != "" {
 		statusLine := pipeHeaderStyle.Render(m.statusMsg)
@@ -671,6 +751,8 @@ func (m Model) viewLeft() string {
 	h := m.contentHeight()
 
 	switch m.mode {
+	case ModeConfirm:
+		return m.confirm.View(w, h)
 	case ModePipeline, ModeSummary:
 		return m.pipeline.View(w, h)
 	case ModeCampaign, ModeCampaignSummary:
@@ -683,6 +765,8 @@ func (m Model) viewLeft() string {
 // viewRight renders the right pane content based on mode.
 func (m Model) viewRight() string {
 	switch m.mode {
+	case ModeConfirm:
+		return m.viewBrowseDetail() // Keep showing bead detail during confirmation.
 	case ModePipeline:
 		_, rightWidth := PaneWidths(m.width)
 		return m.pipeline.ViewReport(rightWidth-borderChrome, m.contentHeight())

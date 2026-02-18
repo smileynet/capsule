@@ -709,3 +709,62 @@ func TestCampaign_ViewReport_SelectedPendingTask(t *testing.T) {
 		t.Errorf("ViewReport for pending task should be empty, got: %q", view)
 	}
 }
+
+// --- Validation state tests ---
+
+func TestCampaign_ValidationStart_SetsValidating(t *testing.T) {
+	// Given: a campaign state with all tasks done
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: validating flag is set (simulating CampaignValidationStartMsg handling)
+	cs.validating = true
+
+	// Then: the view shows validation row
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+	if !strings.Contains(plain, "Feature validation") {
+		t.Errorf("view should show validation row, got:\n%s", plain)
+	}
+}
+
+func TestCampaign_ValidationDone_Success(t *testing.T) {
+	// Given: a campaign state with validation completed successfully
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs.validationResult = &CampaignValidationDoneMsg{
+		Success:  true,
+		Duration: 3 * time.Second,
+	}
+
+	// When: the view is rendered
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: the validation row shows a check and duration
+	if !strings.Contains(plain, "Feature validation") {
+		t.Errorf("view should show validation result, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, SymbolCheck) {
+		t.Errorf("passed validation should show check, got:\n%s", plain)
+	}
+}
+
+func TestCampaign_ValidationDone_Failure(t *testing.T) {
+	// Given: a campaign state with validation failed
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs.validationResult = &CampaignValidationDoneMsg{
+		Success:  false,
+		Duration: 2 * time.Second,
+	}
+
+	// When: the view is rendered
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: the validation row shows a cross
+	if !strings.Contains(plain, "Feature validation") {
+		t.Errorf("view should show validation result, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, SymbolCross) {
+		t.Errorf("failed validation should show cross, got:\n%s", plain)
+	}
+}

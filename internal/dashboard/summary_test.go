@@ -613,6 +613,138 @@ func TestSummary_ReturnToBrowseFromCampaign_ClearsPendingResolveID(t *testing.T)
 	}
 }
 
+func TestSummary_NextText_WithPostPipeline(t *testing.T) {
+	// Given: a model in summary mode with postPipeline configured
+	m := newPassedSummaryModel(90, 40)
+	m.postPipeline = func(_ string) error { return nil }
+
+	// When: the right pane is rendered
+	view := m.viewSummaryRight()
+
+	// Then: "Next: merge to main" text appears
+	if !strings.Contains(view, "Next: merge to main") {
+		t.Errorf("summary should show Next: merge text, got:\n%s", view)
+	}
+}
+
+func TestSummary_NextText_WithoutPostPipeline(t *testing.T) {
+	// Given: a model in summary mode without postPipeline
+	m := newPassedSummaryModel(90, 40)
+	m.postPipeline = nil
+
+	// When: the right pane is rendered
+	view := m.viewSummaryRight()
+
+	// Then: "Next: return to browse" text appears
+	if !strings.Contains(view, "Next: return to browse") {
+		t.Errorf("summary should show Next: return to browse, got:\n%s", view)
+	}
+}
+
+func TestSummary_CampaignSummary_NextText(t *testing.T) {
+	// Given: a model in campaign summary mode
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+	m.campaignDone = &CampaignDoneMsg{
+		ParentID:   "cap-feat",
+		TotalTasks: 3,
+		Passed:     3,
+	}
+
+	// When: the right pane is rendered
+	view := m.viewCampaignSummaryRight()
+
+	// Then: "Next: return to browse" text appears
+	if !strings.Contains(view, "Next: return to browse") {
+		t.Errorf("campaign summary should show Next text, got:\n%s", view)
+	}
+}
+
+func TestSummary_CampaignSummary_ValidationPassed(t *testing.T) {
+	// Given: a model in campaign summary with validation passed
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+	m.campaignDone = &CampaignDoneMsg{
+		ParentID:   "cap-feat",
+		TotalTasks: 2,
+		Passed:     2,
+	}
+	m.campaign.validationResult = &CampaignValidationDoneMsg{Success: true}
+
+	// When: the right pane is rendered
+	view := m.viewCampaignSummaryRight()
+	plain := stripANSI(view)
+
+	// Then: validation passed text appears
+	if !strings.Contains(plain, "Feature validation passed") {
+		t.Errorf("campaign summary should show validation passed, got:\n%s", plain)
+	}
+}
+
+func TestSummary_CampaignSummary_ValidationFailed(t *testing.T) {
+	// Given: a model in campaign summary with validation failed
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeCampaignSummary
+	m.campaignDone = &CampaignDoneMsg{
+		ParentID:   "cap-feat",
+		TotalTasks: 2,
+		Passed:     2,
+	}
+	m.campaign.validationResult = &CampaignValidationDoneMsg{Success: false}
+
+	// When: the right pane is rendered
+	view := m.viewCampaignSummaryRight()
+	plain := stripANSI(view)
+
+	// Then: validation failed text appears
+	if !strings.Contains(plain, "Feature validation failed") {
+		t.Errorf("campaign summary should show validation failed, got:\n%s", plain)
+	}
+}
+
+func TestSummary_PostPipelineDoneMsg_DescriptiveSuccess(t *testing.T) {
+	// Given: a model in browse mode
+	m := newSizedModel(90, 40)
+
+	// When: a successful PostPipelineDoneMsg is received
+	updated, _ := m.Update(PostPipelineDoneMsg{BeadID: "cap-001"})
+	m = updated.(Model)
+
+	// Then: statusMsg contains descriptive text
+	if !strings.Contains(m.statusMsg, "merged to main") {
+		t.Errorf("statusMsg should say 'merged to main', got %q", m.statusMsg)
+	}
+	if !strings.Contains(m.statusMsg, "bead closed") {
+		t.Errorf("statusMsg should say 'bead closed', got %q", m.statusMsg)
+	}
+}
+
+func TestSummary_PostPipelineDoneMsg_DescriptiveFailure(t *testing.T) {
+	// Given: a model in browse mode
+	m := newSizedModel(90, 40)
+
+	// When: a failed PostPipelineDoneMsg is received
+	updated, _ := m.Update(PostPipelineDoneMsg{BeadID: "cap-001", Err: fmt.Errorf("merge conflict")})
+	m = updated.(Model)
+
+	// Then: statusMsg contains the cross symbol and error
+	if !strings.Contains(m.statusMsg, SymbolCross) {
+		t.Errorf("statusMsg should contain cross symbol, got %q", m.statusMsg)
+	}
+	if !strings.Contains(m.statusMsg, "merge conflict") {
+		t.Errorf("statusMsg should contain error, got %q", m.statusMsg)
+	}
+}
+
 func TestSummary_StatusLine_NotRenderedWhenEmpty(t *testing.T) {
 	// Given: a model in browse mode with no status message
 	lister := &stubLister{beads: sampleBeads()}

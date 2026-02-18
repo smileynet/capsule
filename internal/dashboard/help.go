@@ -8,6 +8,8 @@ import (
 // providing context-aware help bar content.
 func HelpBindings(mode Mode) help.KeyMap {
 	switch mode {
+	case ModeConfirm:
+		return ConfirmKeyMap()
 	case ModePipeline:
 		return PipelineKeyMap()
 	case ModeSummary, ModeCampaignSummary:

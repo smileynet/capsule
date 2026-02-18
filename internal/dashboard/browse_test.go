@@ -198,7 +198,7 @@ func TestBrowse_VimKeys(t *testing.T) {
 	}
 }
 
-func TestBrowse_EnterDispatchesSelectedBead(t *testing.T) {
+func TestBrowse_EnterEmitsConfirmRequest(t *testing.T) {
 	// Given: a browse state with cursor on the second bead
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
@@ -207,17 +207,17 @@ func TestBrowse_EnterDispatchesSelectedBead(t *testing.T) {
 	// When: enter is pressed
 	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Then: a DispatchMsg is produced with the selected bead ID
+	// Then: a ConfirmRequestMsg is produced with the selected bead ID
 	if cmd == nil {
 		t.Fatal("enter should produce a command")
 	}
 	msg := cmd()
-	dispatch, ok := msg.(DispatchMsg)
+	confirm, ok := msg.(ConfirmRequestMsg)
 	if !ok {
-		t.Fatalf("enter command produced %T, want DispatchMsg", msg)
+		t.Fatalf("enter command produced %T, want ConfirmRequestMsg", msg)
 	}
-	if dispatch.BeadID != "cap-002" {
-		t.Errorf("dispatch bead ID = %q, want %q", dispatch.BeadID, "cap-002")
+	if confirm.BeadID != "cap-002" {
+		t.Errorf("confirm bead ID = %q, want %q", confirm.BeadID, "cap-002")
 	}
 }
 
@@ -648,7 +648,7 @@ func TestBrowse_ClosedNoPriorityBadge(t *testing.T) {
 	}
 }
 
-func TestBrowse_EnterDispatchesWithBeadType(t *testing.T) {
+func TestBrowse_EnterConfirmRequestIncludesBeadType(t *testing.T) {
 	// Given: a browse state with beads that have types
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
@@ -656,21 +656,21 @@ func TestBrowse_EnterDispatchesWithBeadType(t *testing.T) {
 	// When: enter is pressed on the first bead (type="task")
 	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Then: DispatchMsg includes BeadType from the selected bead
+	// Then: ConfirmRequestMsg includes BeadType from the selected bead
 	if cmd == nil {
 		t.Fatal("enter should produce a command")
 	}
 	msg := cmd()
-	dispatch, ok := msg.(DispatchMsg)
+	confirm, ok := msg.(ConfirmRequestMsg)
 	if !ok {
-		t.Fatalf("enter command produced %T, want DispatchMsg", msg)
+		t.Fatalf("enter command produced %T, want ConfirmRequestMsg", msg)
 	}
-	if dispatch.BeadType != "task" {
-		t.Errorf("dispatch BeadType = %q, want %q", dispatch.BeadType, "task")
+	if confirm.BeadType != "task" {
+		t.Errorf("confirm BeadType = %q, want %q", confirm.BeadType, "task")
 	}
 }
 
-func TestBrowse_EnterDispatchesWithBeadTitle(t *testing.T) {
+func TestBrowse_EnterConfirmRequestIncludesBeadTitle(t *testing.T) {
 	// Given: a browse state with beads
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: sampleBeads()})
@@ -678,16 +678,16 @@ func TestBrowse_EnterDispatchesWithBeadTitle(t *testing.T) {
 	// When: enter is pressed on the first bead
 	_, cmd := bs.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Then: DispatchMsg includes BeadTitle from the selected bead
+	// Then: ConfirmRequestMsg includes BeadTitle from the selected bead
 	if cmd == nil {
 		t.Fatal("enter should produce a command")
 	}
 	msg := cmd()
-	dispatch, ok := msg.(DispatchMsg)
+	confirm, ok := msg.(ConfirmRequestMsg)
 	if !ok {
-		t.Fatalf("enter command produced %T, want DispatchMsg", msg)
+		t.Fatalf("enter command produced %T, want ConfirmRequestMsg", msg)
 	}
-	if dispatch.BeadTitle != "First task" {
-		t.Errorf("dispatch BeadTitle = %q, want %q", dispatch.BeadTitle, "First task")
+	if confirm.BeadTitle != "First task" {
+		t.Errorf("confirm BeadTitle = %q, want %q", confirm.BeadTitle, "First task")
 	}
 }

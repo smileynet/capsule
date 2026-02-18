@@ -518,6 +518,7 @@ func (d *DashboardCmd) Run() error {
 		dashboard.WithPhaseNames(phaseNames(phases)),
 		dashboard.WithCampaignRunner(campaignAdapter),
 		dashboard.WithArchiveReader(archiveReader),
+		dashboard.WithCampaignValidation(cfg.Campaign.ValidationPhases != ""),
 	)
 
 	prog := tea.NewProgram(m, tea.WithAltScreen())
@@ -993,11 +994,28 @@ func (c *dashboardCampaignCallback) OnDiscoveryFiled(_ provider.Finding, _ strin
 }
 
 func (c *dashboardCampaignCallback) OnValidationStart() {
-	// Validation is not surfaced in dashboard campaign mode.
+	c.statusFn(dashboard.CampaignValidationStartMsg{})
 }
 
-func (c *dashboardCampaignCallback) OnValidationComplete(_ campaign.TaskResult) {
-	// Validation is not surfaced in dashboard campaign mode.
+func (c *dashboardCampaignCallback) OnValidationComplete(result campaign.TaskResult) {
+	var totalDuration time.Duration
+	var reports []dashboard.PhaseReport
+	for _, pr := range result.PhaseResults {
+		totalDuration += pr.Duration
+		reports = append(reports, dashboard.PhaseReport{
+			PhaseName:    pr.PhaseName,
+			Status:       providerStatusToDashboard(pr.Signal.Status),
+			Summary:      pr.Signal.Summary,
+			Feedback:     pr.Signal.Feedback,
+			FilesChanged: pr.Signal.FilesChanged,
+			Duration:     pr.Duration,
+		})
+	}
+	c.statusFn(dashboard.CampaignValidationDoneMsg{
+		Success:      result.Status == campaign.TaskCompleted,
+		Duration:     totalDuration,
+		PhaseReports: reports,
+	})
 }
 
 func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {

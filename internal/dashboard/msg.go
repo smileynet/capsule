@@ -21,6 +21,7 @@ const (
 	ModeSummary                     // Pipeline complete, showing result summary.
 	ModeCampaign                    // Campaign running with task queue and inline phases.
 	ModeCampaignSummary             // Campaign complete, showing aggregate results.
+	ModeConfirm                     // Confirmation screen before dispatch.
 )
 
 // Focus represents which pane has keyboard focus.
@@ -151,7 +152,15 @@ type PipelineErrorMsg struct {
 	Err error
 }
 
-// DispatchMsg signals the user has selected a bead to run a pipeline on.
+// ConfirmRequestMsg signals the user pressed Enter on a bead and wants to
+// see the confirmation screen before dispatch.
+type ConfirmRequestMsg struct {
+	BeadID    string
+	BeadType  string
+	BeadTitle string
+}
+
+// DispatchMsg signals the user has confirmed and selected a bead to run a pipeline on.
 type DispatchMsg struct {
 	BeadID    string
 	BeadType  string
@@ -243,6 +252,16 @@ type CampaignDoneMsg struct {
 // CampaignErrorMsg signals that the campaign runner returned an error.
 type CampaignErrorMsg struct {
 	Err error
+}
+
+// CampaignValidationStartMsg signals that a campaign validation pipeline is starting.
+type CampaignValidationStartMsg struct{}
+
+// CampaignValidationDoneMsg signals that the campaign validation pipeline completed.
+type CampaignValidationDoneMsg struct {
+	Success      bool
+	Duration     time.Duration
+	PhaseReports []PhaseReport
 }
 
 // CampaignRunner dispatches and runs a campaign (sequential child pipelines).

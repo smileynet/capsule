@@ -1,6 +1,10 @@
 package dashboard
 
-import "github.com/charmbracelet/bubbles/key"
+import (
+	"fmt"
+
+	"github.com/charmbracelet/bubbles/key"
+)
 
 // browseKeys holds key bindings for browse mode.
 type browseKeys struct {
@@ -166,4 +170,65 @@ func SummaryKeyMap() summaryKeys {
 			key.WithHelp("any key", "continue"),
 		),
 	}
+}
+
+// PipelineSummaryKeyMap returns summary key bindings with a context-aware label.
+// When hasPostPipeline is true, the label reflects the lifecycle actions.
+func PipelineSummaryKeyMap(hasPostPipeline bool) summaryKeys {
+	desc := "continue"
+	if hasPostPipeline {
+		desc = "continue (merge + close)"
+	}
+	return summaryKeys{
+		AnyKey: key.NewBinding(
+			key.WithKeys("any"),
+			key.WithHelp("any key", desc),
+		),
+	}
+}
+
+// confirmKeys holds key bindings for confirm mode.
+type confirmKeys struct {
+	Enter key.Binding
+	Esc   key.Binding
+}
+
+// ShortHelp returns the confirm mode bindings for the help bar.
+func (k confirmKeys) ShortHelp() []key.Binding {
+	return []key.Binding{k.Enter, k.Esc}
+}
+
+// FullHelp returns the confirm mode bindings grouped for expanded help.
+func (k confirmKeys) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Enter, k.Esc}}
+}
+
+// ConfirmKeyMap returns the key bindings for confirm mode.
+func ConfirmKeyMap() confirmKeys {
+	return confirmKeys{
+		Enter: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "confirm"),
+		),
+		Esc: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "cancel"),
+		),
+	}
+}
+
+// BrowseKeyMapForBead returns browse key bindings with a dynamic Enter label
+// based on the selected bead type and its child count.
+func BrowseKeyMapForBead(beadType string, childCount int) browseKeys {
+	km := BrowseKeyMap()
+	switch {
+	case (beadType == "feature" || beadType == "epic") && childCount > 0:
+		km.Enter = key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", fmt.Sprintf("run campaign (%d tasks)", childCount)),
+		)
+	default:
+		// Keep default "run pipeline" label.
+	}
+	return km
 }
