@@ -176,17 +176,14 @@ func dispatchPipeline(ctx context.Context, runner PipelineRunner, input Pipeline
 		}
 	}
 	output, err := runner.RunPipeline(ctx, input, statusFn)
+	// Always deliver the final result. Unlike incremental status updates,
+	// the completion message must reach the receiver so channelClosedMsg
+	// processing can build the correct summary/status.
 	if err != nil {
-		select {
-		case ch <- PipelineErrorMsg{Err: err}:
-		case <-ctx.Done():
-		}
+		ch <- PipelineErrorMsg{Err: err}
 		return
 	}
-	select {
-	case ch <- PipelineDoneMsg{Output: output}:
-	case <-ctx.Done():
-	}
+	ch <- PipelineDoneMsg{Output: output}
 }
 
 // dispatchCampaign runs a campaign in the calling goroutine, bridging
@@ -203,11 +200,11 @@ func dispatchCampaign(ctx context.Context, cr CampaignRunner, pr PipelineRunner,
 	if pr != nil {
 		pipelineFn = pr.RunPipeline
 	}
+	// Always deliver the final error. Unlike incremental status updates,
+	// the error must reach the receiver so channelClosedMsg processing
+	// can build the correct status message.
 	if err := cr.RunCampaign(ctx, parentID, statusFn, pipelineFn); err != nil {
-		select {
-		case ch <- CampaignErrorMsg{Err: err}:
-		case <-ctx.Done():
-		}
+		ch <- CampaignErrorMsg{Err: err}
 	}
 }
 
@@ -251,7 +248,6 @@ func (m Model) renderDetailContent(d BeadDetail) string {
 	if m.archive == nil {
 		return formatBeadDetail(d)
 	}
-	// Check if the selected bead is closed.
 	if bead, ok := m.browse.SelectedBead(); ok && bead.Closed {
 		summary, _ := m.archive.ReadSummary(d.ID)
 		worklog, _ := m.archive.ReadWorklog(d.ID)
@@ -727,6 +723,8 @@ func (m Model) maybeResolve() (Model, tea.Cmd) {
 // Called when channelClosedMsg arrives while in browse mode with a background op.
 func (m Model) handleBackgroundComplete() (Model, tea.Cmd) {
 	bgMode := m.backgroundMode
+	beadID := m.dispatchedBeadID
+	m.lastDispatchedID = beadID // snap cursor on next bead list refresh
 	m.backgroundMode = 0
 	m.aborting = false
 	m.dispatchedBeadID = ""
@@ -749,6 +747,18 @@ func (m Model) handleBackgroundComplete() (Model, tea.Cmd) {
 	m.campaignDone = nil
 	m.campaignErr = nil
 	var cmds []tea.Cmd
+
+	// Fire post-pipeline lifecycle for non-campaign background completions.
+	// Campaigns handle their own lifecycle, but standalone pipelines need
+	// merge/close/cleanup to run even when they completed in the background.
+	if bgMode != ModeCampaign && m.postPipeline != nil && beadID != "" && m.pipelineErr == nil {
+		ppFn := m.postPipeline
+		cmds = append(cmds, func() tea.Msg {
+			err := ppFn(beadID)
+			return PostPipelineDoneMsg{BeadID: beadID, Err: err}
+		})
+	}
+
 	if m.lister != nil {
 		cmds = append(cmds, initBrowse(m.lister), m.browseSpinner.Tick)
 	}

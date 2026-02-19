@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -624,9 +625,13 @@ type mockRunner struct {
 	events []PhaseUpdateMsg
 	output PipelineOutput
 	err    error
+	runFn  func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error)
 }
 
-func (r *mockRunner) RunPipeline(_ context.Context, _ PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error) {
+func (r *mockRunner) RunPipeline(ctx context.Context, input PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error) {
+	if r.runFn != nil {
+		return r.runFn(ctx, input, statusFn)
+	}
 	for _, e := range r.events {
 		statusFn(e)
 	}
@@ -1442,14 +1447,18 @@ func TestModel_RefreshWorksFromRightPane(t *testing.T) {
 type mockCampaignRunner struct {
 	events []tea.Msg
 	err    error
+	runFn  func(context.Context, string, func(tea.Msg), func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error)) error
 }
 
 func (r *mockCampaignRunner) RunCampaign(
-	_ context.Context,
-	_ string,
+	ctx context.Context,
+	parentID string,
 	statusFn func(tea.Msg),
-	_ func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error),
+	pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error),
 ) error {
+	if r.runFn != nil {
+		return r.runFn(ctx, parentID, statusFn, pipelineFn)
+	}
 	for _, e := range r.events {
 		statusFn(e)
 	}
@@ -2787,8 +2796,7 @@ func TestModel_ConfirmHasValidation_PassedThrough(t *testing.T) {
 func TestModel_EscInCampaignGoesToBrowse(t *testing.T) {
 	// Given: a model in campaign mode with active pipeline
 	m := newCampaignModel(90, 40)
-	cancel := func() {}
-	m.cancelPipeline = cancel
+	m.cancelPipeline = func() {}
 	ch := make(chan tea.Msg, 1)
 	m.eventCh = ch
 	m.dispatchedBeadID = "cap-feat"
@@ -2820,8 +2828,7 @@ func TestModel_EscInCampaignGoesToBrowse(t *testing.T) {
 func TestModel_EscInPipelineGoesToBrowse(t *testing.T) {
 	// Given: a model in pipeline mode
 	m := newPipelineModel(90, 40, []string{"plan", "code"})
-	cancel := func() {}
-	m.cancelPipeline = cancel
+	m.cancelPipeline = func() {}
 	ch := make(chan tea.Msg, 1)
 	m.eventCh = ch
 	m.dispatchedBeadID = "cap-001"
@@ -2970,7 +2977,7 @@ func TestModel_ReEntryToBackgroundCampaign(t *testing.T) {
 
 func TestModel_NewDispatchAbortsBackground(t *testing.T) {
 	// Given: a model in browse mode with a background pipeline
-	cancelled := false
+	var cancelled bool
 	m := NewModel(
 		WithPipelineRunner(&mockRunner{output: PipelineOutput{Success: true}}),
 		WithPhaseNames([]string{"plan"}),
@@ -2999,7 +3006,7 @@ func TestModel_NewDispatchAbortsBackground(t *testing.T) {
 func TestModel_QStillAbortsInCampaign(t *testing.T) {
 	// Given: a model in campaign mode (foreground)
 	m := newCampaignModel(90, 40)
-	cancelled := false
+	var cancelled bool
 	m.cancelPipeline = func() { cancelled = true }
 	ch := make(chan tea.Msg, 1)
 	m.eventCh = ch
@@ -3019,7 +3026,7 @@ func TestModel_QStillAbortsInCampaign(t *testing.T) {
 
 func TestModel_QAbortsBackgroundInBrowse(t *testing.T) {
 	// Given: a model in browse mode with a background campaign
-	cancelled := false
+	var cancelled bool
 	m := newSizedModel(90, 40)
 	m.backgroundMode = ModeCampaign
 	m.cancelPipeline = func() { cancelled = true }
@@ -3038,5 +3045,173 @@ func TestModel_QAbortsBackgroundInBrowse(t *testing.T) {
 		if _, ok := msg.(tea.QuitMsg); ok {
 			t.Error("q with background should not quit, should abort background")
 		}
+	}
+}
+
+func TestModel_BackgroundPipelineFiresPostPipeline(t *testing.T) {
+	// Given: a model in browse mode with pipeline completed in background
+	var postPipelineBeadID string
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithPostPipelineFunc(func(beadID string) error {
+			postPipelineBeadID = beadID
+			return nil
+		}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	m.mode = ModeBrowse
+	m.backgroundMode = ModePipeline
+	m.dispatchedBeadID = "cap-001"
+	m.pipelineOutput = &PipelineOutput{Success: true}
+	m.cancelPipeline = func() {}
+
+	// When: channelClosedMsg arrives (pipeline completed in background)
+	updated, cmd := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: backgroundMode is cleared
+	if m.backgroundMode != 0 {
+		t.Errorf("backgroundMode = %d, want 0", m.backgroundMode)
+	}
+	// And: postPipeline is fired via the returned commands
+	msgs := execBatch(t, cmd)
+	for _, msg := range msgs {
+		m.Update(msg)
+	}
+	if postPipelineBeadID != "cap-001" {
+		t.Errorf("postPipeline called with %q, want %q", postPipelineBeadID, "cap-001")
+	}
+}
+
+func TestModel_BackgroundPipelineSkipsPostPipelineOnError(t *testing.T) {
+	// Given: a model in browse mode with a failed pipeline in background
+	var postPipelineCalled bool
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithPostPipelineFunc(func(beadID string) error {
+			postPipelineCalled = true
+			return nil
+		}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	m.mode = ModeBrowse
+	m.backgroundMode = ModePipeline
+	m.dispatchedBeadID = "cap-001"
+	m.pipelineErr = fmt.Errorf("phase failed")
+	m.cancelPipeline = func() {}
+
+	// When: channelClosedMsg arrives
+	updated, cmd := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: postPipeline is NOT fired (pipeline failed)
+	msgs := execBatch(t, cmd)
+	for _, msg := range msgs {
+		m.Update(msg)
+	}
+	if postPipelineCalled {
+		t.Error("postPipeline should not fire when pipeline had an error")
+	}
+}
+
+func TestModel_BackgroundCampaignSkipsPostPipeline(t *testing.T) {
+	// Given: a model in browse mode with campaign completed in background
+	var postPipelineCalled bool
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithPostPipelineFunc(func(beadID string) error {
+			postPipelineCalled = true
+			return nil
+		}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	m.mode = ModeBrowse
+	m.backgroundMode = ModeCampaign
+	m.dispatchedBeadID = "cap-feat"
+	m.campaignDone = &CampaignDoneMsg{ParentID: "cap-feat", TotalTasks: 2, Passed: 2}
+	m.cancelPipeline = func() {}
+
+	// When: channelClosedMsg arrives
+	updated, cmd := m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: postPipeline is NOT fired (campaigns handle own lifecycle)
+	msgs := execBatch(t, cmd)
+	for _, msg := range msgs {
+		m.Update(msg)
+	}
+	if postPipelineCalled {
+		t.Error("postPipeline should not fire for campaign completions")
+	}
+}
+
+func TestDispatchCampaign_ErrorDeliveredOnCancel(t *testing.T) {
+	// Given: a campaign runner that returns an error after context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan tea.Msg, 10)
+	wantErr := fmt.Errorf("campaign failed")
+
+	runner := &mockCampaignRunner{
+		runFn: func(ctx context.Context, parentID string, statusFn func(tea.Msg), pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error)) error {
+			cancel() // Cancel context before returning error
+			return wantErr
+		},
+	}
+
+	// When: dispatchCampaign runs
+	dispatchCampaign(ctx, runner, nil, "cap-feat", ch)
+
+	// Then: CampaignErrorMsg is delivered despite cancelled context
+	var gotError bool
+	for msg := range ch {
+		if errMsg, ok := msg.(CampaignErrorMsg); ok {
+			gotError = true
+			if !errors.Is(errMsg.Err, wantErr) {
+				t.Errorf("CampaignErrorMsg.Err = %v, want %v", errMsg.Err, wantErr)
+			}
+		}
+	}
+	if !gotError {
+		t.Error("CampaignErrorMsg should be delivered even when context is cancelled")
+	}
+}
+
+func TestDispatchPipeline_ErrorDeliveredOnCancel(t *testing.T) {
+	// Given: a pipeline runner that returns an error after context cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan tea.Msg, 10)
+	wantErr := fmt.Errorf("pipeline failed")
+
+	runner := &mockRunner{
+		runFn: func(ctx context.Context, input PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error) {
+			cancel() // Cancel context before returning error
+			return PipelineOutput{}, wantErr
+		},
+	}
+
+	// When: dispatchPipeline runs
+	dispatchPipeline(ctx, runner, PipelineInput{}, ch)
+
+	// Then: PipelineErrorMsg is delivered despite cancelled context
+	var gotError bool
+	for msg := range ch {
+		if errMsg, ok := msg.(PipelineErrorMsg); ok {
+			gotError = true
+			if !errors.Is(errMsg.Err, wantErr) {
+				t.Errorf("PipelineErrorMsg.Err = %v, want %v", errMsg.Err, wantErr)
+			}
+		}
+	}
+	if !gotError {
+		t.Error("PipelineErrorMsg should be delivered even when context is cancelled")
 	}
 }
