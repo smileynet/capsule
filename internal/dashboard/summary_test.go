@@ -317,6 +317,50 @@ func TestSummary_ReturnToBrowseWithoutPostPipelineProducesRefreshOnly(t *testing
 	}
 }
 
+func TestSummary_ReturnToBrowseSkipsPostPipelineOnError(t *testing.T) {
+	// Given: a model in summary mode with PostPipelineFunc and a pipeline error
+	var postPipelineCalled bool
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(
+		WithBeadLister(lister),
+		WithPostPipelineFunc(func(beadID string) error {
+			postPipelineCalled = true
+			return nil
+		}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeSummary
+	m.dispatchedBeadID = "cap-001"
+	m.pipeline = newPipelineState([]string{"plan"})
+	m.pipelineErr = fmt.Errorf("phase failed")
+
+	// When: any key is pressed to return to browse
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+
+	// Then: postPipeline is NOT fired (pipeline had an error)
+	msgs := execBatch(t, cmd)
+	for _, msg := range msgs {
+		if _, ok := msg.(PostPipelineDoneMsg); ok {
+			t.Error("postPipeline should not fire when pipeline had an error")
+		}
+	}
+	if postPipelineCalled {
+		t.Error("PostPipelineFunc should not be called when pipelineErr is set")
+	}
+
+	// But: the batch still contains a bead list refresh
+	var foundRefresh bool
+	for _, msg := range msgs {
+		if _, ok := msg.(BeadListMsg); ok {
+			foundRefresh = true
+		}
+	}
+	if !foundRefresh {
+		t.Fatal("batch should contain BeadListMsg for bead list refresh")
+	}
+}
+
 func TestSummary_DispatchStoresBeadID(t *testing.T) {
 	// Given: a model with a pipeline runner
 	runner := &mockRunner{output: PipelineOutput{Success: true}}

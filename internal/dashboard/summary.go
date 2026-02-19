@@ -137,7 +137,8 @@ func (m Model) returnToBrowse() (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	// Fire post-pipeline lifecycle in background if configured.
-	if m.postPipeline != nil && m.dispatchedBeadID != "" {
+	// Skip on pipeline error — merge/close/cleanup should not run for failed pipelines.
+	if m.postPipeline != nil && m.dispatchedBeadID != "" && m.pipelineErr == nil {
 		beadID := m.dispatchedBeadID
 		ppFn := m.postPipeline
 		m.dispatchedBeadID = ""
