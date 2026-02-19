@@ -1044,7 +1044,9 @@ func exitCode(err error) int {
 	if err == nil {
 		return exitSuccess
 	}
-	if errors.Is(err, orchestrator.ErrPipelinePaused) || errors.Is(err, campaign.ErrCampaignPaused) || errors.Is(err, campaign.ErrCampaignAborted) {
+	if errors.Is(err, orchestrator.ErrPipelinePaused) ||
+		errors.Is(err, campaign.ErrCampaignPaused) ||
+		errors.Is(err, campaign.ErrCampaignAborted) {
 		return exitPaused
 	}
 	var pe *orchestrator.PipelineError
@@ -1052,8 +1054,10 @@ func exitCode(err error) int {
 		return exitPipeline
 	}
 	// Campaign runtime errors map to pipeline exit code (not setup).
-	if errors.Is(err, campaign.ErrNoTasks) || errors.Is(err, campaign.ErrCircuitBroken) ||
-		errors.Is(err, campaign.ErrMaxDepth) || errors.Is(err, campaign.ErrCycle) {
+	if errors.Is(err, campaign.ErrNoTasks) ||
+		errors.Is(err, campaign.ErrCircuitBroken) ||
+		errors.Is(err, campaign.ErrMaxDepth) ||
+		errors.Is(err, campaign.ErrCycle) {
 		return exitPipeline
 	}
 	return exitSetup

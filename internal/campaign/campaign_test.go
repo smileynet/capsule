@@ -783,39 +783,12 @@ func TestRun_MaxDepth(t *testing.T) {
 }
 
 func TestRun_CycleDetection(t *testing.T) {
-	// Given: a cycle where A → B → A.
+	// Given: a cycle where loop-a → loop-a.1 → loop-a (back to root).
 	beads := &mockBeadClient{
 		childrenMap: map[string][]BeadInfo{
-			"cycle-a":   {{ID: "cycle-a.1", Title: "B", Type: "epic"}},
-			"cycle-a.1": {
-				// This child references back to cycle-a via the campaign callback.
-				// We simulate the cycle by making B's child look like it recurses into A.
-				// Since visited tracks by parentID, we need B to have a child that IS cycle-a.
-				// But isChildOf would never match cycle-a as a child of cycle-a.1.
-				// Instead, simulate with a childrenMap entry that returns cycle-a as a child.
-			},
+			"loop-a":   {{ID: "loop-a.1", Title: "Level 1", Type: "epic"}},
+			"loop-a.1": {{ID: "loop-a", Title: "Cycle back to root", Type: "epic"}},
 		},
-	}
-	// Direct cycle test: make B's children include something that tries to recurse as A.
-	// Since visited is keyed on parentID, we test by making the same parentID appear twice.
-	// The most direct way: epic-1 has feature child epic-1.1, and epic-1.1's ReadyChildren
-	// returns an item that when recursed, tries to process epic-1 again.
-	beads.childrenMap = map[string][]BeadInfo{
-		"epic-1":   {{ID: "epic-1.1", Title: "Feature", Type: "feature"}},
-		"epic-1.1": {{ID: "epic-1.1.1", Title: "Sub-epic", Type: "epic"}},
-		// epic-1.1.1 has children that include "epic-1" — a cycle.
-		"epic-1.1.1": {{ID: "epic-1.1.1.1", Title: "Cycle back", Type: "epic"}},
-		// This won't actually cycle to epic-1 since they're different IDs.
-		// For a real cycle test, we need visited[parentID] to be true.
-		// The visited map tracks parentIDs we've entered. Two entries can't have the same
-		// parentID in a tree hierarchy (each ID is unique). But a bug or data corruption could.
-		// Test by having ReadyChildren return the SAME parent.
-	}
-	// Use a simpler approach: override childrenMap so "loop-a" has child "loop-a.1" (epic),
-	// and "loop-a.1" tries to process "loop-a" again (via childrenMap returning it directly).
-	beads.childrenMap = map[string][]BeadInfo{
-		"loop-a":   {{ID: "loop-a.1", Title: "Level 1", Type: "epic"}},
-		"loop-a.1": {{ID: "loop-a", Title: "Cycle back to root", Type: "epic"}},
 	}
 	config := Config{FailureMode: "abort", CircuitBreaker: 5}
 	r := NewRunner(&mockPipeline{}, beads, &mockStateStore{}, config, &mockCallback{})
