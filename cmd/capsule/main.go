@@ -999,17 +999,20 @@ func (c *dashboardCampaignCallback) OnValidationStart() {
 
 func (c *dashboardCampaignCallback) OnValidationComplete(result campaign.TaskResult) {
 	var totalDuration time.Duration
-	var reports []dashboard.PhaseReport
 	for _, pr := range result.PhaseResults {
 		totalDuration += pr.Duration
-		reports = append(reports, dashboard.PhaseReport{
+	}
+
+	reports := make([]dashboard.PhaseReport, len(result.PhaseResults))
+	for i, pr := range result.PhaseResults {
+		reports[i] = dashboard.PhaseReport{
 			PhaseName:    pr.PhaseName,
 			Status:       providerStatusToDashboard(pr.Signal.Status),
 			Summary:      pr.Signal.Summary,
 			Feedback:     pr.Signal.Feedback,
 			FilesChanged: pr.Signal.FilesChanged,
 			Duration:     pr.Duration,
-		})
+		}
 	}
 	c.statusFn(dashboard.CampaignValidationDoneMsg{
 		Success:      result.Status == campaign.TaskCompleted,
