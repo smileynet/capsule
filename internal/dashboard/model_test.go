@@ -763,7 +763,7 @@ func TestModel_HelpBarReflectsMode(t *testing.T) {
 	}{
 		{"browse", ModeBrowse, "run pipeline"},
 		{"pipeline", ModePipeline, "abort"},
-		{"summary", ModeSummary, "continue"},
+		{"summary", ModeSummary, "back"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1895,7 +1895,7 @@ func TestModel_CampaignSummaryAnyKeyReturnsToBrowse(t *testing.T) {
 	m.mode = ModeCampaignSummary
 
 	// When: any key is pressed
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: the model transitions to browse mode
@@ -1921,7 +1921,7 @@ func TestModel_CampaignSummarySkipsPostPipeline(t *testing.T) {
 	m.dispatchedBeadID = "cap-feat"
 
 	// When: any key is pressed to return to browse
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Then: postPipeline is NOT called
 	if cmd != nil {
@@ -2072,9 +2072,9 @@ func TestModel_CampaignSummaryHelpShowsContinue(t *testing.T) {
 	// When: the view is rendered
 	view := m.View()
 
-	// Then: summary help text (continue) is shown
-	if !containsPlainText(view, "continue") {
-		t.Errorf("campaign summary mode help should show 'continue'")
+	// Then: summary help text (back) is shown
+	if !containsPlainText(view, "back") {
+		t.Errorf("campaign summary mode help should show 'back'")
 	}
 }
 

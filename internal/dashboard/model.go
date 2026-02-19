@@ -528,12 +528,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes key messages with global and mode-specific routing.
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Summary modes: any key returns to browse with cache refresh.
+	// Summary modes: Enter/Esc/b returns to browse, other keys allow navigation.
 	if m.mode == ModeSummary {
-		return m.returnToBrowse()
+		switch msg.String() {
+		case "enter", "esc", "b":
+			return m.returnToBrowse()
+		}
 	}
 	if m.mode == ModeCampaignSummary {
-		return m.returnToBrowseFromCampaign()
+		switch msg.String() {
+		case "enter", "esc", "b":
+			return m.returnToBrowseFromCampaign()
+		}
 	}
 
 	// Confirm mode: Enter dispatches, Esc/q returns to browse.
@@ -633,6 +639,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case m.mode == ModeCampaign && m.focus == PaneRight:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case m.mode == ModeSummary && m.focus == PaneLeft:
+		var cmd tea.Cmd
+		m.pipeline, cmd = m.pipeline.Update(msg)
+		return m, cmd
+
+	case m.mode == ModeSummary && m.focus == PaneRight:
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case m.mode == ModeCampaignSummary && m.focus == PaneLeft:
+		var cmd tea.Cmd
+		m.campaign, cmd = m.campaign.Update(msg)
+		return m, cmd
+
+	case m.mode == ModeCampaignSummary && m.focus == PaneRight:
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd

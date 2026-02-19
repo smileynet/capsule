@@ -46,17 +46,17 @@ func TestSummaryKeys_ContainsAnyKey(t *testing.T) {
 		t.Fatal("SummaryKeyMap returned no bindings")
 	}
 
-	// And: an "any key" binding is present in help text
+	// And: a "back" or "browse" binding is present in help text
 	found := false
 	for _, b := range bindings {
 		h := b.Help()
-		if containsText(h.Key, "any") || containsText(h.Desc, "any") {
+		if containsText(h.Desc, "back") || containsText(h.Desc, "browse") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("SummaryKeyMap should contain an 'any key' binding")
+		t.Error("SummaryKeyMap should contain a 'back to browse' binding")
 	}
 }
 
@@ -196,10 +196,10 @@ func TestPipelineSummaryKeyMap_WithoutPostPipeline(t *testing.T) {
 	km := PipelineSummaryKeyMap(false)
 	bindings := km.ShortHelp()
 
-	// Then: the label just says "continue"
+	// Then: the label says "back to browse"
 	h := bindings[0].Help()
-	if h.Desc != "continue" {
-		t.Errorf("summary without postPipeline desc = %q, want 'continue'", h.Desc)
+	if h.Desc != "back to browse" {
+		t.Errorf("summary without postPipeline desc = %q, want 'back to browse'", h.Desc)
 	}
 }
 

@@ -104,7 +104,7 @@ func TestSummary_AnyKeyTransitionsToBrowse(t *testing.T) {
 	m := newPassedSummaryModel(90, 40)
 
 	// When: any key is pressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: the model transitions to browse mode with left pane focused
@@ -122,7 +122,7 @@ func TestSummary_AnyKeyInvalidatesCache(t *testing.T) {
 	m.cache.Set("cap-001", &BeadDetail{ID: "cap-001"})
 
 	// When: any key is pressed
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: the cache is invalidated
@@ -136,7 +136,7 @@ func TestSummary_AnyKeyTriggersRefresh(t *testing.T) {
 	m := newPassedSummaryModel(90, 40)
 
 	// When: any key is pressed
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Then: a refresh command is produced (batch includes fetch + spinner tick)
 	if cmd == nil {
@@ -162,9 +162,9 @@ func TestSummary_QDoesNotQuit(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	m = updated.(Model)
 
-	// Then: the model transitions to browse (not quit)
-	if m.mode != ModeBrowse {
-		t.Errorf("q in summary mode should transition to browse, got mode = %d", m.mode)
+	// Then: q is ignored in summary mode (doesn't quit or transition)
+	if m.mode != ModeSummary {
+		t.Errorf("q in summary mode should be ignored, got mode = %d", m.mode)
 	}
 	if cmd != nil {
 		msg := cmd()
@@ -182,9 +182,9 @@ func TestSummary_CtrlCDoesNotQuit(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	m = updated.(Model)
 
-	// Then: the model transitions to browse (not quit)
-	if m.mode != ModeBrowse {
-		t.Errorf("ctrl+c in summary mode should transition to browse, got mode = %d", m.mode)
+	// Then: ctrl+c is ignored in summary mode (doesn't quit or transition)
+	if m.mode != ModeSummary {
+		t.Errorf("ctrl+c in summary mode should be ignored, got mode = %d", m.mode)
 	}
 	if cmd != nil {
 		msg := cmd()
@@ -219,7 +219,7 @@ func TestSummary_FullFlowReturnToBrowse(t *testing.T) {
 	}
 
 	// When: any key is pressed to return to browse
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: the model transitions to browse mode with a refresh command
@@ -252,7 +252,7 @@ func TestSummary_ReturnToBrowseFiresPostPipeline(t *testing.T) {
 	m.pipelineOutput = &PipelineOutput{Success: true}
 
 	// When: any key is pressed to return to browse
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: the model transitions to browse mode
@@ -296,7 +296,7 @@ func TestSummary_ReturnToBrowseWithoutPostPipelineProducesRefreshOnly(t *testing
 	m.pipelineOutput = &PipelineOutput{Success: true}
 
 	// When: any key is pressed
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Then: a refresh command batch is produced (fetch + spinner tick, no postPipeline)
 	if cmd == nil {
@@ -336,7 +336,7 @@ func TestSummary_ReturnToBrowseSkipsPostPipelineOnError(t *testing.T) {
 	m.pipelineErr = fmt.Errorf("phase failed")
 
 	// When: any key is pressed to return to browse
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Then: postPipeline is NOT fired (pipeline had an error)
 	msgs := execBatch(t, cmd)
@@ -418,7 +418,7 @@ func TestSummary_ReturnToBrowse_SetsLastDispatchedID(t *testing.T) {
 	m.pipelineOutput = &PipelineOutput{Success: true}
 
 	// When: any key is pressed to return to browse
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: lastDispatchedID is set to the dispatched bead
@@ -502,7 +502,7 @@ func TestSummary_StickyCursor_CampaignReturnSetsLastDispatchedID(t *testing.T) {
 	m.dispatchedBeadID = "cap-002"
 
 	// When: any key is pressed to return to browse
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: lastDispatchedID is set for campaign return too
@@ -608,7 +608,7 @@ func TestSummary_ReturnToBrowse_ClearsPendingResolveID(t *testing.T) {
 	m.pendingResolveID = "stale-bead"
 
 	// When: any key is pressed to return to browse
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: pendingResolveID is cleared
@@ -648,7 +648,7 @@ func TestSummary_ReturnToBrowseFromCampaign_ClearsPendingResolveID(t *testing.T)
 	m.pendingResolveID = "stale-bead"
 
 	// When: any key is pressed to return to browse
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
 	// Then: pendingResolveID is cleared

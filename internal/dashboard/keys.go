@@ -201,11 +201,9 @@ func CampaignKeyMap() campaignKeys {
 // SummaryKeyMap returns the key bindings for summary mode.
 func SummaryKeyMap() summaryKeys {
 	return summaryKeys{
-		// "any" is a display-only key for the help bar; actual any-key
-		// handling is done in the Update() switch on tea.KeyMsg.
 		AnyKey: key.NewBinding(
-			key.WithKeys("any"),
-			key.WithHelp("any key", "continue"),
+			key.WithKeys("enter", "esc", "b"),
+			key.WithHelp("enter/esc/b", "back to browse"),
 		),
 	}
 }
@@ -213,14 +211,14 @@ func SummaryKeyMap() summaryKeys {
 // PipelineSummaryKeyMap returns summary key bindings with a context-aware label.
 // When hasPostPipeline is true, the label reflects the lifecycle actions.
 func PipelineSummaryKeyMap(hasPostPipeline bool) summaryKeys {
-	desc := "continue"
+	desc := "back to browse"
 	if hasPostPipeline {
-		desc = "continue (merge + close)"
+		desc = "back (merge + close)"
 	}
 	return summaryKeys{
 		AnyKey: key.NewBinding(
-			key.WithKeys("any"),
-			key.WithHelp("any key", desc),
+			key.WithKeys("enter", "esc", "b"),
+			key.WithHelp("enter/esc/b", desc),
 		),
 	}
 }
