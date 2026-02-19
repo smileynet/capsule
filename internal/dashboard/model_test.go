@@ -2607,3 +2607,177 @@ func TestModel_BeadListInitialLoadDebounces(t *testing.T) {
 		t.Errorf("resolver.calls = %d, want 0 (should debounce)", resolver.calls)
 	}
 }
+
+// --- ModeConfirm integration tests ---
+
+func TestModel_ConfirmRequest_TransitionsToConfirm(t *testing.T) {
+	// Given: a model in browse mode
+	m := newSizedModel(90, 40)
+
+	// When: a ConfirmRequestMsg is received
+	updated, _ := m.Update(ConfirmRequestMsg{BeadID: "cap-001", BeadType: "task", BeadTitle: "First task"})
+	m = updated.(Model)
+
+	// Then: mode transitions to ModeConfirm with confirm state populated
+	if m.mode != ModeConfirm {
+		t.Errorf("mode = %d, want ModeConfirm (%d)", m.mode, ModeConfirm)
+	}
+	if m.confirm.beadID != "cap-001" {
+		t.Errorf("confirm.beadID = %q, want %q", m.confirm.beadID, "cap-001")
+	}
+	if m.confirm.beadType != "task" {
+		t.Errorf("confirm.beadType = %q, want %q", m.confirm.beadType, "task")
+	}
+	if m.confirm.beadTitle != "First task" {
+		t.Errorf("confirm.beadTitle = %q, want %q", m.confirm.beadTitle, "First task")
+	}
+}
+
+func TestModel_ConfirmRequest_FeatureCollectsChildren(t *testing.T) {
+	// Given: a model with a loaded browse tree containing a parent and children
+	lister := &stubLister{beads: []BeadSummary{
+		{ID: "cap-feat", Title: "Feature", Type: "feature"},
+		{ID: "cap-feat.1", Title: "Task 1", Type: "task"},
+		{ID: "cap-feat.2", Title: "Task 2", Type: "task"},
+	}}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	updated, _ = m.Update(BeadListMsg{Beads: lister.beads})
+	m = updated.(Model)
+
+	// When: a ConfirmRequestMsg for the feature is received
+	updated, _ = m.Update(ConfirmRequestMsg{BeadID: "cap-feat", BeadType: "feature", BeadTitle: "Feature"})
+	m = updated.(Model)
+
+	// Then: confirm state contains the open children
+	if len(m.confirm.children) != 2 {
+		t.Fatalf("confirm.children = %d, want 2", len(m.confirm.children))
+	}
+	if m.confirm.children[0].ID != "cap-feat.1" {
+		t.Errorf("children[0].ID = %q, want %q", m.confirm.children[0].ID, "cap-feat.1")
+	}
+}
+
+func TestModel_ConfirmEnter_DispatchesPipeline(t *testing.T) {
+	// Given: a model in ModeConfirm for a task with a runner configured
+	runner := &mockRunner{output: PipelineOutput{Success: true}}
+	m := NewModel(
+		WithPipelineRunner(runner),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+	m.mode = ModeConfirm
+	m.confirm = confirmState{beadID: "cap-001", beadType: "task", beadTitle: "First task"}
+
+	// When: enter is pressed
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	// Then: mode transitions to pipeline (dispatch happened)
+	if m.mode != ModePipeline {
+		t.Errorf("mode = %d, want ModePipeline (%d)", m.mode, ModePipeline)
+	}
+	if cmd == nil {
+		t.Error("dispatch should produce a command")
+	}
+}
+
+func TestModel_ConfirmEsc_ReturnsToBrowse(t *testing.T) {
+	// Given: a model in ModeConfirm
+	m := newSizedModel(90, 40)
+	m.mode = ModeConfirm
+	m.confirm = confirmState{beadID: "cap-001", beadType: "task", beadTitle: "First task"}
+
+	// When: esc is pressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	// Then: mode returns to browse with left pane focus
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse (%d)", m.mode, ModeBrowse)
+	}
+	if m.focus != PaneLeft {
+		t.Errorf("focus = %d, want PaneLeft (%d)", m.focus, PaneLeft)
+	}
+}
+
+func TestModel_ConfirmQ_ReturnsToBrowse(t *testing.T) {
+	// Given: a model in ModeConfirm
+	m := newSizedModel(90, 40)
+	m.mode = ModeConfirm
+	m.confirm = confirmState{beadID: "cap-001", beadType: "task", beadTitle: "First task"}
+
+	// When: q is pressed
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+
+	// Then: mode returns to browse (q cancels, does not quit)
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse (%d)", m.mode, ModeBrowse)
+	}
+	if cmd != nil {
+		t.Error("q in confirm should not produce a quit command")
+	}
+}
+
+func TestModel_ConfirmSwallowsOtherKeys(t *testing.T) {
+	// Given: a model in ModeConfirm
+	m := newSizedModel(90, 40)
+	m.mode = ModeConfirm
+	m.confirm = confirmState{beadID: "cap-001", beadType: "task", beadTitle: "First task"}
+
+	// When: arbitrary keys are pressed (tab, up, down, r)
+	keys := []tea.KeyMsg{
+		{Type: tea.KeyTab},
+		{Type: tea.KeyUp},
+		{Type: tea.KeyDown},
+		{Type: tea.KeyRunes, Runes: []rune{'r'}},
+	}
+	for _, k := range keys {
+		updated, cmd := m.Update(k)
+		m = updated.(Model)
+		if m.mode != ModeConfirm {
+			t.Errorf("key %q should not change mode from ModeConfirm", k.String())
+		}
+		if cmd != nil {
+			t.Errorf("key %q should produce nil command in ModeConfirm", k.String())
+		}
+	}
+}
+
+func TestModel_ConfirmView_ShowsConfirmInLeftPane(t *testing.T) {
+	// Given: a model in ModeConfirm
+	m := newSizedModel(90, 40)
+	m.mode = ModeConfirm
+	m.confirm = confirmState{beadID: "cap-001", beadType: "task", beadTitle: "Validate email"}
+
+	// When: the full view is rendered
+	view := m.View()
+	plain := stripANSI(view)
+
+	// Then: the confirm screen appears in the output
+	if !strings.Contains(plain, "Run pipeline for cap-001?") {
+		t.Errorf("view should show confirm prompt, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "[Enter] Confirm") {
+		t.Errorf("view should show confirm hint, got:\n%s", plain)
+	}
+}
+
+func TestModel_ConfirmHasValidation_PassedThrough(t *testing.T) {
+	// Given: a model with campaign validation enabled
+	m := NewModel(WithCampaignValidation(true))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	// When: a ConfirmRequestMsg for a feature is received
+	updated, _ = m.Update(ConfirmRequestMsg{BeadID: "cap-feat", BeadType: "feature", BeadTitle: "Feature"})
+	m = updated.(Model)
+
+	// Then: confirmState has hasValidation set
+	if !m.confirm.hasValidation {
+		t.Error("confirm.hasValidation should be true when WithCampaignValidation(true)")
+	}
+}
