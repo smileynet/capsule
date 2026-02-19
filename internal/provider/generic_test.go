@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -297,13 +298,8 @@ func TestBuildArgs(t *testing.T) {
 			got := buildArgs(tt.config, tt.prompt)
 
 			// Then the argument list matches
-			if len(got) != len(tt.want) {
-				t.Fatalf("buildArgs() len = %d, want %d\n  got:  %v\n  want: %v", len(got), len(tt.want), got, tt.want)
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("buildArgs()[%d] = %q, want %q", i, got[i], tt.want[i])
-				}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("buildArgs() = %v, want %v", got, tt.want)
 			}
 		})
 	}
