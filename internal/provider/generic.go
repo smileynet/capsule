@@ -128,8 +128,9 @@ func buildArgs(cfg CommandConfig, prompt string) []string {
 	return args
 }
 
-// ansiPattern matches common ANSI escape sequences.
-var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+// ansiPattern matches ANSI escape sequences: CSI sequences (\x1b[...X),
+// OSC sequences (\x1b]...BEL), and two-character sequences (\x1b(X).
+var ansiPattern = regexp.MustCompile(`\x1b(?:\[[0-9;]*[a-zA-Z]|\][^\x07]*\x07|\([A-Z])`)
 
 // stripANSI removes ANSI escape codes from a string.
 func stripANSI(s string) string {

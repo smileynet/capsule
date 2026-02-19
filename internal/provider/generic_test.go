@@ -62,8 +62,8 @@ func TestGenericProvider_Name(t *testing.T) {
 		preset CommandConfig
 		want   string
 	}{
-		{"claude preset", ClaudePreset, "claude"},
-		{"kiro preset", KiroPreset, "kiro"},
+		{"claude preset", ClaudePreset(), "claude"},
+		{"kiro preset", KiroPreset(), "kiro"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -126,7 +126,7 @@ func TestGenericProvider_Execute(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Given a provider configured per test case
-			p := NewGenericProvider(ClaudePreset, WithTimeout(tt.timeout))
+			p := NewGenericProvider(ClaudePreset(), WithTimeout(tt.timeout))
 			// Override command builder to use re-exec helper.
 			p.cmdBuilder = func(ctx context.Context, prompt, workDir string) *exec.Cmd {
 				return helperCommand(ctx, tt.mode)
@@ -184,7 +184,7 @@ func TestGenericProvider_ExecuteRespectsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Already cancelled.
 
-	p := NewGenericProvider(ClaudePreset)
+	p := NewGenericProvider(ClaudePreset())
 	p.cmdBuilder = func(ctx context.Context, prompt, workDir string) *exec.Cmd {
 		return helperCommand(ctx, "slow")
 	}
@@ -208,7 +208,7 @@ func TestGenericProvider_StripANSI(t *testing.T) {
 	}
 
 	// Given a provider with StripANSI enabled
-	cfg := ClaudePreset
+	cfg := ClaudePreset()
 	cfg.StripANSI = true
 	p := NewGenericProvider(cfg, WithTimeout(5*time.Second))
 	p.cmdBuilder = func(ctx context.Context, prompt, workDir string) *exec.Cmd {
@@ -242,7 +242,7 @@ func TestGenericProvider_ErrorIncludesProviderName(t *testing.T) {
 	}
 
 	// Given a kiro provider that fails
-	p := NewGenericProvider(KiroPreset, WithTimeout(5*time.Second))
+	p := NewGenericProvider(KiroPreset(), WithTimeout(5*time.Second))
 	p.cmdBuilder = func(ctx context.Context, prompt, workDir string) *exec.Cmd {
 		return helperCommand(ctx, "error_exit")
 	}
@@ -272,13 +272,13 @@ func TestBuildArgs(t *testing.T) {
 	}{
 		{
 			name:   "claude preset uses prompt flag",
-			config: ClaudePreset,
+			config: ClaudePreset(),
 			prompt: "test prompt",
 			want:   []string{"--dangerously-skip-permissions", "-p", "test prompt"},
 		},
 		{
 			name:   "kiro preset uses subcommand and positional prompt",
-			config: KiroPreset,
+			config: KiroPreset(),
 			prompt: "test prompt",
 			want:   []string{"chat", "--trust-all-tools", "--no-interactive", "--wrap", "never", "test prompt"},
 		},
@@ -315,6 +315,8 @@ func TestStripANSI(t *testing.T) {
 		{"color codes", "\x1b[32mgreen\x1b[0m", "green"},
 		{"bold", "\x1b[1mbold\x1b[0m text", "bold text"},
 		{"mixed content", "line1\n\x1b[31merror\x1b[0m\nline3", "line1\nerror\nline3"},
+		{"OSC title sequence", "\x1b]0;window title\x07output", "output"},
+		{"charset selection", "\x1b(Btext", "text"},
 		{"empty string", "", ""},
 	}
 	for _, tt := range tests {
