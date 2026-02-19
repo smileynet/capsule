@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,18 +15,23 @@ import (
 
 // Manager wraps the package-level worklog functions with config for template and archive paths.
 type Manager struct {
-	templatePath string
+	tmplFS       fs.FS
+	templateName string
 	archiveDir   string
 }
 
-// NewManager creates a Manager with the given template and archive directory paths.
-func NewManager(templatePath, archiveDir string) *Manager {
-	return &Manager{templatePath: templatePath, archiveDir: archiveDir}
+// NewManager creates a Manager with the given template filesystem, template filename, and archive directory.
+func NewManager(tmplFS fs.FS, templateName, archiveDir string) *Manager {
+	return &Manager{tmplFS: tmplFS, templateName: templateName, archiveDir: archiveDir}
 }
 
 // Create instantiates a worklog from the configured template into worktreePath/worklog.md.
 func (m *Manager) Create(worktreePath string, bead BeadContext) error {
-	return Create(m.templatePath, worktreePath, bead)
+	tmplBytes, err := fs.ReadFile(m.tmplFS, m.templateName)
+	if err != nil {
+		return fmt.Errorf("worklog: reading template: %w", err)
+	}
+	return createFromBytes(tmplBytes, worktreePath, bead)
 }
 
 // AppendPhaseEntry appends a phase result to the worklog at worktreePath/worklog.md.
@@ -95,7 +101,11 @@ func Create(templatePath, worktreePath string, bead BeadContext) error {
 	if err != nil {
 		return fmt.Errorf("worklog: reading template: %w", err)
 	}
+	return createFromBytes(tmplBytes, worktreePath, bead)
+}
 
+// createFromBytes instantiates a worklog from raw template bytes into worktreePath/worklog.md.
+func createFromBytes(tmplBytes []byte, worktreePath string, bead BeadContext) error {
 	outPath := filepath.Join(worktreePath, "worklog.md")
 	if _, err := os.Stat(outPath); err == nil {
 		return fmt.Errorf("%w: %s", ErrAlreadyExists, outPath)

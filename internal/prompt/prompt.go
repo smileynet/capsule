@@ -5,8 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
 	"strings"
 	"text/template"
 )
@@ -31,25 +30,24 @@ type Context struct {
 	SiblingContext []SiblingContext
 }
 
-// Loader reads prompt templates from a directory.
+// Loader reads prompt templates from a filesystem.
 type Loader struct {
-	promptsDir string
+	fsys fs.FS
 }
 
-// NewLoader creates a Loader that reads prompts from dir.
-func NewLoader(dir string) *Loader {
-	return &Loader{promptsDir: dir}
+// NewLoader creates a Loader that reads prompts from the given filesystem.
+func NewLoader(fsys fs.FS) *Loader {
+	return &Loader{fsys: fsys}
 }
 
 // Load reads the prompt file for the named phase.
-// The file must exist at <promptsDir>/<phaseName>.md and be non-empty.
+// The file must exist at <phaseName>.md in the filesystem and be non-empty.
 func (l *Loader) Load(phaseName string) (string, error) {
 	if strings.ContainsAny(phaseName, `/\`) {
 		return "", fmt.Errorf("prompt: invalid phase name %q", phaseName)
 	}
 
-	path := filepath.Join(l.promptsDir, phaseName+".md")
-	data, err := os.ReadFile(path)
+	data, err := fs.ReadFile(l.fsys, phaseName+".md")
 	if err != nil {
 		return "", fmt.Errorf("prompt: loading %s: %w", phaseName, err)
 	}

@@ -11,7 +11,7 @@ import (
 func TestNewLoader(t *testing.T) {
 	// Given: a directory path
 	// When: NewLoader is called
-	l := NewLoader("/some/dir")
+	l := NewLoader(os.DirFS("/some/dir"))
 
 	// Then: a non-nil Loader is returned
 	if l == nil {
@@ -28,7 +28,7 @@ func TestLoad_ReadsPromptFile(t *testing.T) {
 	}
 
 	// When: Load("test-writer") is called
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	got, err := l.Load("test-writer")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -43,7 +43,7 @@ func TestLoad_ReadsPromptFile(t *testing.T) {
 func TestLoad_MissingFile(t *testing.T) {
 	// Given: a prompts directory with no matching file
 	// When: Load is called for a nonexistent phase
-	l := NewLoader(t.TempDir())
+	l := NewLoader(os.DirFS(t.TempDir()))
 	_, err := l.Load("nonexistent")
 
 	// Then: an error mentioning "prompt" is returned
@@ -63,7 +63,7 @@ func TestLoad_EmptyFile(t *testing.T) {
 	}
 
 	// When: Load is called
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	_, err := l.Load("empty")
 
 	// Then: an error mentioning "empty" is returned
@@ -87,7 +87,7 @@ Description: {{.Description}}
 	}
 
 	// When: Compose is called with bead context
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	ctx := Context{
 		BeadID:      "cap-123",
 		Title:       "Add widget",
@@ -118,7 +118,7 @@ func TestCompose_InterpolatesFeedback(t *testing.T) {
 	}
 
 	// When: Compose is called with feedback in the context
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	ctx := Context{
 		BeadID:   "cap-456",
 		Title:    "Fix bug",
@@ -145,7 +145,7 @@ func TestCompose_NoTemplateSyntax(t *testing.T) {
 	}
 
 	// When: Compose is called
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	got, err := l.Compose("plain", Context{BeadID: "cap-789"})
 	if err != nil {
 		t.Fatalf("Compose() error = %v", err)
@@ -160,7 +160,7 @@ func TestCompose_NoTemplateSyntax(t *testing.T) {
 func TestCompose_MissingPrompt(t *testing.T) {
 	// Given: no prompt file for the requested phase
 	// When: Compose is called
-	l := NewLoader(t.TempDir())
+	l := NewLoader(os.DirFS(t.TempDir()))
 	_, err := l.Compose("missing", Context{BeadID: "cap-000"})
 
 	// Then: the Load error propagates through Compose
@@ -181,7 +181,7 @@ func TestCompose_InvalidTemplate(t *testing.T) {
 	}
 
 	// When: Compose is called
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	_, err := l.Compose("bad", Context{BeadID: "cap-000"})
 
 	// Then: a template parse error is returned
@@ -201,7 +201,7 @@ func TestLoad_EmptyFile_SentinelError(t *testing.T) {
 	}
 
 	// When: Load is called
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	_, err := l.Load("blank")
 
 	// Then: the error wraps ErrEmpty for programmatic checking
@@ -213,7 +213,7 @@ func TestLoad_EmptyFile_SentinelError(t *testing.T) {
 func TestLoad_PathTraversal(t *testing.T) {
 	// Given: a phase name containing path traversal characters
 	// When: Load is called with a traversal attempt
-	l := NewLoader(t.TempDir())
+	l := NewLoader(os.DirFS(t.TempDir()))
 	_, err := l.Load("../../etc/passwd")
 
 	// Then: the request is rejected before filesystem access
@@ -234,7 +234,7 @@ func TestCompose_MissingKeyError(t *testing.T) {
 	}
 
 	// When: Compose is called
-	l := NewLoader(dir)
+	l := NewLoader(os.DirFS(dir))
 	_, err := l.Compose("typo", Context{BeadID: "cap-000", Title: "Real title"})
 
 	// Then: an error is returned (missingkey=error catches the typo)

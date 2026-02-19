@@ -17,6 +17,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
 
+	"github.com/smileynet/capsule"
 	"github.com/smileynet/capsule/internal/bead"
 	"github.com/smileynet/capsule/internal/campaign"
 	"github.com/smileynet/capsule/internal/config"
@@ -96,9 +97,9 @@ func (c *CampaignCmd) Run() error {
 	defer stopPause()
 
 	// Build orchestrator.
-	promptLoader := prompt.NewLoader("prompts")
+	promptLoader := prompt.NewLoader(capsule.OverlayFS("prompts", capsule.Prompts))
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
-	wlMgr := worklog.NewManager("templates/worklog.md.template", ".capsule/logs")
+	wlMgr := worklog.NewManager(capsule.OverlayFS("templates", capsule.Templates), "worklog.md.template", ".capsule/logs")
 	gateRunner := gate.NewRunner()
 
 	orch := orchestrator.New(p,
@@ -225,9 +226,9 @@ func (r *RunCmd) Run() error {
 	defer stopPause()
 
 	// Build orchestrator.
-	promptLoader := prompt.NewLoader("prompts")
+	promptLoader := prompt.NewLoader(capsule.OverlayFS("prompts", capsule.Prompts))
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
-	wlMgr := worklog.NewManager("templates/worklog.md.template", ".capsule/logs")
+	wlMgr := worklog.NewManager(capsule.OverlayFS("templates", capsule.Templates), "worklog.md.template", ".capsule/logs")
 	gateRunner := gate.NewRunner()
 
 	orch := orchestrator.New(p,
@@ -487,9 +488,9 @@ func (d *DashboardCmd) Run() error {
 
 	pipelineAdapter := &dashboardPipelineAdapter{
 		providerExec: p,
-		promptLoader: prompt.NewLoader("prompts"),
+		promptLoader: prompt.NewLoader(capsule.OverlayFS("prompts", capsule.Prompts)),
 		wtMgr:        wtMgr,
-		wlMgr:        worklog.NewManager("templates/worklog.md.template", ".capsule/logs"),
+		wlMgr:        worklog.NewManager(capsule.OverlayFS("templates", capsule.Templates), "worklog.md.template", ".capsule/logs"),
 		gateRunner:   gate.NewRunner(),
 		phases:       phases,
 		bdClient:     bdClient,

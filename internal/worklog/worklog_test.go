@@ -370,12 +370,11 @@ func TestArchive_MissingWorklog(t *testing.T) {
 func TestManager_Create(t *testing.T) {
 	// Given a manager with a valid template
 	tmplDir := t.TempDir()
-	tmplPath := filepath.Join(tmplDir, "worklog.md.template")
-	if err := os.WriteFile(tmplPath, []byte("# {{.TaskID}}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmplDir, "worklog.md.template"), []byte("# {{.TaskID}}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	archiveDir := t.TempDir()
-	mgr := NewManager(tmplPath, archiveDir)
+	mgr := NewManager(os.DirFS(tmplDir), "worklog.md.template", archiveDir)
 
 	worktreeDir := t.TempDir()
 	bead := BeadContext{TaskID: "task-mgr-1"}
@@ -398,7 +397,7 @@ func TestManager_Create(t *testing.T) {
 
 func TestManager_AppendPhaseEntry(t *testing.T) {
 	// Given a manager and an existing worklog
-	mgr := NewManager("", t.TempDir())
+	mgr := NewManager(nil, "", t.TempDir())
 	worktreeDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(worktreeDir, "worklog.md"), []byte("# Worklog\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -430,7 +429,7 @@ func TestManager_AppendPhaseEntry(t *testing.T) {
 func TestManager_Archive(t *testing.T) {
 	// Given a manager with an archive directory and a worktree with a worklog
 	archiveDir := t.TempDir()
-	mgr := NewManager("", archiveDir)
+	mgr := NewManager(nil, "", archiveDir)
 	worktreeDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(worktreeDir, "worklog.md"), []byte("archived content"), 0o644); err != nil {
 		t.Fatal(err)
