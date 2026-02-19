@@ -482,6 +482,7 @@ func (d *DashboardCmd) Run() error {
 
 	pipelineAdapter := &dashboardPipelineAdapter{
 		providerExec: p,
+		registry:     reg,
 		promptLoader: prompt.NewLoader(capsule.OverlayFS("prompts", capsule.Prompts)),
 		wtMgr:        wtMgr,
 		wlMgr:        worklog.NewManager(capsule.OverlayFS("templates", capsule.Templates), "worklog.md.template", ".capsule/logs"),
@@ -514,6 +515,7 @@ func (d *DashboardCmd) Run() error {
 		dashboard.WithCampaignRunner(campaignAdapter),
 		dashboard.WithArchiveReader(archiveReader),
 		dashboard.WithCampaignValidation(cfg.Campaign.ValidationPhases != ""),
+		dashboard.WithProviderNames(reg.AvailableProviders(), cfg.Runtime.Provider),
 	)
 
 	prog := tea.NewProgram(m, tea.WithAltScreen())
@@ -535,6 +537,7 @@ func (d *DashboardCmd) run(isTTY bool, prog teaRunner) error {
 // a fresh orchestrator per run with the provided statusFn callback.
 type dashboardPipelineAdapter struct {
 	providerExec provider.Executor
+	registry     *provider.Registry // Used for per-dispatch provider creation when input.Provider is set.
 	promptLoader *prompt.Loader
 	wtMgr        *worktree.Manager
 	wlMgr        *worklog.Manager
@@ -545,6 +548,17 @@ type dashboardPipelineAdapter struct {
 }
 
 func (a *dashboardPipelineAdapter) RunPipeline(ctx context.Context, input dashboard.PipelineInput, statusFn func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error) {
+	// Resolve provider: use registry for per-dispatch creation when specified,
+	// otherwise fall back to the default provider.
+	exec := a.providerExec
+	if input.Provider != "" && a.registry != nil {
+		p, err := a.registry.NewProvider(input.Provider)
+		if err != nil {
+			return dashboard.PipelineOutput{}, fmt.Errorf("provider %q: %w", input.Provider, err)
+		}
+		exec = p
+	}
+
 	// Build status callback that converts orchestrator updates to dashboard messages.
 	cb := func(su orchestrator.StatusUpdate) {
 		msg := dashboard.PhaseUpdateMsg{
@@ -573,7 +587,7 @@ func (a *dashboardPipelineAdapter) RunPipeline(ctx context.Context, input dashbo
 	if a.pauseCheck != nil {
 		opts = append(opts, orchestrator.WithPauseRequested(a.pauseCheck))
 	}
-	orch := orchestrator.New(a.providerExec, opts...)
+	orch := orchestrator.New(exec, opts...)
 
 	// Resolve bead context (best-effort).
 	beadCtx, _ := a.bdClient.Resolve(input.BeadID)

@@ -75,6 +75,9 @@ type Model struct {
 
 	archive ArchiveReader
 
+	activeProvider string   // Currently selected provider name (default from config).
+	providerNames  []string // Registered provider names for cycling.
+
 	statusMsg string // Transient status shown between panes and help bar; cleared by statusClearMsg.
 }
 
@@ -149,6 +152,16 @@ func WithArchiveReader(ar ArchiveReader) ModelOption {
 	return func(m *Model) { m.archive = ar }
 }
 
+// WithProviderNames sets the list of registered provider names and the
+// initially active provider. When more than one name is provided, the 'p'
+// key toggles between them in browse mode.
+func WithProviderNames(names []string, active string) ModelOption {
+	return func(m *Model) {
+		m.providerNames = names
+		m.activeProvider = active
+	}
+}
+
 // listenForEvents returns a tea.Cmd that reads one message from ch.
 // On channel close, it returns channelClosedMsg. Returns nil if ch is nil.
 func listenForEvents(ch <-chan tea.Msg) tea.Cmd {
@@ -187,8 +200,9 @@ func dispatchPipeline(ctx context.Context, runner PipelineRunner, input Pipeline
 }
 
 // dispatchCampaign runs a campaign in the calling goroutine, bridging
-// status events to ch. It closes ch when done.
-func dispatchCampaign(ctx context.Context, cr CampaignRunner, pr PipelineRunner, parentID string, ch chan<- tea.Msg) {
+// status events to ch. It closes ch when done. The provider name is
+// captured at dispatch time and injected into every task's PipelineInput.
+func dispatchCampaign(ctx context.Context, cr CampaignRunner, pr PipelineRunner, parentID, providerName string, ch chan<- tea.Msg) {
 	defer close(ch)
 	statusFn := func(msg tea.Msg) {
 		select {
@@ -198,7 +212,10 @@ func dispatchCampaign(ctx context.Context, cr CampaignRunner, pr PipelineRunner,
 	}
 	var pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error)
 	if pr != nil {
-		pipelineFn = pr.RunPipeline
+		pipelineFn = func(ctx context.Context, input PipelineInput, statusFn func(PhaseUpdateMsg)) (PipelineOutput, error) {
+			input.Provider = providerName
+			return pr.RunPipeline(ctx, input, statusFn)
+		}
 	}
 	// Always deliver the final error. Unlike incremental status updates,
 	// the error must reach the receiver so channelClosedMsg processing
@@ -349,6 +366,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resolveErr = nil
 		if m.lister != nil {
 			return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
+		}
+		return m, nil
+
+	case ProviderCycleMsg:
+		if len(m.providerNames) > 1 {
+			next := m.providerNames[0]
+			for i, name := range m.providerNames {
+				if name == m.activeProvider {
+					next = m.providerNames[(i+1)%len(m.providerNames)]
+					break
+				}
+			}
+			m.activeProvider = next
 		}
 		return m, nil
 
@@ -515,6 +545,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				BeadID:    m.confirm.beadID,
 				BeadType:  m.confirm.beadType,
 				BeadTitle: m.confirm.beadTitle,
+				Provider:  m.confirm.provider,
 			})
 		case "esc", "q":
 			m.mode = ModeBrowse
@@ -561,6 +592,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focus = PaneLeft
 		}
 		return m, nil
+	case "p":
+		if m.mode == ModeBrowse && len(m.providerNames) > 1 {
+			return m, func() tea.Msg { return ProviderCycleMsg{} }
+		}
 	case "r":
 		if m.mode == ModeBrowse {
 			m.browse.loading = true
@@ -620,6 +655,7 @@ func (m Model) handleConfirmRequest(msg ConfirmRequestMsg) (tea.Model, tea.Cmd) 
 		beadType:      msg.BeadType,
 		beadTitle:     msg.BeadTitle,
 		hasValidation: m.hasValidation,
+		provider:      m.activeProvider,
 	}
 	// For features/epics, collect open children from the browse tree.
 	if msg.BeadType == "feature" || msg.BeadType == "epic" {
@@ -656,11 +692,12 @@ func (m Model) handlePipelineDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.pipeline = newPipelineState(m.phaseNames)
 	m.pipeline.beadID = msg.BeadID
 	m.pipeline.beadTitle = msg.BeadTitle
+	m.pipeline.provider = msg.Provider
 	m.pipelineOutput = nil
 	m.pipelineErr = nil
 	m.aborting = false
 	m.dispatchedBeadID = msg.BeadID
-	input := PipelineInput{BeadID: msg.BeadID}
+	input := PipelineInput{BeadID: msg.BeadID, Provider: msg.Provider}
 	go dispatchPipeline(ctx, m.runner, input, ch)
 	return m, tea.Batch(m.pipeline.spinner.Tick, elapsedTickCmd(), listenForEvents(ch))
 }
@@ -678,13 +715,14 @@ func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	m.mode = ModeCampaign
 	m.focus = PaneLeft
 	m.campaign = newCampaignState(msg.BeadID, msg.BeadTitle, nil)
+	m.campaign.provider = msg.Provider
 	m.pipelineOutput = nil
 	m.pipelineErr = nil
 	m.aborting = false
 	m.campaignDone = nil
 	m.campaignErr = nil
 	m.dispatchedBeadID = msg.BeadID
-	go dispatchCampaign(ctx, m.campaignRunner, m.runner, msg.BeadID, ch)
+	go dispatchCampaign(ctx, m.campaignRunner, m.runner, msg.BeadID, msg.Provider, ch)
 	return m, tea.Batch(m.campaign.pipeline.spinner.Tick, elapsedTickCmd(), listenForEvents(ch))
 }
 
@@ -797,17 +835,23 @@ func (m Model) helpBindings() help.KeyMap {
 	case ModeConfirm:
 		return ConfirmKeyMap()
 	case ModeBrowse:
+		var km browseKeys
 		if m.backgroundMode != 0 {
-			return BrowseKeyMapWithBackground(m.dispatchedBeadID)
-		}
-		if bead, ok := m.browse.SelectedBead(); ok && !bead.Closed {
+			km = BrowseKeyMapWithBackground(m.dispatchedBeadID)
+		} else if bead, ok := m.browse.SelectedBead(); ok && !bead.Closed {
 			childCount := 0
 			if bead.Type == "feature" || bead.Type == "epic" {
 				childCount = countOpenChildren(m.browse.flatNodes, bead.ID)
 			}
-			return BrowseKeyMapForBead(bead.Type, childCount)
+			km = BrowseKeyMapForBead(bead.Type, childCount)
+		} else {
+			km = BrowseKeyMapForBead("", 0)
 		}
-		return BrowseKeyMapForBead("", 0)
+		// Enable provider toggle when multiple providers are registered.
+		if len(m.providerNames) > 1 {
+			km.Provider = BrowseKeyMapWithProvider(m.activeProvider).Provider
+		}
+		return km
 	case ModeSummary:
 		return PipelineSummaryKeyMap(m.postPipeline != nil)
 	default:

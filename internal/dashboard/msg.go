@@ -165,7 +165,11 @@ type DispatchMsg struct {
 	BeadID    string
 	BeadType  string
 	BeadTitle string
+	Provider  string // Provider name frozen at confirm time.
 }
+
+// ProviderCycleMsg signals the user pressed 'p' to cycle to the next provider.
+type ProviderCycleMsg struct{}
 
 // RefreshBeadsMsg signals that the bead list should be reloaded.
 // browseState emits this on 'r'; Model.Update intercepts it and calls initBrowse.

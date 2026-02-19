@@ -1618,7 +1618,7 @@ func TestDispatchCampaign_SendsEventsAndDone(t *testing.T) {
 	ctx := context.Background()
 
 	// When: dispatchCampaign runs to completion
-	dispatchCampaign(ctx, cr, pr, "cap-feat", ch)
+	dispatchCampaign(ctx, cr, pr, "cap-feat", "", ch)
 
 	// Then: the campaign messages are sent through the channel
 	var msgs []tea.Msg
@@ -1647,7 +1647,7 @@ func TestDispatchCampaign_SendsErrorMsg(t *testing.T) {
 	ctx := context.Background()
 
 	// When: dispatchCampaign runs
-	dispatchCampaign(ctx, cr, pr, "cap-feat", ch)
+	dispatchCampaign(ctx, cr, pr, "cap-feat", "", ch)
 
 	// Then: a CampaignErrorMsg is sent through the channel
 	var msgs []tea.Msg
@@ -3168,7 +3168,7 @@ func TestDispatchCampaign_ErrorDeliveredOnCancel(t *testing.T) {
 	}
 
 	// When: dispatchCampaign runs
-	dispatchCampaign(ctx, runner, nil, "cap-feat", ch)
+	dispatchCampaign(ctx, runner, nil, "cap-feat", "", ch)
 
 	// Then: CampaignErrorMsg is delivered despite cancelled context
 	var gotError bool
@@ -3213,5 +3213,165 @@ func TestDispatchPipeline_ErrorDeliveredOnCancel(t *testing.T) {
 	}
 	if !gotError {
 		t.Error("PipelineErrorMsg should be delivered even when context is cancelled")
+	}
+}
+
+func TestModel_ProviderCycles(t *testing.T) {
+	// Given: a model with three providers, active = "claude"
+	m := NewModel(
+		WithProviderNames([]string{"claude", "gemini", "kiro"}, "claude"),
+	)
+
+	// Then: initial active provider is "claude"
+	if m.activeProvider != "claude" {
+		t.Fatalf("initial activeProvider = %q, want %q", m.activeProvider, "claude")
+	}
+
+	// When: ProviderCycleMsg is sent
+	updated, _ := m.Update(ProviderCycleMsg{})
+	m = updated.(Model)
+
+	// Then: provider cycles to "gemini"
+	if m.activeProvider != "gemini" {
+		t.Errorf("after first cycle: activeProvider = %q, want %q", m.activeProvider, "gemini")
+	}
+
+	// When: ProviderCycleMsg is sent again
+	updated, _ = m.Update(ProviderCycleMsg{})
+	m = updated.(Model)
+
+	// Then: provider cycles to "kiro"
+	if m.activeProvider != "kiro" {
+		t.Errorf("after second cycle: activeProvider = %q, want %q", m.activeProvider, "kiro")
+	}
+
+	// When: ProviderCycleMsg is sent again (wraps around)
+	updated, _ = m.Update(ProviderCycleMsg{})
+	m = updated.(Model)
+
+	// Then: provider wraps back to "claude"
+	if m.activeProvider != "claude" {
+		t.Errorf("after third cycle: activeProvider = %q, want %q", m.activeProvider, "claude")
+	}
+}
+
+func TestModel_ProviderCycle_SingleProvider_NoOp(t *testing.T) {
+	// Given: a model with a single provider
+	m := NewModel(
+		WithProviderNames([]string{"claude"}, "claude"),
+	)
+
+	// When: ProviderCycleMsg is sent
+	updated, _ := m.Update(ProviderCycleMsg{})
+	m = updated.(Model)
+
+	// Then: provider stays the same (can't cycle with one provider)
+	if m.activeProvider != "claude" {
+		t.Errorf("activeProvider = %q, want %q (should not change with single provider)", m.activeProvider, "claude")
+	}
+}
+
+func TestModel_DispatchCarriesProvider(t *testing.T) {
+	// Given: a model with a runner and active provider set
+	runner := &mockRunner{}
+	m := newSizedModel(90, 40)
+	m.providerNames = []string{"claude", "kiro"}
+	m.activeProvider = "kiro"
+	m.runner = runner
+	m.phaseNames = []string{"plan"}
+
+	// When: a pipeline is dispatched
+	updated, _ := m.Update(DispatchMsg{
+		BeadID:    "cap-001",
+		BeadType:  "task",
+		BeadTitle: "Test task",
+		Provider:  "kiro",
+	})
+	m = updated.(Model)
+
+	// Then: the pipeline state has the provider set
+	if m.pipeline.provider != "kiro" {
+		t.Errorf("pipeline.provider = %q, want %q", m.pipeline.provider, "kiro")
+	}
+}
+
+func TestModel_ConfirmStoresProvider(t *testing.T) {
+	// Given: a model with provider names set
+	m := NewModel(
+		WithProviderNames([]string{"claude", "kiro"}, "kiro"),
+	)
+
+	// When: a confirm request is handled
+	updated, _ := m.Update(ConfirmRequestMsg{
+		BeadID:    "cap-001",
+		BeadType:  "task",
+		BeadTitle: "Test task",
+	})
+	m = updated.(Model)
+
+	// Then: the confirm state has the active provider frozen
+	if m.confirm.provider != "kiro" {
+		t.Errorf("confirm.provider = %q, want %q", m.confirm.provider, "kiro")
+	}
+}
+
+func TestModel_CampaignDispatchCarriesProvider(t *testing.T) {
+	// Given: a model with a campaign runner and provider set
+	cr := &mockCampaignRunner{}
+	runner := &mockRunner{}
+	m := newSizedModel(90, 40)
+	m.providerNames = []string{"claude", "kiro"}
+	m.activeProvider = "kiro"
+	m.runner = runner
+	m.campaignRunner = cr
+
+	// When: a campaign is dispatched
+	updated, _ := m.Update(DispatchMsg{
+		BeadID:    "demo-1",
+		BeadType:  "feature",
+		BeadTitle: "Feature",
+		Provider:  "kiro",
+	})
+	m = updated.(Model)
+
+	// Then: the campaign state has the provider set
+	if m.campaign.provider != "kiro" {
+		t.Errorf("campaign.provider = %q, want %q", m.campaign.provider, "kiro")
+	}
+}
+
+func TestDispatchCampaign_InjectsProviderInPipelineFn(t *testing.T) {
+	// Given: a campaign runner that invokes pipelineFn and records the input
+	var capturedProvider string
+	cr := &mockCampaignRunner{
+		runFn: func(_ context.Context, _ string, statusFn func(tea.Msg), pipelineFn func(context.Context, PipelineInput, func(PhaseUpdateMsg)) (PipelineOutput, error)) error {
+			if pipelineFn != nil {
+				out, err := pipelineFn(context.Background(), PipelineInput{BeadID: "task-1"}, func(PhaseUpdateMsg) {})
+				if err != nil {
+					return err
+				}
+				_ = out
+			}
+			return nil
+		},
+	}
+	pr := &mockRunner{
+		runFn: func(_ context.Context, input PipelineInput, _ func(PhaseUpdateMsg)) (PipelineOutput, error) {
+			capturedProvider = input.Provider
+			return PipelineOutput{Success: true}, nil
+		},
+	}
+	ch := make(chan tea.Msg, 32)
+
+	// When: dispatchCampaign runs with provider "kiro"
+	dispatchCampaign(context.Background(), cr, pr, "cap-feat", "kiro", ch)
+
+	// Drain channel
+	for range ch {
+	}
+
+	// Then: the pipelineFn received the provider name
+	if capturedProvider != "kiro" {
+		t.Errorf("pipelineFn received provider = %q, want %q", capturedProvider, "kiro")
 	}
 }

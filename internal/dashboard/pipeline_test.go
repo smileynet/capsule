@@ -853,3 +853,41 @@ func TestPipeline_MultiplePhaseProgression(t *testing.T) {
 		t.Errorf("cursor should auto-follow to code at 1, got %d", ps.cursor)
 	}
 }
+
+func TestPipeline_ViewBeadHeader_WithProvider(t *testing.T) {
+	// Given: a pipeline state with bead ID, title, and provider set
+	ps := newPipelineState(samplePhaseNames())
+	ps.beadID = "cap-042"
+	ps.beadTitle = "Fix login bug"
+	ps.provider = "kiro"
+
+	// When: the view is rendered
+	view := ps.View(80, 20)
+	plain := stripANSI(view)
+
+	// Then: the provider badge appears in the header
+	lines := strings.Split(plain, "\n")
+	if len(lines) == 0 {
+		t.Fatal("view should have at least one line")
+	}
+	if !strings.Contains(lines[0], "[kiro]") {
+		t.Errorf("header should contain provider badge [kiro], got: %q", lines[0])
+	}
+}
+
+func TestPipeline_ViewBeadHeader_NoProvider(t *testing.T) {
+	// Given: a pipeline state with bead ID and title but no provider
+	ps := newPipelineState(samplePhaseNames())
+	ps.beadID = "cap-042"
+	ps.beadTitle = "Fix login bug"
+
+	// When: the view is rendered
+	view := ps.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: no provider badge in the header
+	lines := strings.Split(plain, "\n")
+	if strings.Contains(lines[0], "[") {
+		t.Errorf("header should not contain bracket badge, got: %q", lines[0])
+	}
+}

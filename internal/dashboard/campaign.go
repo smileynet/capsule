@@ -14,6 +14,7 @@ import (
 type campaignState struct {
 	parentID      string
 	parentTitle   string
+	provider      string // Provider name shown in header badge (optional).
 	tasks         []CampaignTaskInfo
 	taskStatuses  []CampaignTaskStatus
 	taskDurations []time.Duration
@@ -118,7 +119,11 @@ func (cs campaignState) View(width, height int) string {
 
 	// Header line.
 	done := cs.completed + cs.failed
-	fmt.Fprintf(&b, "%s  %s  %d/%d", cs.parentID, cs.parentTitle, done, len(cs.tasks))
+	header := fmt.Sprintf("%s  %s  %d/%d", cs.parentID, cs.parentTitle, done, len(cs.tasks))
+	if cs.provider != "" {
+		header += "  [" + cs.provider + "]"
+	}
+	b.WriteString(header)
 
 	// Task queue.
 	for i, task := range cs.tasks {

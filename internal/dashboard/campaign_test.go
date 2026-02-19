@@ -768,3 +768,37 @@ func TestCampaign_ValidationDone_Failure(t *testing.T) {
 		t.Errorf("failed validation should show cross, got:\n%s", plain)
 	}
 }
+
+func TestCampaign_ViewHeader_WithProvider(t *testing.T) {
+	// Given: a campaign state with provider set
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs.provider = "kiro"
+
+	// When: the view is rendered
+	view := cs.View(80, 30)
+	plain := stripANSI(view)
+
+	// Then: the header shows the provider badge
+	lines := strings.Split(plain, "\n")
+	if len(lines) == 0 {
+		t.Fatal("view should have at least one line")
+	}
+	if !strings.Contains(lines[0], "[kiro]") {
+		t.Errorf("header should contain provider badge [kiro], got: %q", lines[0])
+	}
+}
+
+func TestCampaign_ViewHeader_NoProvider(t *testing.T) {
+	// Given: a campaign state without provider
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+
+	// When: the view is rendered
+	view := cs.View(80, 30)
+	plain := stripANSI(view)
+
+	// Then: no provider badge in the header
+	lines := strings.Split(plain, "\n")
+	if strings.Contains(lines[0], "[") {
+		t.Errorf("header should not contain bracket badge, got: %q", lines[0])
+	}
+}

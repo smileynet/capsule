@@ -8,24 +8,34 @@ import (
 
 // browseKeys holds key bindings for browse mode.
 type browseKeys struct {
-	Up      key.Binding
-	Down    key.Binding
-	Enter   key.Binding
-	Tab     key.Binding
-	Refresh key.Binding
-	Quit    key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	Enter    key.Binding
+	Tab      key.Binding
+	Provider key.Binding
+	Refresh  key.Binding
+	Quit     key.Binding
 }
 
 // ShortHelp returns the browse mode bindings for the help bar.
 func (k browseKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Enter, k.Tab, k.Refresh, k.Quit}
+	bindings := []key.Binding{k.Up, k.Down, k.Enter, k.Tab}
+	if k.Provider.Enabled() {
+		bindings = append(bindings, k.Provider)
+	}
+	return append(bindings, k.Refresh, k.Quit)
 }
 
 // FullHelp returns the browse mode bindings grouped for expanded help.
 func (k browseKeys) FullHelp() [][]key.Binding {
+	row2 := []key.Binding{k.Tab}
+	if k.Provider.Enabled() {
+		row2 = append(row2, k.Provider)
+	}
+	row2 = append(row2, k.Refresh, k.Quit)
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter},
-		{k.Tab, k.Refresh, k.Quit},
+		row2,
 	}
 }
 
@@ -67,6 +77,8 @@ func (k summaryKeys) FullHelp() [][]key.Binding {
 }
 
 // BrowseKeyMap returns the key bindings for browse mode.
+// The Provider binding is disabled by default; use BrowseKeyMapWithProvider
+// to enable it with a dynamic label showing the current provider name.
 func BrowseKeyMap() browseKeys {
 	return browseKeys{
 		Up: key.NewBinding(
@@ -85,6 +97,11 @@ func BrowseKeyMap() browseKeys {
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "switch pane"),
 		),
+		Provider: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "provider"),
+			key.WithDisabled(),
+		),
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),
 			key.WithHelp("r", "refresh"),
@@ -94,6 +111,17 @@ func BrowseKeyMap() browseKeys {
 			key.WithHelp("q", "quit"),
 		),
 	}
+}
+
+// BrowseKeyMapWithProvider returns browse key bindings with the provider
+// toggle key enabled and its help text showing the current provider name.
+func BrowseKeyMapWithProvider(providerName string) browseKeys {
+	km := BrowseKeyMap()
+	km.Provider = key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", fmt.Sprintf("provider: %s", providerName)),
+	)
+	return km
 }
 
 // PipelineKeyMap returns the key bindings for pipeline mode.

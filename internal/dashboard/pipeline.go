@@ -29,6 +29,7 @@ type pipelineState struct {
 	aborting       bool
 	beadID         string    // Bead ID shown in header (optional).
 	beadTitle      string    // Bead title shown in header (optional).
+	provider       string    // Provider name shown in header badge (optional).
 	phaseStartedAt time.Time // Timestamp when the current running phase started.
 }
 
@@ -184,7 +185,11 @@ func (ps pipelineState) View(width, height int) string {
 
 	// Bead header: muted ID + title line above the phase list.
 	if ps.beadID != "" {
-		b.WriteString(pipeHeaderStyle.Render(ps.beadID + "  " + ps.beadTitle))
+		header := ps.beadID + "  " + ps.beadTitle
+		if ps.provider != "" {
+			header += "  [" + ps.provider + "]"
+		}
+		b.WriteString(pipeHeaderStyle.Render(header))
 		b.WriteByte('\n')
 	}
 

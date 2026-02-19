@@ -18,6 +18,7 @@ type confirmState struct {
 	beadTitle     string
 	children      []confirmChild
 	hasValidation bool
+	provider      string // Provider name frozen at confirm time.
 }
 
 // View renders the confirmation screen for the given dimensions.
@@ -41,6 +42,9 @@ func (cs confirmState) isCampaign() bool {
 func (cs confirmState) viewPipeline(b *strings.Builder) {
 	fmt.Fprintf(b, "Run pipeline for %s?\n", cs.beadID)
 	fmt.Fprintf(b, "\n  %s\n", cs.beadTitle)
+	if cs.provider != "" {
+		fmt.Fprintf(b, "\n  Provider: %s\n", cs.provider)
+	}
 	b.WriteString("\n  This will:")
 	b.WriteString("\n  • Create a worktree branch")
 	b.WriteString("\n  • Run pipeline phases")
@@ -59,6 +63,9 @@ func (cs confirmState) viewCampaign(b *strings.Builder) {
 		fmt.Fprintf(b, "Run campaign for %s? (%d %s)\n", cs.beadID, taskCount, taskWord)
 	}
 	fmt.Fprintf(b, "\n  %s\n", cs.beadTitle)
+	if cs.provider != "" {
+		fmt.Fprintf(b, "\n  Provider: %s\n", cs.provider)
+	}
 
 	if cs.hasValidation {
 		b.WriteString("\n  Step 1 — Run open tasks sequentially:")

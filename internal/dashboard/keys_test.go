@@ -203,6 +203,60 @@ func TestPipelineSummaryKeyMap_WithoutPostPipeline(t *testing.T) {
 	}
 }
 
+func TestBrowseKeys_ProviderDisabledByDefault(t *testing.T) {
+	// Given: the default browse key map (no providers configured)
+	km := BrowseKeyMap()
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: 'p' is NOT in the short help (disabled by default)
+	if containsKey(allKeys, "p") {
+		t.Error("BrowseKeyMap should not contain 'p' key by default")
+	}
+}
+
+func TestBrowseKeys_ProviderEnabledWithProvider(t *testing.T) {
+	// Given: a browse key map with provider enabled
+	km := BrowseKeyMapWithProvider("claude")
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: 'p' is present
+	if !containsKey(allKeys, "p") {
+		t.Errorf("BrowseKeyMapWithProvider should contain 'p' key, got %v", allKeys)
+	}
+
+	// And: the help text shows the provider name
+	h := km.Provider.Help()
+	if !containsText(h.Desc, "provider: claude") {
+		t.Errorf("Provider desc = %q, want 'provider: claude'", h.Desc)
+	}
+}
+
+func TestPipelineKeys_NoProvider(t *testing.T) {
+	// Given: the pipeline key map
+	km := PipelineKeyMap()
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: 'p' is not included (no provider toggle in pipeline mode)
+	if containsKey(allKeys, "p") {
+		t.Error("PipelineKeyMap should not contain 'p' key")
+	}
+}
+
+func TestCampaignKeys_NoProvider(t *testing.T) {
+	// Given: the campaign key map
+	km := CampaignKeyMap()
+	bindings := km.ShortHelp()
+	allKeys := collectKeys(bindings)
+
+	// Then: 'p' is not included (no provider toggle in campaign mode)
+	if containsKey(allKeys, "p") {
+		t.Error("CampaignKeyMap should not contain 'p' key")
+	}
+}
+
 func containsKey(keys []string, want string) bool {
 	for _, k := range keys {
 		if k == want {

@@ -207,3 +207,59 @@ func TestCollectOpenChildren_EmptyTree(t *testing.T) {
 		t.Errorf("children = %d, want 0", len(children))
 	}
 }
+
+func TestConfirm_ViewPipeline_ShowsProvider(t *testing.T) {
+	// Given: a confirm state with a provider set
+	cs := confirmState{
+		beadID:    "cap-001",
+		beadType:  "task",
+		beadTitle: "Validate email format",
+		provider:  "kiro",
+	}
+
+	// When: the view is rendered
+	view := cs.View(80, 40)
+
+	// Then: the provider name is displayed
+	if !strings.Contains(view, "Provider: kiro") {
+		t.Errorf("should show provider, got:\n%s", view)
+	}
+}
+
+func TestConfirm_ViewCampaign_ShowsProvider(t *testing.T) {
+	// Given: a campaign confirm state with a provider set
+	cs := confirmState{
+		beadID:    "demo-1",
+		beadType:  "feature",
+		beadTitle: "Contact Management Library",
+		provider:  "claude",
+		children: []confirmChild{
+			{ID: "demo-1.1.1", Title: "Validate email format"},
+		},
+	}
+
+	// When: the view is rendered
+	view := cs.View(80, 40)
+
+	// Then: the provider name is displayed
+	if !strings.Contains(view, "Provider: claude") {
+		t.Errorf("should show provider in campaign view, got:\n%s", view)
+	}
+}
+
+func TestConfirm_ViewPipeline_NoProvider(t *testing.T) {
+	// Given: a confirm state with no provider set
+	cs := confirmState{
+		beadID:    "cap-001",
+		beadType:  "task",
+		beadTitle: "Validate email format",
+	}
+
+	// When: the view is rendered
+	view := cs.View(80, 40)
+
+	// Then: no provider line is shown
+	if strings.Contains(view, "Provider:") {
+		t.Errorf("should not show provider when empty, got:\n%s", view)
+	}
+}
