@@ -80,7 +80,7 @@ Run from the capsule repo root (no demo project needed). The binary path assumes
 ```
 
 **Expected:** Exit code 2, error message:
-`error: run: unknown provider "fake" (available: claude)`.
+`error: run: unknown provider "fake" (available: claude, kiro)`.
 
 **Verify:** `echo $?` returns `2`.
 
@@ -301,7 +301,7 @@ CAPSULE_TIMEOUT=invalid $CAPSULE_BIN run demo-1.1.1
 $CAPSULE_BIN run demo-1.1.1 --provider=fake
 ```
 
-**Expected:** Exit code 2, error: `run: unknown provider "fake" (available: claude)`.
+**Expected:** Exit code 2, error: `run: unknown provider "fake" (available: claude, kiro)`.
 
 ### 7.5 Bead resolve warning
 

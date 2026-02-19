@@ -173,6 +173,12 @@ func TestSmoke_OrchestratorWiring(t *testing.T) {
 		if !strings.Contains(output, "unknown provider") && !strings.Contains(output, "nonexistent") {
 			t.Errorf("expected error about unknown provider, got: %q", output)
 		}
+		// And the available providers include both claude and kiro
+		for _, prov := range []string{"claude", "kiro"} {
+			if !strings.Contains(output, prov) {
+				t.Errorf("expected available providers to include %q, got: %q", prov, output)
+			}
+		}
 		// And exit code is 2 (setup error, not pipeline error)
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if exitErr.ExitCode() != 2 {

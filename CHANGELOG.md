@@ -58,7 +58,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Right pane shows phase-level summaries, files changed, and feedback for inspected tasks
   - Phase results carried from pipeline completion messages and stored per-task for later review
 - History view with archived pipeline results (cap-fj8.2)
-  - Toggle between ready and closed beads with `h` key
+  - Unified tree shows both ready and closed beads (closed items shown dim with check mark)
   - Archive reader loads pipeline results from `.capsule/logs/` for closed beads
   - Closed bead detail view shows archived phase reports and summaries
   - `Closed()` method on bead client for retrieving closed beads
@@ -76,3 +76,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Unified retry configuration via ResolveRetryStrategy (phase-level MaxRetries override pipeline defaults)
   - Configurable timeout backoff: BackoffFactor multiplies effective timeout per retry attempt
   - Provider escalation: switch to a more capable provider after N failed attempts via EscalateProvider/EscalateAfter
+- Multi-CLI support (cap-10s)
+  - Config-driven GenericProvider replaces Claude-specific provider with parameterized CLI invocation
+  - Built-in presets for Claude (`claude -p <prompt>`) and Kiro (`kiro-cli chat <prompt>`)
+  - Provider registry with `--provider` flag: `capsule run <bead-id> --provider=kiro`
+  - Provider-specific ANSI stripping, subcommand handling, and flag management

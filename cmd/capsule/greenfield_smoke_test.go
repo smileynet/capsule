@@ -212,6 +212,155 @@ func TestSmoke_GreenfieldNarrative(t *testing.T) {
 	})
 }
 
+// TestSmoke_KiroProvider exercises the --provider=kiro user journey end-to-end.
+// A mock kiro-cli on PATH accepts the kiro argument shape (subcommand + positional prompt)
+// and the pipeline completes successfully.
+func TestSmoke_KiroProvider(t *testing.T) {
+	for _, cmd := range []string{"node", "bd", "git"} {
+		if _, err := exec.LookPath(cmd); err != nil {
+			t.Skipf("skipping: %s not on PATH", cmd)
+		}
+	}
+
+	projectRoot := findProjectRoot(t)
+	binary := filepath.Join(projectRoot, "capsule")
+
+	// Build binary if not already present.
+	if _, err := os.Stat(binary); err != nil {
+		cmd := exec.Command("go", "build",
+			"-ldflags", "-X main.version=smoke-test -X main.commit=abc1234 -X main.date=2026-01-01",
+			"-o", binary, "./cmd/capsule")
+		cmd.Dir = projectRoot
+		out, buildErr := cmd.CombinedOutput()
+		if buildErr != nil {
+			t.Fatalf("go build failed: %v\n%s", buildErr, out)
+		}
+		t.Cleanup(func() { os.Remove(binary) })
+	}
+
+	t.Run("kiro provider completes pipeline", func(t *testing.T) {
+		projectDir := setupGreenfieldProject(t, projectRoot)
+		mockDir := createMockKiroCLI(t)
+
+		output, exitCode := runCapsuleBinary(t, binary, projectDir, mockDir, "demo-001.1.1", "--provider", "kiro")
+		t.Log("--- capsule output (kiro) ---\n" + output)
+
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0", exitCode)
+		}
+
+		// All 6 phases pass.
+		passedLines := countMatches(output, `\[\d/6\] \S+ passed`)
+		if passedLines != 6 {
+			t.Errorf("passed lines = %d, want 6", passedLines)
+		}
+
+		// Post-pipeline messages.
+		if !strings.Contains(output, "Merged capsule-demo-001.1.1") {
+			t.Error("missing merge confirmation message")
+		}
+		if !strings.Contains(output, "Closed demo-001.1.1") {
+			t.Error("missing bead close message")
+		}
+
+		// Implementation files exist on main after merge.
+		if _, err := os.Stat(filepath.Join(projectDir, "src", "todo.js")); err != nil {
+			t.Error("src/todo.js not found on main branch")
+		}
+		if _, err := os.Stat(filepath.Join(projectDir, "src", "todo.test.js")); err != nil {
+			t.Error("src/todo.test.js not found on main branch")
+		}
+
+		// Bead closed.
+		bdCmd := exec.Command("bd", "show", "demo-001.1.1")
+		bdCmd.Dir = projectDir
+		bdOut, _ := bdCmd.CombinedOutput()
+		if !strings.Contains(strings.ToLower(string(bdOut)), "closed") {
+			t.Errorf("bead not closed; bd show output:\n%s", bdOut)
+		}
+	})
+}
+
+// createMockKiroCLI writes a mock kiro-cli shell script that accepts the kiro
+// argument shape: kiro-cli chat --trust-all-tools --no-interactive --wrap never <prompt>
+func createMockKiroCLI(t *testing.T) string {
+	t.Helper()
+	mockDir := t.TempDir()
+	mockPath := filepath.Join(mockDir, "kiro-cli")
+
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+
+# Parse kiro-cli args: chat <flags> <prompt-as-last-positional>
+PROMPT=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        chat) shift ;;
+        --trust-all-tools) shift ;;
+        --no-interactive) shift ;;
+        --wrap) shift 2 ;;
+        *) PROMPT="$1"; shift ;;
+    esac
+done
+
+FIRST_LINE=$(printf '%s\n' "$PROMPT" | head -1)
+
+# Test-writer phase: create failing tests.
+if printf '%s\n' "$FIRST_LINE" | grep -qi 'test-writer'; then
+    mkdir -p src
+    cat > src/todo.test.js << 'TESTEOF'
+const assert = require('assert');
+const { TodoApp } = require('./todo.js');
+const app = new TodoApp();
+const todo = app.addTodo('Buy milk');
+assert.strictEqual(todo.text, 'Buy milk');
+assert.strictEqual(todo.completed, false);
+console.log('PASS');
+TESTEOF
+    git add src/todo.test.js
+    git diff --cached --quiet || git commit -q -m "Add tests"
+    printf '{"status":"PASS","feedback":"Tests created","files_changed":["src/todo.test.js"],"summary":"tests"}\n'
+    exit 0
+fi
+
+# Execute phase: create implementation.
+if printf '%s\n' "$FIRST_LINE" | grep -qi '^# Execute Phase'; then
+    mkdir -p src
+    cat > src/todo.js << 'IMPLEOF'
+class TodoApp {
+  constructor() { this.todos = []; }
+  addTodo(text) {
+    const todo = { id: '1', text, completed: false, createdAt: new Date().toISOString() };
+    this.todos.push(todo);
+    return todo;
+  }
+}
+module.exports = { TodoApp };
+IMPLEOF
+    git add src/todo.js
+    git diff --cached --quiet || git commit -q -m "Implement TodoApp"
+    printf '{"status":"PASS","feedback":"Done","files_changed":["src/todo.js"],"summary":"impl"}\n'
+    exit 0
+fi
+
+# Merge phase.
+if printf '%s\n' "$FIRST_LINE" | grep -qi 'merge'; then
+    git add src/ 2>/dev/null || true
+    git diff --cached --quiet || git commit -q -m "merge"
+    HASH=$(git rev-parse --short HEAD)
+    printf '{"status":"PASS","feedback":"Merged","files_changed":[],"summary":"merge","commit_hash":"%s"}\n' "$HASH"
+    exit 0
+fi
+
+# All other phases: just pass.
+printf '{"status":"PASS","feedback":"OK","files_changed":[],"summary":"passed"}\n'
+`
+	if err := os.WriteFile(mockPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kiro-cli: %v", err)
+	}
+	return mockDir
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 // setupGreenfieldProject creates a fresh demo-greenfield project via
@@ -390,9 +539,11 @@ printf '{"status":"PASS","feedback":"Approved","files_changed":[],"summary":"pha
 }
 
 // runCapsuleBinary runs the capsule binary and returns its output and exit code.
-func runCapsuleBinary(t *testing.T, binary, projectDir, mockDir, beadID string) (string, int) {
+// Extra args are appended after the default args (run <beadID> --timeout 60).
+func runCapsuleBinary(t *testing.T, binary, projectDir, mockDir, beadID string, extraArgs ...string) (string, int) {
 	t.Helper()
-	cmd := exec.Command(binary, "run", beadID, "--timeout", "60")
+	args := append([]string{"run", beadID, "--timeout", "60"}, extraArgs...)
+	cmd := exec.Command(binary, args...)
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(), "PATH="+mockDir+":"+os.Getenv("PATH"))
 

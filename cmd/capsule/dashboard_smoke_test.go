@@ -89,23 +89,20 @@ func TestSmoke_DashboardPTY(t *testing.T) {
 		waitForExit(t, cmd, waitFunc, 5*time.Second)
 	})
 
-	t.Run("history toggle with h key", func(t *testing.T) {
+	t.Run("unified tree shows closed beads", func(t *testing.T) {
 		ptmx, cmd, waitFunc := startDashboard(t, binary, projectDir)
 
-		// Wait for initial render with bead list.
-		readPTYUntil(t, ptmx, "smoke-test-task", 8*time.Second)
-
-		// Press 'h' to toggle history (show closed beads).
-		writePTY(t, ptmx, "h")
-
-		// After toggling, the closed bead should appear.
-		output := readPTYUntil(t, ptmx, "closed-smoke-task", 5*time.Second)
+		// The unified tree shows both open and closed beads on initial load.
+		// Wait for the closed bead to appear alongside the open one.
+		output := readPTYUntil(t, ptmx, "closed-task", 8*time.Second)
 		clean := stripANSI(output)
 
-		if !strings.Contains(clean, "closed-smoke-task") {
+		if !strings.Contains(clean, "closed-task") {
 			// Verify at minimum the process didn't crash.
 			if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-				t.Errorf("dashboard crashed after history toggle, output:\n%s", clean)
+				t.Errorf("dashboard crashed, output:\n%s", clean)
+			} else {
+				t.Errorf("expected 'closed-task' in unified tree, got:\n%s", clean)
 			}
 		}
 
@@ -175,7 +172,7 @@ func setupDashboardProject(t *testing.T) string {
 	run(t, dir, "bd", "create", "--title=smoke-test-task", "--type=task", "--priority=2")
 
 	// Create and close a bead so history toggle has data.
-	out := runOutput(t, dir, "bd", "create", "--title=closed-smoke-task", "--type=task", "--priority=3")
+	out := runOutput(t, dir, "bd", "create", "--title=closed-task", "--type=task", "--priority=3")
 
 	// Extract the bead ID from the create output and close it.
 	id := extractBeadID(out)
@@ -195,29 +192,45 @@ func setupDashboardProject(t *testing.T) string {
 }
 
 // readPTYUntil reads from the PTY until the target string appears or timeout.
+// Uses goroutine-based reads because SetReadDeadline is unreliable on PTY fds.
 func readPTYUntil(t *testing.T, ptmx *os.File, target string, timeout time.Duration) string {
 	t.Helper()
 	var buf bytes.Buffer
 	deadline := time.After(timeout)
-	tmp := make([]byte, 4096)
 
-	for {
-		ptmx.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-		n, err := ptmx.Read(tmp)
-		if n > 0 {
-			buf.Write(tmp[:n])
-			if strings.Contains(stripANSI(buf.String()), target) {
-				return buf.String()
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	// Buffer of 1 so the goroutine doesn't block when we return on timeout.
+	ch := make(chan readResult, 1)
+
+	go func() {
+		for {
+			tmp := make([]byte, 4096)
+			n, err := ptmx.Read(tmp)
+			ch <- readResult{data: tmp[:n], err: err}
+			if err != nil {
+				return
 			}
 		}
+	}()
+
+	for {
 		select {
 		case <-deadline:
 			t.Logf("timeout waiting for %q, got so far:\n%s", target, stripANSI(buf.String()))
 			return buf.String()
-		default:
-		}
-		if err != nil && !os.IsTimeout(err) && err != io.EOF {
-			return buf.String()
+		case r := <-ch:
+			if len(r.data) > 0 {
+				buf.Write(r.data)
+				if strings.Contains(stripANSI(buf.String()), target) {
+					return buf.String()
+				}
+			}
+			if r.err != nil && !os.IsTimeout(r.err) && r.err != io.EOF {
+				return buf.String()
+			}
 		}
 	}
 }
