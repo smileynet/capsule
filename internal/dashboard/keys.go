@@ -221,8 +221,7 @@ func ConfirmKeyMap() confirmKeys {
 // based on the selected bead type and its child count.
 func BrowseKeyMapForBead(beadType string, childCount int) browseKeys {
 	km := BrowseKeyMap()
-	switch {
-	case (beadType == "feature" || beadType == "epic") && childCount > 0:
+	if (beadType == "feature" || beadType == "epic") && childCount > 0 {
 		taskWord := "tasks"
 		if childCount == 1 {
 			taskWord = "task"
