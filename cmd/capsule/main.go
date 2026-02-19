@@ -79,9 +79,7 @@ func (c *CampaignCmd) Run() error {
 
 	// Create provider.
 	reg := provider.NewRegistry()
-	reg.Register("claude", func() (provider.Executor, error) {
-		return provider.NewClaudeProvider(provider.WithTimeout(cfg.Runtime.Timeout)), nil
-	})
+	provider.RegisterBuiltins(reg, cfg.Runtime.Timeout)
 	p, err := reg.NewProvider(cfg.Runtime.Provider)
 	if err != nil {
 		return fmt.Errorf("campaign: %w", err)
@@ -184,9 +182,7 @@ func (r *RunCmd) Run() error {
 
 	// Create provider via registry.
 	reg := provider.NewRegistry()
-	reg.Register("claude", func() (provider.Executor, error) {
-		return provider.NewClaudeProvider(provider.WithTimeout(cfg.Runtime.Timeout)), nil
-	})
+	provider.RegisterBuiltins(reg, cfg.Runtime.Timeout)
 
 	p, err := reg.NewProvider(cfg.Runtime.Provider)
 	if err != nil {
@@ -459,9 +455,7 @@ func (d *DashboardCmd) Run() error {
 
 	// Create provider via registry.
 	reg := provider.NewRegistry()
-	reg.Register("claude", func() (provider.Executor, error) {
-		return provider.NewClaudeProvider(provider.WithTimeout(cfg.Runtime.Timeout)), nil
-	})
+	provider.RegisterBuiltins(reg, cfg.Runtime.Timeout)
 	p, err := reg.NewProvider(cfg.Runtime.Provider)
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
