@@ -150,6 +150,30 @@ func (c *Client) Closed(limit int) ([]Summary, error) {
 	return toSummaries(issues), nil
 }
 
+// ListChildren returns open children of the given parent bead, regardless of
+// blocker status. This is used by campaigns where children blocked by their
+// parent are inherently "ready" within the campaign context. Closed children
+// are excluded so re-running a campaign does not re-queue completed work.
+func (c *Client) ListChildren(parentID string) ([]Summary, error) {
+	if err := c.checkBD(); err != nil {
+		return nil, err
+	}
+
+	cmd := exec.Command("bd", "list", "--parent", parentID, "--status=open", "--json")
+	cmd.Dir = c.Dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("bead: bd list --parent %s: %w", parentID, err)
+	}
+
+	var issues []issue
+	if err := json.NewDecoder(bytes.NewReader(out)).Decode(&issues); err != nil {
+		return nil, fmt.Errorf("bead: parsing list --parent output: %w", err)
+	}
+
+	return toSummaries(issues), nil
+}
+
 // Ready returns the list of beads with no blockers.
 func (c *Client) Ready() ([]Summary, error) {
 	if err := c.checkBD(); err != nil {

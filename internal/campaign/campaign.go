@@ -15,11 +15,12 @@ import (
 
 // Sentinel errors for caller-checkable conditions.
 var (
-	ErrCircuitBroken  = errors.New("campaign: circuit breaker tripped")
-	ErrNoTasks        = errors.New("campaign: no ready tasks found")
-	ErrCampaignPaused = errors.New("campaign: paused")
-	ErrMaxDepth       = errors.New("campaign: max recursion depth reached")
-	ErrCycle          = errors.New("campaign: cycle detected")
+	ErrCircuitBroken   = errors.New("campaign: circuit breaker tripped")
+	ErrNoTasks         = errors.New("campaign: no ready tasks found")
+	ErrCampaignPaused  = errors.New("campaign: paused")
+	ErrCampaignAborted = errors.New("campaign: aborted")
+	ErrMaxDepth        = errors.New("campaign: max recursion depth reached")
+	ErrCycle           = errors.New("campaign: cycle detected")
 )
 
 // maxCampaignDepth caps recursive campaign nesting (epic → feature → task).
@@ -211,6 +212,13 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 		}
 
 		if err != nil {
+			if ctx.Err() != nil {
+				task.Status = TaskPending
+				state.Status = CampaignPaused
+				_ = r.store.Save(state)
+				return ErrCampaignAborted
+			}
+
 			if errors.Is(err, orchestrator.ErrPipelinePaused) {
 				task.Status = TaskPending
 				state.Status = CampaignPaused

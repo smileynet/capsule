@@ -54,6 +54,7 @@ func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
 	m.aborting = false
+	m.backgroundMode = 0
 	m.dispatchedBeadID = ""
 	m.cache.Invalidate()
 	m.pendingResolveID = ""
@@ -69,6 +70,7 @@ func (m Model) returnToBrowseAfterAbort() (Model, tea.Cmd) {
 func (m Model) returnToBrowseFromCampaign() (Model, tea.Cmd) {
 	m.mode = ModeBrowse
 	m.focus = PaneLeft
+	m.backgroundMode = 0
 	m.cache.Invalidate()
 	m.pendingResolveID = ""
 	m.lastDispatchedID = m.dispatchedBeadID

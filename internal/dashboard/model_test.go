@@ -2781,3 +2781,262 @@ func TestModel_ConfirmHasValidation_PassedThrough(t *testing.T) {
 		t.Error("confirm.hasValidation should be true when WithCampaignValidation(true)")
 	}
 }
+
+// --- Background navigation tests ---
+
+func TestModel_EscInCampaignGoesToBrowse(t *testing.T) {
+	// Given: a model in campaign mode with active pipeline
+	m := newCampaignModel(90, 40)
+	cancel := func() {}
+	m.cancelPipeline = cancel
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+	m.dispatchedBeadID = "cap-feat"
+
+	// When: ESC is pressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = updated.(Model)
+
+	// Then: mode is browse, backgroundMode is campaign
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+	if m.backgroundMode != ModeCampaign {
+		t.Errorf("backgroundMode = %d, want ModeCampaign", m.backgroundMode)
+	}
+	// And: cancelPipeline and eventCh are preserved
+	if m.cancelPipeline == nil {
+		t.Error("cancelPipeline should be preserved after ESC")
+	}
+	if m.eventCh == nil {
+		t.Error("eventCh should be preserved after ESC")
+	}
+	// And: status message indicates background operation
+	if m.statusMsg == "" {
+		t.Error("statusMsg should indicate background operation")
+	}
+}
+
+func TestModel_EscInPipelineGoesToBrowse(t *testing.T) {
+	// Given: a model in pipeline mode
+	m := newPipelineModel(90, 40, []string{"plan", "code"})
+	cancel := func() {}
+	m.cancelPipeline = cancel
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+	m.dispatchedBeadID = "cap-001"
+
+	// When: ESC is pressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = updated.(Model)
+
+	// Then: mode is browse, backgroundMode is pipeline
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+	if m.backgroundMode != ModePipeline {
+		t.Errorf("backgroundMode = %d, want ModePipeline", m.backgroundMode)
+	}
+	if m.cancelPipeline == nil {
+		t.Error("cancelPipeline should be preserved after ESC")
+	}
+}
+
+func TestModel_BackgroundMessagesRouted(t *testing.T) {
+	// Given: a model in browse mode with campaign running in background
+	m := newCampaignModel(90, 40)
+	m.backgroundMode = ModeCampaign
+	m.mode = ModeBrowse
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+	m.cancelPipeline = func() {}
+
+	// When: a CampaignTaskDoneMsg arrives while browsing
+	updated, _ := m.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  true,
+		Duration: time.Second,
+	})
+	m = updated.(Model)
+
+	// Then: campaign state is updated (message was routed)
+	if m.campaign.completed != 1 {
+		t.Errorf("campaign.completed = %d, want 1", m.campaign.completed)
+	}
+	// And: mode stays in browse
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+}
+
+func TestModel_BackgroundPhaseUpdateRoutesToCampaign(t *testing.T) {
+	// Given: a model in browse mode with campaign running in background.
+	// Set up the campaign's inline pipeline with a phase so PhaseUpdateMsg can match.
+	m := newCampaignModel(90, 40)
+	m.campaign.pipeline = newPipelineState([]string{"plan", "code"})
+	m.backgroundMode = ModeCampaign
+	m.mode = ModeBrowse
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+	m.cancelPipeline = func() {}
+
+	// When: a PhaseUpdateMsg arrives while browsing
+	updated, _ := m.Update(PhaseUpdateMsg{
+		Phase:  "plan",
+		Status: PhaseRunning,
+	})
+	m = updated.(Model)
+
+	// Then: campaign pipeline is running (message was routed to campaign, not standalone pipeline)
+	if !m.campaign.pipeline.running {
+		t.Error("campaign.pipeline.running should be true after PhaseUpdateMsg routed to campaign")
+	}
+	// And: the standalone pipeline state is unaffected
+	if m.pipeline.running {
+		t.Error("standalone pipeline.running should be false (message should NOT go to standalone pipeline)")
+	}
+	// And: mode stays in browse
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+}
+
+func TestModel_BackgroundChannelClosedInBrowse(t *testing.T) {
+	// Given: a model in browse mode with campaign running in background
+	lister := &stubLister{beads: sampleBeads()}
+	m := NewModel(WithBeadLister(lister))
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	m.mode = ModeBrowse
+	m.backgroundMode = ModeCampaign
+	m.cancelPipeline = func() {}
+	m.campaign = newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	m.campaignDone = &CampaignDoneMsg{
+		ParentID:   "cap-feat",
+		TotalTasks: 2,
+		Passed:     2,
+	}
+
+	// When: channelClosedMsg arrives
+	updated, _ = m.Update(channelClosedMsg{})
+	m = updated.(Model)
+
+	// Then: backgroundMode is cleared
+	if m.backgroundMode != 0 {
+		t.Errorf("backgroundMode = %d, want 0 after channel close", m.backgroundMode)
+	}
+	// And: status message shows completion
+	if m.statusMsg == "" {
+		t.Error("statusMsg should show completion result")
+	}
+	if !containsText(m.statusMsg, "Campaign complete") {
+		t.Errorf("statusMsg = %q, want to contain 'Campaign complete'", m.statusMsg)
+	}
+}
+
+func TestModel_ReEntryToBackgroundCampaign(t *testing.T) {
+	// Given: a model in browse mode with campaign running in background
+	m := newCampaignModel(90, 40)
+	m.backgroundMode = ModeCampaign
+	m.mode = ModeBrowse
+	m.dispatchedBeadID = "cap-feat"
+	m.cancelPipeline = func() {}
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a ConfirmRequestMsg for the same bead arrives
+	updated, _ := m.Update(ConfirmRequestMsg{
+		BeadID:    "cap-feat",
+		BeadType:  "feature",
+		BeadTitle: "Feature Title",
+	})
+	m = updated.(Model)
+
+	// Then: mode returns to campaign (re-entry)
+	if m.mode != ModeCampaign {
+		t.Errorf("mode = %d, want ModeCampaign (re-entry)", m.mode)
+	}
+	// And: backgroundMode is cleared
+	if m.backgroundMode != 0 {
+		t.Errorf("backgroundMode = %d, want 0 after re-entry", m.backgroundMode)
+	}
+	// And: status is cleared
+	if m.statusMsg != "" {
+		t.Errorf("statusMsg = %q, want empty after re-entry", m.statusMsg)
+	}
+}
+
+func TestModel_NewDispatchAbortsBackground(t *testing.T) {
+	// Given: a model in browse mode with a background pipeline
+	cancelled := false
+	m := NewModel(
+		WithPipelineRunner(&mockRunner{output: PipelineOutput{Success: true}}),
+		WithPhaseNames([]string{"plan"}),
+	)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = updated.(Model)
+
+	m.cancelPipeline = func() { cancelled = true }
+	m.backgroundMode = ModePipeline
+	m.eventCh = make(chan tea.Msg, 1)
+
+	// When: a new pipeline dispatch occurs
+	updated, _ = m.Update(DispatchMsg{BeadID: "cap-new", BeadType: "task"})
+	m = updated.(Model)
+
+	// Then: the old cancel was called
+	if !cancelled {
+		t.Error("old cancelPipeline should be called before new dispatch")
+	}
+	// And: backgroundMode is cleared
+	if m.backgroundMode != 0 {
+		t.Errorf("backgroundMode = %d, want 0 after new dispatch", m.backgroundMode)
+	}
+}
+
+func TestModel_QStillAbortsInCampaign(t *testing.T) {
+	// Given: a model in campaign mode (foreground)
+	m := newCampaignModel(90, 40)
+	cancelled := false
+	m.cancelPipeline = func() { cancelled = true }
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: q is pressed
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+
+	// Then: pipeline is cancelled (abort behavior unchanged)
+	if !cancelled {
+		t.Error("q should cancel pipeline in foreground campaign mode")
+	}
+	if !m.aborting {
+		t.Error("aborting flag should be set")
+	}
+}
+
+func TestModel_QAbortsBackgroundInBrowse(t *testing.T) {
+	// Given: a model in browse mode with a background campaign
+	cancelled := false
+	m := newSizedModel(90, 40)
+	m.backgroundMode = ModeCampaign
+	m.cancelPipeline = func() { cancelled = true }
+	m.eventCh = make(chan tea.Msg, 1)
+
+	// When: q is pressed
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	// Then: the background operation is cancelled
+	if !cancelled {
+		t.Error("q should cancel background operation in browse mode")
+	}
+	// And: it does NOT quit the app (cmd should not be tea.Quit)
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Error("q with background should not quit, should abort background")
+		}
+	}
+}

@@ -689,34 +689,20 @@ func newCampaignBeadClient(dir string) *campaignBeadClient {
 }
 
 func (c *campaignBeadClient) ReadyChildren(parentID string) ([]campaign.BeadInfo, error) {
-	summaries, err := c.client.Ready()
+	summaries, err := c.client.ListChildren(parentID)
 	if err != nil {
 		return nil, err
 	}
-	// Filter to children of the parent.
-	var children []campaign.BeadInfo
-	for _, s := range summaries {
-		if isChildOf(s.ID, parentID) {
-			children = append(children, campaign.BeadInfo{
-				ID:       s.ID,
-				Title:    s.Title,
-				Priority: s.Priority,
-				Type:     s.Type,
-			})
+	children := make([]campaign.BeadInfo, len(summaries))
+	for i, s := range summaries {
+		children[i] = campaign.BeadInfo{
+			ID:       s.ID,
+			Title:    s.Title,
+			Priority: s.Priority,
+			Type:     s.Type,
 		}
 	}
 	return children, nil
-}
-
-// isChildOf checks if childID is a direct child of parentID (e.g. "cap-123.1" is child of "cap-123").
-// Grandchildren like "cap-123.1.1" are NOT children of "cap-123".
-func isChildOf(childID, parentID string) bool {
-	prefix := parentID + "."
-	if !strings.HasPrefix(childID, prefix) {
-		return false
-	}
-	suffix := childID[len(prefix):]
-	return len(suffix) > 0 && !strings.Contains(suffix, ".")
 }
 
 func (c *campaignBeadClient) Show(id string) (campaign.BeadInfo, error) {
@@ -828,7 +814,7 @@ func (a *dashboardCampaignAdapter) RunCampaign(
 	pipelineFn func(context.Context, dashboard.PipelineInput, func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error),
 ) error {
 	cb := &dashboardCampaignCallback{statusFn: statusFn}
-	pr := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn}
+	pr := &dashboardCampaignPipelineRunner{pipelineFn: pipelineFn, statusFn: statusFn}
 	runner := campaign.NewRunner(pr, a.beadClient, a.stateStore, a.campaignCfg, cb)
 	return runner.Run(ctx, parentID)
 }
@@ -838,6 +824,7 @@ func (a *dashboardCampaignAdapter) RunCampaign(
 // campaign's orchestrator-typed interface.
 type dashboardCampaignPipelineRunner struct {
 	pipelineFn func(context.Context, dashboard.PipelineInput, func(dashboard.PhaseUpdateMsg)) (dashboard.PipelineOutput, error)
+	statusFn   func(tea.Msg) // Forward phase updates to campaign status channel.
 }
 
 func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input orchestrator.PipelineInput) (orchestrator.PipelineOutput, error) {
@@ -851,7 +838,11 @@ func (r *dashboardCampaignPipelineRunner) RunPipeline(ctx context.Context, input
 		SiblingContext: input.SiblingContext,
 	}
 
-	output, err := r.pipelineFn(ctx, dashInput, func(dashboard.PhaseUpdateMsg) {})
+	output, err := r.pipelineFn(ctx, dashInput, func(msg dashboard.PhaseUpdateMsg) {
+		if r.statusFn != nil {
+			r.statusFn(msg)
+		}
+	})
 	if err != nil {
 		return orchestrator.PipelineOutput{}, err
 	}
@@ -1053,7 +1044,7 @@ func exitCode(err error) int {
 	if err == nil {
 		return exitSuccess
 	}
-	if errors.Is(err, orchestrator.ErrPipelinePaused) || errors.Is(err, campaign.ErrCampaignPaused) {
+	if errors.Is(err, orchestrator.ErrPipelinePaused) || errors.Is(err, campaign.ErrCampaignPaused) || errors.Is(err, campaign.ErrCampaignAborted) {
 		return exitPaused
 	}
 	var pe *orchestrator.PipelineError

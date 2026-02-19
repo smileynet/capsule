@@ -34,19 +34,20 @@ type pipelineKeys struct {
 	Up   key.Binding
 	Down key.Binding
 	Tab  key.Binding
+	Esc  key.Binding
 	Quit key.Binding
 }
 
 // ShortHelp returns the pipeline mode bindings for the help bar.
 func (k pipelineKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Tab, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Tab, k.Esc, k.Quit}
 }
 
 // FullHelp returns the pipeline mode bindings grouped for expanded help.
 func (k pipelineKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},
-		{k.Tab, k.Quit},
+		{k.Tab, k.Esc, k.Quit},
 	}
 }
 
@@ -110,6 +111,10 @@ func PipelineKeyMap() pipelineKeys {
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "switch pane"),
 		),
+		Esc: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "browse"),
+		),
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
 			key.WithHelp("q", "abort"),
@@ -122,19 +127,20 @@ type campaignKeys struct {
 	Up   key.Binding
 	Down key.Binding
 	Tab  key.Binding
+	Esc  key.Binding
 	Quit key.Binding
 }
 
 // ShortHelp returns the campaign mode bindings for the help bar.
 func (k campaignKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Tab, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Tab, k.Esc, k.Quit}
 }
 
 // FullHelp returns the campaign mode bindings grouped for expanded help.
 func (k campaignKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},
-		{k.Tab, k.Quit},
+		{k.Tab, k.Esc, k.Quit},
 	}
 }
 
@@ -152,6 +158,10 @@ func CampaignKeyMap() campaignKeys {
 		Tab: key.NewBinding(
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "switch pane"),
+		),
+		Esc: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "browse"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
@@ -215,6 +225,22 @@ func ConfirmKeyMap() confirmKeys {
 			key.WithHelp("esc", "cancel"),
 		),
 	}
+}
+
+// BrowseKeyMapWithBackground returns browse key bindings when a background
+// operation is running. q aborts the background op, Enter on the running
+// bead re-enters the view.
+func BrowseKeyMapWithBackground(beadID string) browseKeys {
+	km := BrowseKeyMap()
+	km.Enter = key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", fmt.Sprintf("re-enter %s", beadID)),
+	)
+	km.Quit = key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q", "abort background"),
+	)
+	return km
 }
 
 // BrowseKeyMapForBead returns browse key bindings with a dynamic Enter label

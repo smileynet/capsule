@@ -202,6 +202,42 @@ func TestClosed_NoBD(t *testing.T) {
 	}
 }
 
+func TestListChildren_NoBD(t *testing.T) {
+	c := &Client{Dir: t.TempDir()}
+
+	// If bd is actually on PATH, skip — this test is for missing-bd fallback.
+	if err := c.checkBD(); err == nil {
+		t.Skip("bd is on PATH; cannot test missing-bd fallback")
+	}
+
+	_, err := c.ListChildren("some-parent")
+	if err == nil {
+		t.Fatal("expected ErrCLINotFound, got nil")
+	}
+	if !errors.Is(err, ErrCLINotFound) {
+		t.Errorf("error = %v, want ErrCLINotFound", err)
+	}
+}
+
+func TestListChildren_BDAvailable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping bd CLI test in short mode")
+	}
+
+	c := &Client{Dir: "."}
+
+	// bd is on PATH; listing children should succeed (even if empty).
+	summaries, err := c.ListChildren("nonexistent-parent")
+	if err != nil {
+		t.Fatalf("ListChildren() unexpected error: %v", err)
+	}
+
+	// A nonexistent parent should return an empty list, not an error.
+	if len(summaries) != 0 {
+		t.Errorf("ListChildren(nonexistent-parent) returned %d results, want 0", len(summaries))
+	}
+}
+
 func TestCheckBD(t *testing.T) {
 	c := &Client{}
 

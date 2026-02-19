@@ -829,6 +829,93 @@ func TestRun_CycleDetection(t *testing.T) {
 	}
 }
 
+func TestRun_ContextCancelledResetsTask(t *testing.T) {
+	// Given: a pipeline that blocks until context is cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput(), {}},
+		errs:    []error{nil, context.Canceled},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+			{ID: "cap-3", Title: "Task 3"},
+		},
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+	config := Config{FailureMode: "abort", CircuitBreaker: 3}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+
+	// Cancel the context before task 2 returns.
+	cancel()
+
+	// When: Run is called (task 1 passes, task 2 returns context.Canceled with ctx already cancelled)
+	err := r.Run(ctx, "cap-feature")
+
+	// Then: ErrCampaignAborted is returned
+	if !errors.Is(err, ErrCampaignAborted) {
+		t.Fatalf("expected ErrCampaignAborted, got %v", err)
+	}
+	// And: state was saved as paused
+	if len(store.saved) == 0 {
+		t.Fatal("expected state to be saved")
+	}
+	last := store.saved[len(store.saved)-1]
+	if last.Status != CampaignPaused {
+		t.Errorf("saved state = %q, want %q", last.Status, CampaignPaused)
+	}
+	// And: the aborted task is reset to pending (not failed)
+	for _, task := range last.Tasks {
+		if task.BeadID == "cap-2" {
+			if task.Status != TaskPending {
+				t.Errorf("aborted task status = %q, want %q", task.Status, TaskPending)
+			}
+		}
+	}
+	// And: no tasks were reported as failed
+	if len(cb.tasksFailed) != 0 {
+		t.Errorf("tasks failed = %d, want 0 (abort is not a failure)", len(cb.tasksFailed))
+	}
+}
+
+func TestRun_ContextCancelledDoesNotContinue(t *testing.T) {
+	// Given: failure_mode=continue but context is cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{{}, {}, {}},
+		errs:    []error{context.Canceled, context.Canceled, context.Canceled},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+			{ID: "cap-3", Title: "Task 3"},
+		},
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+	config := Config{FailureMode: "continue", CircuitBreaker: 3}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+
+	// When: Run is called with cancelled context
+	err := r.Run(ctx, "cap-feature")
+
+	// Then: ErrCampaignAborted is returned (not continuing through all tasks)
+	if !errors.Is(err, ErrCampaignAborted) {
+		t.Fatalf("expected ErrCampaignAborted, got %v", err)
+	}
+	// And: only 1 task was attempted (the loop must NOT continue)
+	if len(cb.tasksStarted) != 1 {
+		t.Errorf("tasks started = %d, want 1 (should stop immediately on cancel)", len(cb.tasksStarted))
+	}
+}
+
 func TestRun_RecursiveFeatureAbortOnFailure(t *testing.T) {
 	// Given: an epic with a feature child whose task fails, with abort mode.
 	pipeline := &mockPipeline{

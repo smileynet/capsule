@@ -63,6 +63,8 @@ type Model struct {
 	lastDispatchedID string // Preserved across returnToBrowse so cursor snaps on next BeadListMsg.
 	aborting         bool
 
+	backgroundMode Mode // Non-zero when pipeline/campaign is running while user is in browse.
+
 	campaign       campaignState
 	campaignRunner CampaignRunner
 	campaignDone   *CampaignDoneMsg // set on CampaignDoneMsg or synthesized on channel close
@@ -391,7 +393,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenForEvents(m.eventCh)
 
 	case PhaseUpdateMsg:
-		if m.mode == ModeCampaign {
+		if m.mode == ModeCampaign || m.backgroundMode == ModeCampaign {
 			var cmd tea.Cmd
 			m.campaign, cmd = m.campaign.Update(msg)
 			return m, tea.Batch(cmd, listenForEvents(m.eventCh))
@@ -425,6 +427,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case channelClosedMsg:
 		m.cancelPipeline = nil
 		m.eventCh = nil
+		if m.mode == ModeBrowse && m.backgroundMode != 0 {
+			return m.handleBackgroundComplete()
+		}
 		if m.aborting {
 			return m.returnToBrowseAfterAbort()
 		}
@@ -445,10 +450,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case elapsedTickMsg:
 		var cmd tea.Cmd
-		switch m.mode {
-		case ModePipeline:
+		switch {
+		case m.mode == ModePipeline || m.backgroundMode == ModePipeline:
 			m.pipeline, cmd = m.pipeline.Update(msg)
-		case ModeCampaign:
+		case m.mode == ModeCampaign || m.backgroundMode == ModeCampaign:
 			m.campaign, cmd = m.campaign.Update(msg)
 		default:
 			return m, nil
@@ -457,21 +462,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
+		var cmds []tea.Cmd
+		// Route spinner ticks to the foreground mode.
 		switch m.mode {
 		case ModePipeline:
 			m.pipeline, cmd = m.pipeline.Update(msg)
+			cmds = append(cmds, cmd)
 		case ModeCampaign:
 			m.campaign, cmd = m.campaign.Update(msg)
+			cmds = append(cmds, cmd)
 		case ModeBrowse:
 			if m.browse.loading || m.resolvingID != "" {
 				m.browseSpinner, cmd = m.browseSpinner.Update(msg)
-			} else {
-				return m, nil
+				cmds = append(cmds, cmd)
 			}
 		default:
 			return m, nil
 		}
-		return m, cmd
+		// Also route to background mode to keep spinners alive for re-entry.
+		switch m.backgroundMode {
+		case ModePipeline:
+			m.pipeline, cmd = m.pipeline.Update(msg)
+			cmds = append(cmds, cmd)
+		case ModeCampaign:
+			m.campaign, cmd = m.campaign.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -510,8 +530,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Global keys.
 	switch msg.String() {
+	case "esc":
+		if m.mode == ModePipeline || m.mode == ModeCampaign {
+			return m.sendToBackground()
+		}
 	case "q", "ctrl+c":
 		switch {
+		case m.mode == ModeBrowse && m.backgroundMode != 0:
+			// Abort the background operation, don't quit the app.
+			if m.cancelPipeline != nil {
+				m.aborting = true
+				m.cancelPipeline()
+			}
+			return m, nil
 		case m.mode == ModeBrowse:
 			return m, tea.Quit
 		case (m.mode == ModePipeline || m.mode == ModeCampaign) && m.aborting:
@@ -580,7 +611,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleConfirmRequest builds a confirmState and transitions to ModeConfirm.
+// If the selected bead is already running in the background, re-enter that view.
 func (m Model) handleConfirmRequest(msg ConfirmRequestMsg) (tea.Model, tea.Cmd) {
+	if m.backgroundMode != 0 && msg.BeadID == m.dispatchedBeadID {
+		m.mode = m.backgroundMode
+		m.backgroundMode = 0
+		m.statusMsg = ""
+		return m, nil
+	}
 	cs := confirmState{
 		beadID:        msg.BeadID,
 		beadType:      msg.BeadType,
@@ -609,6 +647,10 @@ func (m Model) handlePipelineDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		return m, nil
 	}
+	if m.cancelPipeline != nil {
+		m.cancelPipeline()
+	}
+	m.backgroundMode = 0
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelPipeline = cancel
 	ch := make(chan tea.Msg, 16)
@@ -629,6 +671,10 @@ func (m Model) handlePipelineDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
 
 // handleCampaignDispatch transitions to campaign mode and starts the campaign goroutine.
 func (m Model) handleCampaignDispatch(msg DispatchMsg) (tea.Model, tea.Cmd) {
+	if m.cancelPipeline != nil {
+		m.cancelPipeline()
+	}
+	m.backgroundMode = 0
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelPipeline = cancel
 	ch := make(chan tea.Msg, 16)
@@ -677,6 +723,55 @@ func (m Model) maybeResolve() (Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleBackgroundComplete cleans up after a backgrounded operation completes.
+// Called when channelClosedMsg arrives while in browse mode with a background op.
+func (m Model) handleBackgroundComplete() (Model, tea.Cmd) {
+	bgMode := m.backgroundMode
+	m.backgroundMode = 0
+	m.aborting = false
+	m.dispatchedBeadID = ""
+
+	switch {
+	case bgMode == ModeCampaign && m.campaignDone != nil:
+		m.statusMsg = fmt.Sprintf("%s Campaign complete: %d/%d passed",
+			SymbolCheck, m.campaignDone.Passed, m.campaignDone.TotalTasks)
+	case bgMode == ModeCampaign && m.campaignErr != nil:
+		m.statusMsg = fmt.Sprintf("%s Campaign error: %s", SymbolCross, m.campaignErr)
+	case bgMode == ModeCampaign:
+		m.statusMsg = fmt.Sprintf("%s Background operation complete", SymbolCheck)
+	case m.pipelineErr != nil:
+		m.statusMsg = fmt.Sprintf("%s Pipeline failed: %s", SymbolCross, m.pipelineErr)
+	default:
+		m.statusMsg = fmt.Sprintf("%s Pipeline complete", SymbolCheck)
+	}
+
+	m.cache.Invalidate()
+	m.campaignDone = nil
+	m.campaignErr = nil
+	var cmds []tea.Cmd
+	if m.lister != nil {
+		cmds = append(cmds, initBrowse(m.lister), m.browseSpinner.Tick)
+	}
+	cmds = append(cmds, tea.Tick(statusLineDuration, func(time.Time) tea.Msg {
+		return statusClearMsg{}
+	}))
+	return m, tea.Batch(cmds...)
+}
+
+// sendToBackground transitions from pipeline/campaign mode to browse mode
+// while keeping the operation running. The event channel and cancel func
+// are preserved so messages continue to be processed.
+func (m Model) sendToBackground() (Model, tea.Cmd) {
+	m.backgroundMode = m.mode
+	m.mode = ModeBrowse
+	m.focus = PaneLeft
+	m.statusMsg = fmt.Sprintf("Running %s in background", m.dispatchedBeadID)
+	if m.lister != nil {
+		return m, tea.Batch(initBrowse(m.lister), m.browseSpinner.Tick)
+	}
+	return m, nil
+}
+
 // contentHeight returns the usable height for pane content,
 // accounting for border chrome and the help bar.
 func (m Model) contentHeight() int {
@@ -692,6 +787,9 @@ func (m Model) helpBindings() help.KeyMap {
 	case ModeConfirm:
 		return ConfirmKeyMap()
 	case ModeBrowse:
+		if m.backgroundMode != 0 {
+			return BrowseKeyMapWithBackground(m.dispatchedBeadID)
+		}
 		if bead, ok := m.browse.SelectedBead(); ok && !bead.Closed {
 			childCount := 0
 			if bead.Type == "feature" || bead.Type == "epic" {
