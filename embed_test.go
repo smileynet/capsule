@@ -117,3 +117,16 @@ func TestOverlayFS_NotFound(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
+
+func TestOverlayFS_RejectsInvalidPath(t *testing.T) {
+	// Given: an overlay FS
+	ofs := OverlayFS(t.TempDir(), fstest.MapFS{})
+
+	// When/Then: invalid paths are rejected per fs.ValidPath contract
+	for _, name := range []string{"../escape", "/absolute", "bad\\slash"} {
+		_, err := ofs.Open(name)
+		if err == nil {
+			t.Errorf("Open(%q) should return error", name)
+		}
+	}
+}
