@@ -80,7 +80,7 @@ func TestConfirm_ViewCampaignWithValidation(t *testing.T) {
 	view := cs.View(80, 40)
 
 	// Then: it shows validation text and step numbers
-	if !strings.Contains(view, "(1 tasks + validation)") {
+	if !strings.Contains(view, "(1 task + validation)") {
 		t.Errorf("should show validation in count, got:\n%s", view)
 	}
 	if !strings.Contains(view, "Step 1") {

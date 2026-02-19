@@ -49,10 +49,14 @@ func (cs confirmState) viewPipeline(b *strings.Builder) {
 
 func (cs confirmState) viewCampaign(b *strings.Builder) {
 	taskCount := len(cs.children)
+	taskWord := "tasks"
+	if taskCount == 1 {
+		taskWord = "task"
+	}
 	if cs.hasValidation {
-		fmt.Fprintf(b, "Run campaign for %s? (%d tasks + validation)\n", cs.beadID, taskCount)
+		fmt.Fprintf(b, "Run campaign for %s? (%d %s + validation)\n", cs.beadID, taskCount, taskWord)
 	} else {
-		fmt.Fprintf(b, "Run campaign for %s? (%d tasks)\n", cs.beadID, taskCount)
+		fmt.Fprintf(b, "Run campaign for %s? (%d %s)\n", cs.beadID, taskCount, taskWord)
 	}
 	fmt.Fprintf(b, "\n  %s\n", cs.beadTitle)
 

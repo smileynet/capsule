@@ -223,12 +223,14 @@ func BrowseKeyMapForBead(beadType string, childCount int) browseKeys {
 	km := BrowseKeyMap()
 	switch {
 	case (beadType == "feature" || beadType == "epic") && childCount > 0:
+		taskWord := "tasks"
+		if childCount == 1 {
+			taskWord = "task"
+		}
 		km.Enter = key.NewBinding(
 			key.WithKeys("enter"),
-			key.WithHelp("enter", fmt.Sprintf("run campaign (%d tasks)", childCount)),
+			key.WithHelp("enter", fmt.Sprintf("run campaign (%d %s)", childCount, taskWord)),
 		)
-	default:
-		// Keep default "run pipeline" label.
 	}
 	return km
 }
