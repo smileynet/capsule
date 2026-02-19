@@ -64,7 +64,7 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 		k.Parse([]string{"--version"}) //nolint:errcheck // --version triggers panic via Exit hook
 	})
 
-	t.Run("no args shows usage and errors", func(t *testing.T) {
+	t.Run("no args selects dashboard command", func(t *testing.T) {
 		// Given: a CLI parser
 		var cli CLI
 		k, err := kong.New(&cli, kong.Vars{"version": "test"})
@@ -73,11 +73,14 @@ func TestFeature_GoProjectSkeleton(t *testing.T) {
 		}
 
 		// When: no arguments are provided
-		_, err = k.Parse([]string{})
+		kctx, err := k.Parse([]string{})
 
-		// Then: an error is returned (usage printed)
-		if err == nil {
-			t.Fatal("expected error when no command provided")
+		// Then: the dashboard command is selected
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if kctx.Command() != "dashboard" {
+			t.Errorf("got command %q, want %q", kctx.Command(), "dashboard")
 		}
 	})
 

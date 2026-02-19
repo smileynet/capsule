@@ -72,25 +72,33 @@ func TestSmoke_GoProjectSkeleton(t *testing.T) {
 		}
 	})
 
-	t.Run("capsule without args exits non-zero with usage", func(t *testing.T) {
-		// Given: the binary
+	t.Run("capsule without args launches dashboard and fails without TTY", func(t *testing.T) {
+		// Given: the binary running without a TTY (test subprocess has no terminal)
 		if _, err := os.Stat(binary); err != nil {
 			t.Fatal("binary not available -- the build subtest must run first and succeed")
 		}
 
-		// When: capsule runs without arguments
+		// When: capsule runs without arguments (defaults to dashboard)
 		cmd := exec.Command(binary)
+		cmd.Dir = projectRoot
 		out, err := cmd.CombinedOutput()
 
-		// Then: exit code is non-zero
+		// Then: exit code is non-zero (TTY check fails)
 		if err == nil {
-			t.Fatal("expected non-zero exit code when no command provided")
+			t.Fatal("expected non-zero exit code without TTY")
 		}
 
-		// And: usage or error message is printed
+		// And: the error mentions TTY requirement
 		output := string(out)
-		if !strings.Contains(output, "run") && !strings.Contains(output, "expected") {
-			t.Errorf("expected usage or error output, got: %q", output)
+		if !strings.Contains(output, "requires a terminal") {
+			t.Errorf("expected TTY error, got: %q", output)
+		}
+
+		// And: exit code is 2 (setup error)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if exitErr.ExitCode() != 2 {
+				t.Errorf("exit code = %d, want 2 (setup error)", exitErr.ExitCode())
+			}
 		}
 	})
 

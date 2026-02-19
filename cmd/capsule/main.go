@@ -42,7 +42,7 @@ type CLI struct {
 	Version   kong.VersionFlag `help:"Show version." short:"V"`
 	Run       RunCmd           `cmd:"" help:"Run a capsule pipeline."`
 	Campaign  CampaignCmd      `cmd:"" help:"Run a campaign for a feature or epic."`
-	Dashboard DashboardCmd     `cmd:"" help:"Open interactive dashboard TUI."`
+	Dashboard DashboardCmd     `cmd:"" default:"withargs" help:"Open interactive dashboard TUI."`
 	Abort     AbortCmd         `cmd:"" help:"Abort a running capsule."`
 	Clean     CleanCmd         `cmd:"" help:"Clean up capsule worktree and artifacts."`
 }
