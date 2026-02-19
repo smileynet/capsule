@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Manager wraps the package-level worklog functions with config for template and archive paths.
+// Manager wraps the package-level worklog functions with a template filesystem and archive directory.
 type Manager struct {
 	tmplFS       fs.FS
 	templateName string

@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewLoader(t *testing.T) {
-	// Given: a directory path
+	// Given: a filesystem
 	// When: NewLoader is called
 	l := NewLoader(os.DirFS("/some/dir"))
 
