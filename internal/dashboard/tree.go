@@ -168,6 +168,17 @@ func treeProgress(node *treeNode) treeStats {
 	return stats
 }
 
+// openChildCount returns the number of open (non-closed) direct children.
+func openChildCount(node *treeNode) int {
+	count := 0
+	for _, child := range node.Children {
+		if !child.Bead.Closed {
+			count++
+		}
+	}
+	return count
+}
+
 // isExpandable returns true if the node has children.
 func isExpandable(node *treeNode) bool {
 	return len(node.Children) > 0

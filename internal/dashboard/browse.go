@@ -241,6 +241,20 @@ func (bs browseState) View(width, height int, spinnerView string) string {
 		// Tree prefix (box-drawing).
 		b.WriteString(fn.Prefix)
 
+		// Expand/collapse indicator
+		if hasChildren {
+			if fn.Node.expanded {
+				b.WriteString("▼ ")
+			} else {
+				b.WriteString("▶ ")
+			}
+			// Child count badge [N]
+			openCount := openChildCount(fn.Node)
+			b.WriteString(fmt.Sprintf("[%d] ", openCount))
+		} else {
+			b.WriteString("• ")
+		}
+
 		if bead.Closed {
 			// Closed items: dim text with check symbol, no priority badge.
 			line := fmt.Sprintf("%s %s %s", bead.ID, SymbolCheck, bead.Title)
