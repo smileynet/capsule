@@ -903,6 +903,49 @@ func TestBrowse_LeftArrowOnRootNodeNoOp(t *testing.T) {
 	}
 }
 
+func TestBrowse_CursorClampedAfterCollapseRemovesNode(t *testing.T) {
+	// Given: an expanded parent with children, cursor on a child
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Feature", Type: "feature"},
+		{ID: "demo-1.1.1", Title: "Task A", Type: "task"},
+		{ID: "demo-1.1.2", Title: "Task B", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Expand epic
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// Expand feature
+	bs.cursor = 1
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// Verify we have 4 nodes visible (epic, feature, task A, task B)
+	if len(bs.flatNodes) != 4 {
+		t.Fatalf("setup: expected 4 flat nodes, got %d", len(bs.flatNodes))
+	}
+
+	// Move cursor to last task (Task B at index 3)
+	bs.cursor = 3
+	if bs.flatNodes[bs.cursor].Node.Bead.ID != "demo-1.1.2" {
+		t.Fatalf("setup: cursor should be on Task B, got %s", bs.flatNodes[bs.cursor].Node.Bead.ID)
+	}
+
+	// When: we collapse the feature by deleting it from expandedIDs and triggering a refresh
+	delete(bs.expandedIDs, "demo-1.1")
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Now we have 2 nodes (epic, feature) and cursor should be clamped
+
+	// Then: cursor should be clamped to valid range
+	if bs.cursor >= len(bs.flatNodes) {
+		t.Errorf("cursor %d out of bounds after collapse (len=%d) - needs clamping", bs.cursor, len(bs.flatNodes))
+	}
+	if bs.cursor < 0 {
+		t.Errorf("cursor %d is negative after collapse", bs.cursor)
+	}
+}
+
 func TestBrowse_LeftArrowKeyAlias(t *testing.T) {
 	// Given: an expanded parent with cursor on child
 	beads := []BeadSummary{

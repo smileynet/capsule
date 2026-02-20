@@ -99,7 +99,13 @@ func (bs browseState) applyBeadList(beads []BeadSummary, err error) browseState 
 	bs.err = nil
 	bs.roots = buildTree(beads, bs.expandedIDs)
 	bs.flatNodes = flattenTree(bs.roots)
-	bs.cursor = 0
+	// Clamp cursor to valid range after tree rebuild
+	if bs.cursor >= len(bs.flatNodes) {
+		bs.cursor = len(bs.flatNodes) - 1
+	}
+	if bs.cursor < 0 && len(bs.flatNodes) > 0 {
+		bs.cursor = 0
+	}
 	// Clean up expandedIDs for beads that no longer exist
 	validIDs := make(map[string]bool)
 	for _, b := range beads {
@@ -146,6 +152,10 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 				if !wasExpanded {
 					node.expanded = true
 					bs.flatNodes = flattenTree(bs.roots)
+					// Clamp cursor after expand
+					if bs.cursor >= len(bs.flatNodes) {
+						bs.cursor = len(bs.flatNodes) - 1
+					}
 				}
 
 				// Move cursor to first child only if there are open children
