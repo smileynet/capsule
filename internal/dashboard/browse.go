@@ -119,6 +119,22 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		}
 		return bs, nil
 
+	case "right", "l":
+		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
+			node := bs.flatNodes[bs.cursor].Node
+			if isExpandable(node) {
+				if !node.expanded {
+					node.expanded = true
+					bs.flatNodes = flattenTree(bs.roots)
+				}
+				// Move cursor to first child
+				if bs.cursor+1 < len(bs.flatNodes) {
+					bs.cursor++
+				}
+			}
+		}
+		return bs, nil
+
 	case "enter":
 		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
 			node := bs.flatNodes[bs.cursor].Node

@@ -699,3 +699,87 @@ func TestBrowse_EnterConfirmRequestIncludesBeadTitle(t *testing.T) {
 		t.Errorf("confirm BeadTitle = %q, want %q", confirm.BeadTitle, "First task")
 	}
 }
+
+func TestBrowse_RightArrowExpandsCollapsedNode(t *testing.T) {
+	// Given: a collapsed parent node with children
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: right arrow is pressed on the collapsed parent
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// Then: the node is expanded and cursor moves to first child
+	if len(bs.flatNodes) != 2 {
+		t.Fatalf("flatNodes = %d, want 2 (parent + child visible)", len(bs.flatNodes))
+	}
+	if bs.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (first child)", bs.cursor)
+	}
+	if bs.flatNodes[1].Node.Bead.ID != "demo-1.1" {
+		t.Errorf("cursor should be on child, got %q", bs.flatNodes[1].Node.Bead.ID)
+	}
+}
+
+func TestBrowse_RightArrowOnExpandedNodeMovesToChild(t *testing.T) {
+	// Given: an expanded parent node with children
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+	// Expand the parent first
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// Move cursor back to parent
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyUp})
+
+	// When: right arrow is pressed again on the expanded parent
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// Then: cursor moves to first child (no state change)
+	if bs.cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (first child)", bs.cursor)
+	}
+}
+
+func TestBrowse_RightArrowOnLeafNodeNoOp(t *testing.T) {
+	// Given: a leaf node (no children)
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Task", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: right arrow is pressed on the leaf
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// Then: no change (cursor stays at 0)
+	if bs.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (no-op on leaf)", bs.cursor)
+	}
+}
+
+func TestBrowse_RightArrowKeyAlias(t *testing.T) {
+	// Given: a collapsed parent node
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: "right" key is pressed
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRight})
+
+	// Then: the node is expanded and cursor moves to first child
+	if len(bs.flatNodes) != 2 {
+		t.Fatalf("flatNodes = %d, want 2", len(bs.flatNodes))
+	}
+	if bs.cursor != 1 {
+		t.Errorf("cursor = %d, want 1", bs.cursor)
+	}
+}
