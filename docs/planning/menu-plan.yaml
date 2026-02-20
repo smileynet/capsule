@@ -1,1377 +1,201 @@
-project:
-  name: capsule
-  module: github.com/smileynet/capsule
-  go_version: "1.23"
-  description: >
-    Deterministic AI agent orchestrator. Headless claude CLI calls through
-    phase-pair pipelines with worktree isolation, worklog tracking, and
-    structured signal contracts.
-
-# ============================================================================
-# EPIC 1: TRACER BULLET — Scripts & Direct Claude CLI
-# ============================================================================
-# Prove the entire workflow works with shell scripts and headless claude
-# before writing any Go code. Capture exact commands for Epic 2.
-#
-# E2E Smoke Test: Run full pipeline (prep → test-write → test-review →
-# execute → execute-review → sign-off → merge) on a template project.
-# Verify: tests exist, implementation passes, work merged to main,
-# worklog archived to .capsule/logs/.
-# ============================================================================
-
 phases:
-  - id: epic-1
-    title: "Tracer Bullet: Scripts & Direct Claude CLI"
-    description: >
-      Prove the headless claude workflow end-to-end using shell scripts,
-      template beads, and direct claude -p invocations. No Go code.
-      Output: working scripts, captured commands, proven prompt pairs.
-    smoke_tests:
-      - "Full pipeline runs on template project without manual intervention"
-      - "Tests are created, implementation passes all tests"
-      - "Only implementation files merged to main (no worklog, no temp files)"
-      - "Worklog archived to .capsule/logs/<bead-id>/worklog.md"
-      - "Pipeline is idempotent — can re-run on fresh template project"
+  - id: phase-1
+    title: "Phase 1: Collapsible Tree Navigation"
+    description: "Add expand/collapse state and directional navigation to browse mode"
 
     features:
-      # ------------------------------------------------------------------
-      # F-1.1: Template Project & Bead Fixtures
-      # ------------------------------------------------------------------
-      - id: f-1.1
-        title: Reusable template project with bead fixtures
-        priority: 0
-        user_story: >
-          As a capsule developer, I want a template project with pre-built
-          beads so that I can repeatedly test the pipeline against a known
-          starting state.
-        acceptance_criteria:
-          - "Given a clean directory, When setup-template.sh runs, Then a git repo exists with source files, AGENTS.md, and .beads/ initialized"
-          - "Given the template repo, When bd ready runs, Then at least one task bead is available to work"
-          - "Given the template beads, When bd show <task-id> runs, Then the bead has title, description, acceptance criteria, and parent feature/epic"
-          - "Given multiple test runs, When setup-template.sh runs each time, Then the starting state is identical (deterministic)"
-        tracer_strategy:
-          minimal_flow: "Template dir → setup script → git repo with beads"
-          layers: "Fixtures → git → beads"
-          expansion: "Multiple template projects for different languages/frameworks"
-        tasks:
-          - id: t-1.1.1
-            title: Create template project source files and AGENTS.md
-            priority: 0
-            tdd: true
-            description: >
-              Create templates/demo-brownfield/ with:
-              - src/ with a simple Go module (main.go, go.mod) that has
-                a clear feature gap for the test bead to fill
-              - AGENTS.md documenting the project structure and conventions
-              - README.md with project description
-              Tests: validate files exist, go build succeeds on template.
-            deliverable: "templates/demo-brownfield/ with buildable Go project"
-
-          - id: t-1.1.2
-            title: Create template bead fixtures (JSONL)
-            priority: 0
-            tdd: true
-            description: >
-              Create templates/demo-brownfield/issues.jsonl with hierarchy:
-              - 1 epic: "Demo Capsule Feature Set"
-              - 1 feature: "Add input validation" (under epic)
-              - 2 tasks: "Validate email format", "Validate phone format"
-                (under feature, with acceptance criteria in descriptions)
-              Each bead has: id, title, description with acceptance criteria,
-              type, priority, dependencies.
-              Tests: JSONL parses correctly, bd import succeeds, hierarchy valid.
-            deliverable: "issues.jsonl with 4 beads in epic→feature→task hierarchy"
-
-          - id: t-1.1.3
-            title: Create setup-template.sh initialization script
-            priority: 0
-            tdd: true
-            depends_on: [t-1.1.1, t-1.1.2]
-            description: >
-              Script that creates a fresh test environment:
-              1. Create temp dir (or accept target dir arg)
-              2. git init, initial commit
-              3. Copy template source files
-              4. bd init --prefix=cap
-              5. bd import -i issues.jsonl
-              6. bd dep add (wire dependencies)
-              7. git add && git commit "Initial template project"
-              Error handling: fail fast with clear messages on any step failure.
-              Tests: run script, verify git log, verify bd ready output.
-            deliverable: "scripts/setup-template.sh that creates deterministic test environment"
-
-      # ------------------------------------------------------------------
-      # F-1.2: Worktree & Worklog Preparation
-      # ------------------------------------------------------------------
-      - id: f-1.2
-        title: Worktree creation and worklog instantiation from bead template
-        priority: 0
-        user_story: >
-          As a pipeline orchestrator, I want a prep script that creates
-          an isolated worktree and instantiates a worklog from the bead
-          context so that each phase has full context and a shared log.
-        acceptance_criteria:
-          - "Given a template project with beads, When prep.sh <bead-id> runs, Then a git worktree exists at .capsule/worktrees/<bead-id>/"
-          - "Given the worktree, When cat worklog.md runs, Then the worklog contains Mission Briefing with epic/feature/task context and acceptance criteria"
-          - "Given the worktree, When git branch runs, Then the branch is named capsule-<bead-id>"
-          - "Given the worklog template, When instantiated for different beads, Then each worklog has bead-specific content (not generic)"
-        tracer_strategy:
-          minimal_flow: "Bead context → worklog template → worktree with worklog"
-          layers: "Beads → git worktree → worklog templating"
-          expansion: "Worklog sections for each phase pre-scaffolded"
-        tasks:
-          - id: t-1.2.1
-            title: Create worklog.md template with bead interpolation
-            priority: 0
-            tdd: true
-            description: >
-              Create templates/worklog.md.template with placeholders:
-              - {{EPIC_ID}}, {{EPIC_TITLE}}, {{EPIC_GOAL}}
-              - {{FEATURE_ID}}, {{FEATURE_TITLE}}, {{FEATURE_GOAL}}
-              - {{TASK_ID}}, {{TASK_TITLE}}, {{TASK_DESCRIPTION}}
-              - {{ACCEPTANCE_CRITERIA}} (bulleted list)
-              - {{TIMESTAMP}}
-              Structure follows legacy worklog: Mission Briefing → Phase entries.
-              Tests: template renders with sample data, all placeholders replaced.
-            deliverable: "templates/worklog.md.template"
-
-          - id: t-1.2.2
-            title: Create prep.sh script for worktree + worklog setup
-            priority: 0
-            tdd: true
-            depends_on: [t-1.2.1]
-            description: >
-              scripts/prep.sh <bead-id> [--project-dir=.]:
-              1. Validate bead exists (bd show <bead-id>)
-              2. Extract bead context (title, description, parent chain via bd show)
-              3. Create worktree: git worktree add -b capsule-<bead-id>
-                 .capsule/worktrees/<bead-id> main
-              4. Instantiate worklog.md from template with bead context
-              5. Place worklog.md in worktree root
-              6. Create .capsule/logs/ directory if not exists
-              Error handling: check git status clean, bead exists, worktree
-              doesn't already exist. Fail with clear message.
-              Tests: run on template project, verify worktree, verify worklog
-              content has bead-specific values.
-            deliverable: "scripts/prep.sh creating worktree with instantiated worklog"
-
-      # ------------------------------------------------------------------
-      # F-1.3: Test-Writer / Test-Review Prompt Pair
-      # ------------------------------------------------------------------
-      - id: f-1.3
-        title: Test-writer and test-review headless claude prompt pair
-        priority: 0
-        user_story: >
-          As a pipeline orchestrator, I want test-writer and test-review
-          prompts that produce structured results so that I can write
-          quality tests with a feedback loop.
-        acceptance_criteria:
-          - "Given a worktree with worklog, When claude -p runs with test-writer prompt, Then test files are created in the worktree"
-          - "Given test-writer output, When the last JSON block is parsed, Then it contains {status, feedback, files_changed}"
-          - "Given created tests, When claude -p runs with test-review prompt, Then it returns PASS or NEEDS_WORK with specific feedback"
-          - "Given NEEDS_WORK from test-review, When test-writer re-runs with feedback, Then tests improve based on feedback"
-        tracer_strategy:
-          minimal_flow: "Prompt template → claude -p → structured JSON → parse result"
-          layers: "Prompt engineering → subprocess → signal contract"
-          expansion: "Retry loop script, quality metrics"
-        tasks:
-          - id: t-1.3.1
-            title: Define structured JSON signal contract
-            priority: 0
-            tdd: true
-            description: >
-              Create docs/signal-contract.md defining the JSON output every
-              phase must produce as its final output:
-              ```json
-              {"status": "PASS|NEEDS_WORK|ERROR",
-               "feedback": "human-readable explanation",
-               "files_changed": ["path/to/file1.go", ...],
-               "summary": "one-line description of what was done"}
-              ```
-              Create scripts/parse-signal.sh that extracts the last JSON
-              block from claude output (grep for last ```json...``` block
-              or last line starting with {).
-              Tests: parse valid JSON, parse from mixed output, handle
-              missing JSON (return ERROR status).
-            deliverable: "Signal contract doc + parse-signal.sh parser"
-
-          - id: t-1.3.2
-            title: Create test-writer prompt template
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.1]
-            description: >
-              Create prompts/test-writer.md:
-              - Instructions to read worklog.md for task context
-              - Write failing tests for ALL acceptance criteria
-              - Tests must fail for the right reason (not syntax errors)
-              - Update worklog.md with [TEST-WRITER] entry
-              - Output structured JSON signal as final output
-              Include AGENTS.md reference, worklog reference, and the
-              signal contract in the prompt.
-              Tests: prompt contains required sections (worklog ref, signal
-              contract, acceptance criteria instruction).
-            deliverable: "prompts/test-writer.md"
-
-          - id: t-1.3.3
-            title: Create test-review prompt template
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.1]
-            description: >
-              Create prompts/test-review.md:
-              - Read worklog.md for context and test-writer entry
-              - Verify tests exist for each acceptance criterion
-              - Verify tests fail for the right reason
-              - Verify test isolation, clarity, naming
-              - Return PASS if quality sufficient, NEEDS_WORK with specific
-                feedback if not
-              - Update worklog.md with [TEST-REVIEW] entry
-              - Output structured JSON signal
-              Tests: prompt contains quality checklist, signal contract.
-            deliverable: "prompts/test-review.md"
-
-          - id: t-1.3.4
-            title: Create run-phase.sh script for headless claude invocation
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.1]
-            description: >
-              scripts/run-phase.sh <phase-name> <worktree-path> [--feedback="..."]:
-              1. Load prompt from prompts/<phase-name>.md
-              2. If --feedback provided, append feedback section to prompt
-              3. Invoke: claude -p "<prompt>" --dangerously-skip-permissions
-                 in worktree directory
-              4. Capture stdout to .capsule/output/<phase-name>-<timestamp>.log
-              5. Parse signal from output via parse-signal.sh
-              6. Print result: PASS / NEEDS_WORK / ERROR
-              7. Exit code: 0=PASS, 1=NEEDS_WORK, 2=ERROR
-              Error handling: timeout (configurable, default 10m), claude
-              not found, worktree not found. Clear error messages.
-              Tests: mock claude with echo script, verify exit codes,
-              verify output capture, verify feedback injection.
-            deliverable: "scripts/run-phase.sh for any phase invocation"
-
-          - id: t-1.3.5
-            title: Validate test-writer/test-review pair end-to-end
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.2, t-1.3.3, t-1.3.4, t-1.2.2]
-            description: >
-              Integration test (BDD validation for this feature):
-              1. Run setup-template.sh to create test project
-              2. Run prep.sh <task-id> to create worktree
-              3. Run run-phase.sh test-writer <worktree>
-              4. Verify test files created, worklog updated
-              5. Run run-phase.sh test-review <worktree>
-              6. Verify structured JSON result (PASS or NEEDS_WORK)
-              7. If NEEDS_WORK, run test-writer again with feedback
-              Document exact claude commands used and results.
-              Tests: full integration script with assertions at each step.
-            deliverable: "tests/test-phase-pair-test-writer.sh integration test"
-
-      # ------------------------------------------------------------------
-      # F-1.4: Execute / Execute-Review Prompt Pair
-      # ------------------------------------------------------------------
-      - id: f-1.4
-        title: Execute and execute-review headless claude prompt pair
-        priority: 0
-        user_story: >
-          As a pipeline orchestrator, I want execute and execute-review
-          prompts so that the agent implements code that passes the
-          tests created in the previous phase.
-        acceptance_criteria:
-          - "Given a worktree with failing tests, When claude -p runs with execute prompt, Then implementation code is created that passes the tests"
-          - "Given execute output, When parsed, Then JSON signal contains PASS/NEEDS_WORK/ERROR with files_changed"
-          - "Given implementation, When claude -p runs with execute-review prompt, Then it verifies tests pass and code quality is acceptable"
-          - "Given NEEDS_WORK from review, When execute re-runs with feedback, Then implementation improves"
-        tracer_strategy:
-          minimal_flow: "Execute prompt → implementation → review → signal"
-          layers: "Prompt engineering → subprocess → test verification"
-          expansion: "Refactoring pass, coverage metrics"
-        tasks:
-          - id: t-1.4.1
-            title: Create execute prompt template
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.1]
-            description: >
-              Create prompts/execute.md:
-              - Read worklog.md for task context AND test-writer/review entries
-              - Run existing tests to confirm RED state
-              - Implement minimal code to pass all tests (GREEN)
-              - Refactor for clarity while tests pass (REFACTOR)
-              - Update worklog.md with [EXECUTE] entry
-              - Output structured JSON signal
-              Tests: prompt references worklog, test-first instruction,
-              signal contract present.
-            deliverable: "prompts/execute.md"
-
-          - id: t-1.4.2
-            title: Create execute-review prompt template
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.1]
-            description: >
-              Create prompts/execute-review.md:
-              - Read worklog.md for full context
-              - Run tests, verify all pass
-              - Review code quality (correctness, style, no hacks)
-              - Verify only acceptance-criteria-scoped changes (no scope creep)
-              - Update worklog.md with [EXECUTE-REVIEW] entry
-              - Return PASS or NEEDS_WORK with feedback
-              Tests: prompt contains quality checklist, test-run instruction.
-            deliverable: "prompts/execute-review.md"
-
-          - id: t-1.4.3
-            title: Validate execute/execute-review pair end-to-end
-            priority: 0
-            tdd: true
-            depends_on: [t-1.4.1, t-1.4.2, t-1.3.5]
-            description: >
-              Integration test (BDD validation):
-              1. Start from state after successful test-writer/test-review
-              2. Run run-phase.sh execute <worktree>
-              3. Verify implementation files created, tests now pass
-              4. Run run-phase.sh execute-review <worktree>
-              5. Verify PASS result
-              Document exact commands and results.
-              Tests: full integration script building on test-writer state.
-            deliverable: "tests/test-phase-pair-execute.sh integration test"
-
-      # ------------------------------------------------------------------
-      # F-1.5: Sign-Off / Merge Prompt Pair
-      # ------------------------------------------------------------------
-      - id: f-1.5
-        title: Sign-off and merge-to-main headless claude prompt pair
-        priority: 0
-        user_story: >
-          As a pipeline orchestrator, I want sign-off and merge prompts
-          so that only relevant implementation files are merged to main
-          and worklogs are archived to .capsule/logs/.
-        acceptance_criteria:
-          - "Given a worktree with passing tests, When claude -p runs with sign-off prompt, Then it validates quality and returns PASS or NEEDS_WORK"
-          - "Given PASS from sign-off, When merge.sh runs, Then only implementation/test files are on main (no worklog.md)"
-          - "Given successful merge, When ls .capsule/logs/<bead-id>/ runs, Then worklog.md is archived there"
-          - "Given successful merge, When git worktree list runs, Then the mission worktree is removed"
-          - "Given successful merge, When bd show <bead-id> runs, Then the bead status is closed"
-        tracer_strategy:
-          minimal_flow: "Sign-off prompt → merge script → archive worklog → cleanup"
-          layers: "Quality gate → git merge → file archival → worktree cleanup"
-          expansion: "Follow-up bead creation from review findings"
-        tasks:
-          - id: t-1.5.1
-            title: Create sign-off prompt template
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.1]
-            description: >
-              Create prompts/sign-off.md:
-              - Read worklog.md for full mission context
-              - Run tests, verify all pass
-              - Verify commit-ready state (no temp files, no debug code)
-              - Verify acceptance criteria met
-              - Update worklog.md with [SIGN-OFF] entry
-              - Return PASS or NEEDS_WORK
-              Tests: prompt contains validation checklist, signal contract.
-            deliverable: "prompts/sign-off.md"
-
-          - id: t-1.5.2
-            title: Create merge.sh script for selective merge and archival
-            priority: 0
-            tdd: true
-            description: >
-              scripts/merge.sh <bead-id> [--project-dir=.]:
-              1. cd to worktree, verify sign-off PASS in worklog
-              2. Stage only implementation + test files (explicit git add,
-                 NOT git add -A — exclude worklog.md, .capsule/, temp files)
-              3. Commit with message: "<bead-id>: <task-title>"
-              4. Switch to main: git checkout main
-              5. Merge: git merge capsule-<bead-id> --no-ff
-              6. Archive worklog: cp worklog.md .capsule/logs/<bead-id>/worklog.md
-              7. Also archive phase outputs: cp .capsule/output/* to logs dir
-              8. Remove worktree: git worktree remove .capsule/worktrees/<bead-id>
-              9. Delete branch: git branch -d capsule-<bead-id>
-              10. Close bead: bd close <bead-id>
-              Error handling: merge conflicts (abort and report), missing
-              worktree, already merged. Each step validates before proceeding.
-              Tests: mock git operations, verify only expected files staged,
-              verify worklog archived, verify worktree removed.
-            deliverable: "scripts/merge.sh with selective merge and archival"
-
-          - id: t-1.5.3
-            title: Validate sign-off/merge pair end-to-end
-            priority: 0
-            tdd: true
-            depends_on: [t-1.5.1, t-1.5.2, t-1.4.3]
-            description: >
-              Integration test (BDD validation):
-              1. Start from state after successful execute/execute-review
-              2. Run run-phase.sh sign-off <worktree>
-              3. Verify PASS result
-              4. Run merge.sh <bead-id>
-              5. Verify: files on main, worklog in .capsule/logs/, worktree gone,
-                 bead closed
-              Tests: full integration script building on execute state.
-            deliverable: "tests/test-phase-pair-merge.sh integration test"
-
-      # ------------------------------------------------------------------
-      # F-1.6: Full Pipeline Script & Command Capture
-      # ------------------------------------------------------------------
-      - id: f-1.6
-        title: Full pipeline orchestration script and command documentation
-        priority: 0
-        user_story: >
-          As a capsule developer, I want a single script that runs the
-          full pipeline and documentation of every command used so that
-          Epic 2 has a clear specification to implement.
-        acceptance_criteria:
-          - "Given a template project, When run-pipeline.sh <bead-id> runs, Then the full pipeline executes (prep → test-write → test-review → execute → execute-review → sign-off → merge)"
-          - "Given the pipeline, When a reviewer phase returns NEEDS_WORK, Then the worker phase retries with feedback (up to configured max)"
-          - "Given the pipeline completes, When reviewing .capsule/logs/<bead-id>/, Then the full worklog with all phase entries is archived"
-          - "Given docs/commands.md, When reading it, Then every claude command, script invocation, and expected output is documented"
-        tracer_strategy:
-          minimal_flow: "Pipeline script → retry logic → command capture doc"
-          layers: "Orchestration → error handling → documentation"
-          expansion: "Parallel phase execution, configurable retry limits"
-        tasks:
-          - id: t-1.6.1
-            title: Create run-pipeline.sh orchestration script
-            priority: 0
-            tdd: true
-            depends_on: [t-1.3.4, t-1.5.2]
-            description: >
-              scripts/run-pipeline.sh <bead-id> [--project-dir=.] [--max-retries=2]:
-              1. Run prep.sh <bead-id>
-              2. Phase pair loop: test-writer → test-review (max 3 retries)
-              3. Phase pair loop: execute → execute-review (max 2 retries)
-              4. Run sign-off (max 2 retries, retries execute on NEEDS_WORK)
-              5. Run merge.sh <bead-id>
-              6. Print summary (phases run, retries, duration, result)
-              Error handling: any ERROR status aborts pipeline, prints
-              diagnostic info, preserves worktree for inspection.
-              Logging: all phase outputs captured in .capsule/output/.
-              Tests: mock run-phase.sh to test retry logic, abort on error,
-              success path.
-            deliverable: "scripts/run-pipeline.sh full orchestration"
-
-          - id: t-1.6.2
-            title: Create teardown.sh cleanup script
-            priority: 1
-            tdd: true
-            description: >
-              scripts/teardown.sh [--project-dir=.]:
-              - Remove all capsule worktrees
-              - Clean .capsule/output/ (but preserve .capsule/logs/)
-              - Prune git worktree metadata
-              - Report what was cleaned
-              Error handling: graceful if nothing to clean.
-              Tests: create then teardown, verify clean state.
-            deliverable: "scripts/teardown.sh for environment cleanup"
-
-          - id: t-1.6.3
-            title: Document all commands and create specification for Epic 2
-            priority: 1
-            tdd: true
-            depends_on: [t-1.6.1]
-            description: >
-              Create docs/commands.md documenting:
-              - Every script with usage, args, exit codes
-              - Every claude -p invocation with exact flags
-              - The signal contract with examples
-              - The retry logic rules
-              - The worklog lifecycle (create → update → archive)
-              - The worktree lifecycle (create → work → merge → remove)
-              - Directory structure (.capsule/, prompts/, scripts/, templates/)
-              This becomes the specification for Epic 2's Go implementation.
-              Tests: all documented commands actually exist and match implementation.
-            deliverable: "docs/commands.md — specification for Epic 2"
-
-          - id: t-1.6.4
-            title: Full pipeline E2E smoke test
-            priority: 0
-            tdd: true
-            depends_on: [t-1.6.1]
-            description: >
-              tests/test-full-pipeline.sh:
-              1. Run setup-template.sh to create fresh project
-              2. Run run-pipeline.sh <task-bead-id>
-              3. Assert: tests exist on main
-              4. Assert: implementation passes tests on main
-              5. Assert: worklog in .capsule/logs/<bead-id>/
-              6. Assert: no worktree remains
-              7. Assert: bead is closed
-              8. Cleanup with teardown.sh
-              This is the Epic 1 E2E smoke test.
-            deliverable: "tests/test-full-pipeline.sh E2E smoke test"
-
-  # ============================================================================
-  # EPIC 2: GO CLI TOOL
-  # ============================================================================
-  # Transform Epic 1's proven scripts into a Go CLI application.
-  # Specification: docs/commands.md from Epic 1.
-  #
-  # E2E Smoke Test: `capsule run <bead-id>` on template project produces
-  # same results as Epic 1's run-pipeline.sh.
-  # ============================================================================
-
-  - id: epic-2
-    title: "Go CLI Tool"
-    description: >
-      Transform Epic 1's validated scripts into a Go CLI using Kong.
-      Provider interface wraps claude subprocess. Orchestrator sequences
-      phase pairs. Plain text status output. All behavior matches
-      Epic 1's proven workflow.
-    smoke_tests:
-      - "capsule run <bead-id> produces same outcome as run-pipeline.sh"
-      - "capsule run handles NEEDS_WORK retries automatically"
-      - "capsule run exits cleanly on ERROR with diagnostic output"
-      - "capsule abort <bead-id> cleans up worktree and reopens bead"
-      - "capsule version prints version info"
-
-    features:
-      # ------------------------------------------------------------------
-      # F-2.1: Go Project Skeleton
-      # ------------------------------------------------------------------
-      - id: f-2.1
-        title: Go project skeleton with Kong CLI and test harness
-        priority: 0
-        user_story: >
-          As a developer, I want a Go project with Kong CLI, Makefile,
-          and test harness so that I have a solid foundation for the
-          capsule CLI tool.
-        acceptance_criteria:
-          - "Given the project, When go build ./... runs, Then a capsule binary is produced"
-          - "Given the binary, When capsule version runs, Then version/commit/date is printed"
-          - "Given the binary, When capsule run without args runs, Then usage is printed and exit code is non-zero"
-          - "Given the Makefile, When make test runs, Then all tests pass"
-        tracer_strategy:
-          minimal_flow: "go mod init → Kong CLI struct → version cmd → Makefile"
-          layers: "Project structure → CLI framework"
-          expansion: "CI/CD, goreleaser, golangci-lint config"
-        tasks:
-          - id: t-2.1.1
-            title: Initialize Go module and directory structure
-            priority: 0
-            tdd: true
-            description: >
-              go.mod, directory tree: cmd/capsule/main.go,
-              internal/{provider,orchestrator,config,worktree,worklog,tui,prompt}/.
-              Placeholder test in each package. go mod tidy.
-              Error handling: N/A (project setup).
-            deliverable: "go build ./... and go test ./... pass"
-
-          - id: t-2.1.2
-            title: Set up Kong CLI with version and run commands
-            priority: 0
-            tdd: true
-            depends_on: [t-2.1.1]
-            description: >
-              Kong CLI struct with Version, Run, Abort, Clean commands.
-              Version prints ldflags version info. Run takes bead-id arg
-              + --provider, --timeout, --debug flags. Abort takes bead-id + --force.
-              Tests: parse each command, missing args error, flag overrides.
-            deliverable: "Kong CLI with all command stubs"
-
-          - id: t-2.1.3
-            title: Create Makefile and AGENTS.md
-            priority: 1
-            tdd: false
-            depends_on: [t-2.1.1]
-            description: "build/test/lint/clean targets. AGENTS.md with project conventions."
-            deliverable: "Makefile + AGENTS.md"
-
-      # ------------------------------------------------------------------
-      # F-2.2: Provider Interface & Claude Implementation
-      # ------------------------------------------------------------------
-      - id: f-2.2
-        title: Provider interface wrapping headless claude subprocess
-        priority: 0
-        user_story: >
-          As an orchestrator, I want a Provider interface with Execute()
-          so that I can call AI agents as subprocess calls with structured
-          output parsing.
-        acceptance_criteria:
-          - "Given a Provider, When Execute(ctx, prompt, workDir) is called, Then it returns Result{Output, ExitCode, Duration, Signal}"
-          - "Given ClaudeProvider, When Execute runs, Then it invokes claude -p with correct flags in workDir"
-          - "Given a timeout context, When the subprocess exceeds it, Then the process is killed and a TimeoutError is returned"
-          - "Given claude output with JSON signal, When Result is returned, Then Signal field contains parsed PhaseResult"
-        tracer_strategy:
-          minimal_flow: "Interface → Mock → ClaudeProvider → Signal parsing"
-          layers: "Provider abstraction → subprocess → signal contract"
-          expansion: "Multiple providers, model tier config"
-        tasks:
-          - id: t-2.2.1
-            title: Define Provider interface, Result, and Signal types
-            priority: 0
-            tdd: true
-            description: >
-              internal/provider/provider.go:
-              Provider interface with Name() and Execute(ctx, prompt, workDir).
-              Result{Output, ExitCode, Duration, Signal}. Signal = parsed
-              PhaseResult{Status, Feedback, FilesChanged, Summary}.
-              MockProvider for testing. SignalParser extracts JSON from output.
-              Error types: TimeoutError, ProviderError, SignalParseError.
-              Tests: mock execute, signal parsing (valid, missing, malformed),
-              error type matching with errors.Is.
-            deliverable: "Provider interface with signal parsing and error types"
-
-          - id: t-2.2.2
-            title: Implement ClaudeProvider with subprocess execution
-            priority: 0
-            tdd: true
-            depends_on: [t-2.2.1]
-            description: >
-              internal/provider/claude.go:
-              Calls claude -p <prompt> --dangerously-skip-permissions in workDir.
-              Uses exec.CommandContext for timeout. Captures stdout+stderr.
-              Parses signal from output. Re-exec pattern for unit tests.
-              Error handling: process kill on timeout, non-zero exit without
-              signal → ProviderError with stderr content.
-              Tests: re-exec mock for success, timeout, non-zero exit, no signal.
-            deliverable: "ClaudeProvider with re-exec tests"
-
-          - id: t-2.2.3
-            title: Add provider registry with factory pattern
-            priority: 1
-            tdd: true
-            depends_on: [t-2.2.1]
-            description: >
-              internal/provider/registry.go:
-              Register(name, factory), NewProvider(name), AvailableProviders().
-              Error handling: unknown provider returns clear error.
-              Tests: register, retrieve, unknown error, list.
-            deliverable: "Provider registry"
-
-      # ------------------------------------------------------------------
-      # F-2.3: Configuration & Prompt Loading
-      # ------------------------------------------------------------------
-      - id: f-2.3
-        title: Configuration loading and external prompt management
-        priority: 1
-        user_story: >
-          As a user, I want capsule to load config from YAML and prompts
-          from external files so that I can customize behavior per-project.
-        acceptance_criteria:
-          - "Given a config.yaml, When capsule loads config, Then Runtime.Provider, Runtime.Timeout, and Worktree.BaseDir are set"
-          - "Given no config file, When capsule loads config, Then sensible defaults are used"
-          - "Given prompts/ directory, When prompt loader loads test-writer, Then prompts/test-writer.md content is returned"
-          - "Given prompt context, When Compose is called, Then bead info and feedback are interpolated into the prompt"
-        tracer_strategy:
-          minimal_flow: "Config struct → YAML loading → Prompt loader → Composer"
-          layers: "Config → prompt loading"
-          expansion: "Per-phase config, model tiers, prompt overrides"
-        tasks:
-          - id: t-2.3.1
-            title: Implement Config struct and layered loading
-            priority: 1
-            tdd: true
-            description: >
-              internal/config/config.go:
-              Config{Runtime{Provider, Timeout}, Worktree{BaseDir}}.
-              Load(path), DefaultConfig(), env var overrides.
-              Priority: defaults < user (~/.config/capsule/) < project (.capsule/) < env.
-              Error handling: missing file = use defaults, invalid YAML = error.
-              Tests: load, defaults, env override, invalid YAML.
-            deliverable: "Config loading with layered priority"
-
-          - id: t-2.3.2
-            title: Implement prompt Loader and Composer
-            priority: 1
-            tdd: true
-            description: >
-              internal/prompt/loader.go:
-              Loader{promptsDir}. Load(phaseName) reads prompts/<name>.md.
-              Compose(phaseName, Context{BeadID, Title, Description, Feedback})
-              interpolates context into loaded template.
-              Error handling: missing prompt file, empty prompt, template error.
-              Tests: load existing, load missing (error), compose with/without feedback.
-            deliverable: "Prompt loader with compose"
-
-      # ------------------------------------------------------------------
-      # F-2.4: Worktree & Worklog Management
-      # ------------------------------------------------------------------
-      - id: f-2.4
-        title: Worktree creation/cleanup and worklog lifecycle
-        priority: 1
-        user_story: >
-          As an orchestrator, I want worktree and worklog management so
-          that each mission runs in isolation with full context tracking.
-        acceptance_criteria:
-          - "Given a bead ID, When worktree.Create runs, Then .capsule/worktrees/<id>/ exists on branch capsule-<id>"
-          - "Given a bead context, When worklog.Create runs, Then worklog.md in worktree has mission briefing"
-          - "Given a completed mission, When worklog.Archive runs, Then worklog is in .capsule/logs/<id>/"
-          - "Given a worktree, When worktree.Remove runs, Then worktree and branch are cleaned up"
-        tracer_strategy:
-          minimal_flow: "Worktree CRUD → worklog template → archive"
-          layers: "Git worktree → worklog templating → file archival"
-          expansion: "Bead redirect symlinks, worktree recovery"
-        tasks:
-          - id: t-2.4.1
-            title: Implement worktree Manager (create/remove/list/exists)
-            priority: 1
-            tdd: true
-            description: >
-              internal/worktree/manager.go — port from legacy, simplified.
-              Create(id, baseBranch), Remove(id, deleteBranch), List(), Exists(id).
-              Error handling: already exists, git errors, orphaned worktrees.
-              Tests: real git init in t.TempDir.
-            deliverable: "Worktree manager with git tests"
-
-          - id: t-2.4.2
-            title: Implement worklog Creator and Archiver
-            priority: 1
-            tdd: true
-            description: >
-              internal/worklog/worklog.go:
-              Create(worktreePath, BeadContext) — instantiate template.
-              AppendPhaseEntry(worktreePath, PhaseEntry) — add phase result.
-              Archive(worktreePath, archiveDir, beadID) — move to .capsule/logs/.
-              Error handling: missing template, write errors, archive dir creation.
-              Tests: create with mock context, append entries, archive and verify.
-            deliverable: "Worklog create/append/archive"
-
-      # ------------------------------------------------------------------
-      # F-2.5: Orchestrator with Phase-Pair Loops
-      # ------------------------------------------------------------------
-      - id: f-2.5
-        title: Orchestrator sequencing phase pairs with retry logic
-        priority: 0
-        user_story: >
-          As a user running `capsule run <bead-id>`, I want the orchestrator
-          to execute all phase pairs with retries and status output so that
-          I see deterministic progress through the pipeline.
-        acceptance_criteria:
-          - "Given a bead ID, When RunPipeline executes, Then phases run in order: test-writer→test-review→execute→execute-review→sign-off→merge"
-          - "Given NEEDS_WORK from a reviewer, When retry logic runs, Then the worker phase re-runs with feedback (up to configured max)"
-          - "Given ERROR from any phase, When pipeline detects it, Then pipeline aborts with diagnostic error"
-          - "Given each phase transition, When StatusCallback fires, Then it includes phase, status, attempt, maxRetry"
-          - "Given successful pipeline, When complete, Then worktree merged and worklog archived"
-        tracer_strategy:
-          minimal_flow: "Orchestrator → runPhasePair → retry loop → StatusCallback → merge"
-          layers: "Orchestration → provider → worktree → worklog → status"
-          expansion: "Configurable phase list, parallel phases"
-        tasks:
-          - id: t-2.5.1
-            title: Define phase registry and StatusUpdate types
-            priority: 0
-            tdd: true
-            description: >
-              internal/orchestrator/phases.go:
-              PhaseKind{Worker, Reviewer}, PhaseDefinition{Name, Kind, MaxRetries, RetryTarget}.
-              StatusUpdate{BeadID, Phase, Status, Progress, Attempt, MaxRetry}.
-              StatusCallback func. Register all 6 phases.
-              Tests: registry lookup, phase pairing logic.
-            deliverable: "Phase registry and status types"
-
-          - id: t-2.5.2
-            title: Implement Orchestrator with runPhasePair loop
-            priority: 0
-            tdd: true
-            depends_on: [t-2.5.1, t-2.2.1, t-2.3.2, t-2.4.1, t-2.4.2]
-            description: >
-              internal/orchestrator/orchestrator.go:
-              Orchestrator struct with provider, promptLoader, worktreeMgr,
-              worklogMgr, config, statusCallback. Functional options.
-              runPhasePair(ctx, worker, reviewer, feedback) — generic loop.
-              RunPipeline(ctx, beadID) — sequences all phase pairs.
-              Handles: worktree creation, worklog creation, phase execution,
-              retry logic, merge, archive. Abort on ERROR.
-              Error handling: structured PipelineError with phase context.
-              Tests: all mock provider — happy path, retry, max retries,
-              error abort, context cancellation.
-            deliverable: "Orchestrator with full pipeline and tests"
-
-          - id: t-2.5.3
-            title: Wire orchestrator into CLI run command with status output
-            priority: 0
-            tdd: true
-            depends_on: [t-2.5.2, t-2.1.2, t-2.3.1]
-            description: >
-              Wire RunCmd → config → provider → orchestrator → StatusCallback.
-              Plain text StatusCallback prints timestamped phase lines:
-              [HH:MM:SS] test-writer  RUNNING (1/1)
-              [HH:MM:SS] test-writer  PASS
-              Exit codes: 0=success, 1=pipeline failure, 2=setup error.
-              Add abort and clean commands.
-              Error handling: config errors, provider errors, graceful Ctrl+C.
-              Tests: integration test with mock provider.
-            deliverable: "CLI fully wired to orchestrator with status output"
-
-  # ============================================================================
-  # EPIC 3: TUI
-  # ============================================================================
-  # Layer Bubble Tea TUI over Epic 2's CLI.
-  #
-  # E2E Smoke Test: `capsule run <bead-id>` in TTY shows live TUI with
-  # phase progress; piped output falls back to plain text.
-  # ============================================================================
-
-  - id: epic-3
-    title: "TUI (Bubble Tea)"
-    description: >
-      Add Bubble Tea TUI for live phase status display. Dual-mode:
-      TUI when TTY detected, plain text when piped. Progressive
-      enhancement from Epic 2's plain text output.
-    smoke_tests:
-      - "capsule run in TTY shows spinner + phase progress + scrolling log"
-      - "capsule run | cat produces plain text output (no escape codes)"
-      - "capsule run --no-tui forces plain text mode"
-      - "Ctrl+C during TUI cleanly exits and shows summary"
-      - "Pipeline completion shows duration and result summary"
-
-    features:
-      # ------------------------------------------------------------------
-      # F-3.1: Bubble Tea Phase Status Model
-      # ------------------------------------------------------------------
-      - id: f-3.1
-        title: Bubble Tea model for phase pipeline status display
-        priority: 1
-        user_story: >
-          As a user watching a pipeline run, I want a live TUI showing
-          which phase is active, retry counts, and elapsed time so that
-          I can monitor progress at a glance.
-        acceptance_criteria:
-          - "Given a running pipeline, When the TUI renders, Then I see all phases listed with current status (pending/running/pass/fail)"
-          - "Given an active phase, When the TUI renders, Then a spinner animates next to the active phase name"
-          - "Given a retry, When the TUI updates, Then the attempt counter shows (2/3)"
-          - "Given pipeline completion, When the TUI renders, Then a summary line shows total duration and result"
-        tracer_strategy:
-          minimal_flow: "Model struct → Update handler → View renderer"
-          layers: "Bubble Tea Elm Architecture"
-          expansion: "Scrolling log viewport, phase detail drill-down"
-        tasks:
-          - id: t-3.1.1
-            title: Implement Bubble Tea Model with phase state tracking
-            priority: 1
-            tdd: true
-            description: >
-              internal/tui/model.go:
-              Model{phases []PhaseState, spinner, currentIdx, done, err, startTime}.
-              PhaseState{Name, Status, Attempt, MaxRetry, Duration}.
-              Init() starts spinner. Update() handles StatusUpdateMsg,
-              spinner.TickMsg, tea.KeyMsg (q to quit).
-              View() renders phase list with status indicators.
-              Tests: teatest for Update/View as pure functions.
-            deliverable: "Bubble Tea model with phase tracking"
-
-          - id: t-3.1.2
-            title: Implement View rendering with lipgloss styling
-            priority: 1
-            tdd: true
-            depends_on: [t-3.1.1]
-            description: >
-              Render phases with symbols: checkmark (pass), x (fail), hourglass (running+spinner), dot (pending).
-              Retry counter: (2/3). Duration per phase. Summary footer.
-              Lipgloss styles: green=pass, red=fail, yellow=running, dim=pending.
-              Error handling: terminal width detection, graceful fallback.
-              Tests: verify view output for each state combination.
-            deliverable: "Styled phase display view"
-
-      # ------------------------------------------------------------------
-      # F-3.2: Dual-Mode Display Switcher
-      # ------------------------------------------------------------------
-      - id: f-3.2
-        title: Automatic TTY detection with TUI/plain text switching
-        priority: 1
-        user_story: >
-          As a user, I want capsule to automatically use the TUI in a
-          terminal and plain text when piped so that it works in both
-          interactive and CI contexts.
-        acceptance_criteria:
-          - "Given stdout is a TTY, When capsule run executes, Then Bubble Tea TUI is shown"
-          - "Given stdout is piped, When capsule run executes, Then plain text lines are printed"
-          - "Given --no-tui flag, When capsule run in TTY executes, Then plain text is forced"
-          - "Given StatusCallback, When Display interface receives updates, Then correct renderer handles them"
-        tracer_strategy:
-          minimal_flow: "TTY detection → Display interface → TUI or Plain renderer"
-          layers: "Display abstraction"
-          expansion: "JSON output mode for machine consumption"
-        tasks:
-          - id: t-3.2.1
-            title: Implement Display interface and TTY detection
-            priority: 1
-            tdd: true
-            description: >
-              internal/tui/display.go:
-              Display interface with Run(ctx, statusChan) error.
-              isTTY() detection. NewDisplay(opts) returns TUI or Plain.
-              Bridge: StatusCallback → channel → Display.
-              Error handling: TUI init failure falls back to plain.
-              Tests: mock TTY detection, verify correct renderer selected.
-            deliverable: "Display interface with TTY switching"
-
-          - id: t-3.2.2
-            title: Wire Display into CLI replacing plain text callback
-            priority: 1
-            tdd: true
-            depends_on: [t-3.2.1, t-3.1.1]
-            description: >
-              Update RunCmd to use Display instead of direct StatusCallback.
-              Add --no-tui flag to force plain mode.
-              Orchestrator sends StatusUpdate to channel, Display consumes.
-              Error handling: TUI crash recovery (switch to plain mid-run).
-              Tests: integration test with mock provider, verify both modes.
-            deliverable: "CLI with dual-mode display"
-
-      # ------------------------------------------------------------------
-      # F-3.3: Interactive Controls
-      # ------------------------------------------------------------------
-      - id: f-3.3
-        title: TUI keyboard controls for abort and status
+      - id: feature-1.1
+        title: "Feature 1.1: Collapsible tree with expand/collapse state"
         priority: 2
-        user_story: >
-          As a user watching a pipeline, I want keyboard shortcuts to
-          abort the pipeline or view detailed status so that I have
-          control during execution.
+        user_story: "As a dashboard user, I want to expand and collapse epic/feature nodes so that I can focus on relevant parts of the hierarchy without visual clutter"
         acceptance_criteria:
-          - "Given a running pipeline in TUI, When I press 'q' or Ctrl+C, Then the pipeline aborts gracefully with cleanup"
-          - "Given a running pipeline in TUI, When I press 'd', Then I see detailed status (current phase output, worklog tail)"
-          - "Given an abort, When cleanup completes, Then TUI shows abort summary before exiting"
-        tracer_strategy:
-          minimal_flow: "Key handler → abort signal → cleanup → summary"
-          layers: "TUI interaction → orchestrator control"
-          expansion: "Retry skip, phase selection, log scrolling"
+          - "Nodes can be expanded to show children or collapsed to hide them"
+          - "Expansion state persists during navigation and refresh"
+          - "Visual indicators show expand state (▶ collapsed, ▼ expanded, • leaf)"
+          - "Child count badge [N] shows number of open children"
+          - "Default state: epics expanded, features collapsed"
+
         tasks:
-          - id: t-3.3.1
-            title: Implement abort via keyboard with graceful cleanup
+          - title: "Add expansion state to tree nodes"
+            priority: 1
+            tracer: "Foundation - proves we can track which nodes are expanded"
+            description: |
+              - Add `expanded` bool field to treeNode struct
+              - Add `defaultExpanded` bool to control initial state
+              - Update buildTree to set default expansion (epics=true, features=false)
+              - Add helper: isExpandable(node) - true for epic/feature with children
+            deliverable: "internal/dashboard/tree.go with expansion state"
+            tdd: true
+
+          - title: "Filter tree rendering to only show expanded nodes"
+            priority: 1
+            depends_on: ["Add expansion state to tree nodes"]
+            tracer: "Rendering - proves collapsed nodes hide their children"
+            description: |
+              - Update flattenTree to skip children of collapsed nodes
+              - Preserve depth tracking for proper indentation
+              - Update prefix generation for collapsed subtrees
+            deliverable: "flattenTree respects expansion state"
+            tdd: true
+
+          - title: "Add expand/collapse indicators to tree view"
             priority: 2
-            tdd: true
-            description: >
-              Handle 'q' and Ctrl+C in Update(). Send cancel to orchestrator
-              context. Show "Aborting..." status, then summary on complete.
-              Error handling: double-press forces immediate exit.
-              Tests: simulate key press, verify context cancelled.
-            deliverable: "Keyboard abort with cleanup"
+            depends_on: ["Filter tree rendering to only show expanded nodes"]
+            tracer: "Visual feedback - proves users can see expand state"
+            description: |
+              - Add indicator symbols: ▶ (collapsed), ▼ (expanded), • (leaf)
+              - Add child count badge [N] for expandable nodes
+              - Update tree rendering to show indicators before node title
+              - Handle edge case: empty epic/feature shows [0]
+            deliverable: "Tree view with expand indicators and badges"
+            tdd: false
 
-          - id: t-3.3.2
-            title: Implement detail view toggle
-            priority: 3
-            tdd: true
-            depends_on: [t-3.3.1]
-            description: >
-              'd' key toggles detail panel showing recent phase output
-              (last N lines from provider stdout) and worklog tail.
-              Uses bubbles/viewport for scrollable content.
-              Tests: toggle state, viewport content updates.
-            deliverable: "Detail view toggle"
-
-  # ============================================================================
-  # EPIC 4: ROBUST PIPELINE (Unscoped)
-  # ============================================================================
-
-  - id: epic-4
-    title: "Robust Task Pipeline"
-    description: >
-      More granular pipeline steps and commands. Configurable phase
-      definitions, pluggable quality gates, advanced retry strategies,
-      parallel phase execution, and pipeline pause/resume.
-    smoke_tests:
-      - "Custom phase definitions loaded from project config"
-      - "Pipeline pause/resume preserves state across sessions"
-    features:
-      - id: f-4.1
-        title: Configurable phase definitions (placeholder)
-        priority: 3
-        user_story: "As a user, I want to define custom phase pairs so that the pipeline adapts to my workflow."
-        acceptance_criteria: ["TBD during Epic 4 scoping"]
-        tasks: []
-      - id: f-4.2
-        title: Pipeline pause and resume (placeholder)
-        priority: 3
-        user_story: "As a user, I want to pause and resume a pipeline so that long missions survive session interruptions."
-        acceptance_criteria: ["TBD during Epic 4 scoping"]
-        tasks: []
-      - id: f-4.3
-        title: Advanced retry strategies (placeholder)
-        priority: 3
-        user_story: "As a user, I want configurable retry strategies (backoff, skip, escalate) so that the pipeline handles failures intelligently."
-        acceptance_criteria: ["TBD during Epic 4 scoping"]
-        tasks: []
-
-  # ============================================================================
-  # EPIC 6: TASK DASHBOARD TUI
-  # ============================================================================
-  # Rich two-pane TUI for browsing ready beads, inspecting details, dispatching
-  # pipelines, and browsing phase reports. Persistent layout with Tab-based
-  # focus switching. New internal/dashboard/ package — zero changes to
-  # internal/tui/ (capsule run unchanged).
-  #
-  # E2E Smoke Test: `capsule dashboard` shows two-pane layout with bead list,
-  # Tab switches focus, Enter dispatches pipeline with phase progress in left
-  # pane and phase reports in right pane, summary shown, any key returns to list.
-  # ============================================================================
-
-  - id: epic-6
-    title: "Task Dashboard TUI"
-    description: >
-      Rich two-pane interactive TUI for browsing ready beads, inspecting
-      bead details, dispatching pipelines with phase report browsing, and
-      viewing results in a continuous loop. New internal/dashboard/ package
-      reimplements phase rendering for cursor-driven pane layout. Tab
-      switches focus between left (list) and right (detail/report) panes.
-      Zero changes to internal/tui/ — capsule run works identically.
-    smoke_tests:
-      - "capsule dashboard shows two-pane layout with bead list (left) and detail (right)"
-      - "Tab switches focus — border color changes, right pane becomes scrollable"
-      - "Enter dispatches pipeline — left pane shows phase progress, right shows reports"
-      - "Up/down during pipeline browses completed phase reports in right pane"
-      - "Pipeline done → summary in right pane, any key → back to browse with refresh"
-      - "capsule run still works identically (no code changes to tui package)"
-
-    features:
-      # ------------------------------------------------------------------
-      # F-6.1: Dashboard Shell and Browse Mode
-      # ------------------------------------------------------------------
-      - id: f-6.1
-        title: Dashboard shell with two-pane layout and bead browsing
-        priority: 3
-        user_story: >
-          As a user, I want to run `capsule dashboard` and see a two-pane
-          layout with a navigable bead list on the left and bead detail on
-          the right so that I can browse available work with full context.
+      - id: feature-1.2
+        title: "Feature 1.2: Directional keyboard navigation (→←hl)"
+        priority: 2
+        user_story: "As a dashboard user, I want to use arrow keys to expand/collapse nodes so that I can navigate the hierarchy without accidentally launching work"
         acceptance_criteria:
-          - "Given a TTY, When capsule dashboard runs, Then a loading spinner appears followed by a two-pane layout with rounded borders"
-          - "Given the two-pane layout, When beads load, Then the left pane shows ready beads with ID, title, priority badge (P0-P4), and type"
-          - "Given a selected bead, When the cursor moves, Then the right pane updates with resolved bead detail (hierarchy, description, acceptance criteria)"
-          - "Given the layout, When I press Tab, Then focus switches between panes (border color changes) and arrow keys control the focused pane"
-          - "Given the bead list, When I press 'r', Then the list and detail cache refresh from bd ready"
-          - "Given the bead list, When I press 'q', Then the dashboard exits cleanly"
-          - "Given no TTY, When capsule dashboard runs, Then an error prints saying dashboard requires a terminal"
-        tracer_strategy:
-          minimal_flow: "DashboardCmd → Model → two-pane layout → bead list → async resolve → detail viewport"
-          layers: "CLI (Kong) → Bubble Tea model → lipgloss layout → bead loading → cache"
-          expansion: "Filtering by type/priority, search, vim-style j/k navigation"
+          - "Right arrow (→) or 'l' expands collapsed node and moves cursor to first child"
+          - "Left arrow (←) or 'h' collapses expanded node or moves to parent"
+          - "Right arrow on leaf node is no-op"
+          - "Left arrow on collapsed node moves cursor to parent"
+          - "Navigation works consistently across all node types"
+
         tasks:
-          - id: t-6.1.1
-            title: "Create internal/dashboard/ scaffold: styles, keys, help, messages, cache"
-            priority: 3
+          - title: "Implement right arrow expand logic"
+            priority: 1
+            depends_on: ["Add expansion state to tree nodes"]
+            tracer: "Expand action - proves right arrow expands and navigates"
+            description: |
+              - Add "right", "l" case to browse handleKey
+              - If node is expandable and collapsed: expand it, move cursor to first child
+              - If node is expandable and expanded: move cursor to first child
+              - If node is leaf: no-op
+              - Return updated browseState
+            deliverable: "Right arrow expands nodes"
             tdd: true
-            description: >
-              Create foundational files for the dashboard package:
-              1. internal/dashboard/styles.go: Centralized lipgloss styles using
-                 AdaptiveColor for light/dark terminals. Rounded borders
-                 (lipgloss.RoundedBorder). Priority badges: P0=red, P1=orange,
-                 P2=yellow, P3=blue, P4=gray. Focused/unfocused border colors.
-                 Layout helpers for 1/3 left + 2/3 right split.
-              2. internal/dashboard/keys.go: bubbles/key bindings per mode
-                 (browse, pipeline, summary). Global keys (q, Ctrl+C, Tab, r).
-              3. internal/dashboard/help.go: bubbles/help integration for
-                 context-aware help bar. Returns different bindings per mode.
-              4. internal/dashboard/msg.go: All tea.Msg types: BeadListMsg,
-                 BeadResolvedMsg, PhaseUpdateMsg, PipelineDoneMsg, etc.
-                 Consumer-side interfaces: BeadLister, BeadResolver, PipelineRunner.
-                 Data types: BeadSummary, BeadDetail, PhaseReport.
-              5. internal/dashboard/cache.go: Simple map[string]*BeadDetail cache
-                 with Invalidate() method.
-              Tests: style rendering doesn't panic, key bindings per mode return
-              correct sets, cache get/set/invalidate.
-            deliverable: "internal/dashboard/ scaffold with styles, keys, help, messages, cache"
 
-          - id: t-6.1.2
-            title: Implement Model with two-pane layout, focus management, and mode routing
-            priority: 3
+          - title: "Implement left arrow collapse logic"
+            priority: 1
+            depends_on: ["Implement right arrow expand logic"]
+            tracer: "Collapse action - proves left arrow collapses and navigates to parent"
+            description: |
+              - Add "left", "h" case to browse handleKey
+              - If node is expanded: collapse it
+              - If node is collapsed or leaf: find parent in flatNodes, move cursor to it
+              - Handle edge case: root node has no parent (no-op)
+              - Return updated browseState
+            deliverable: "Left arrow collapses nodes and navigates to parent"
             tdd: true
-            depends_on: [t-6.1.1]
-            description: >
-              internal/dashboard/model.go:
-              Model struct with mode enum (browse/pipeline/summary), focus enum
-              (PaneLeft/PaneRight), viewport for right pane, help model,
-              terminal width/height from WindowSizeMsg.
-              Init()/Update()/View() with mode-based routing.
-              View(): lipgloss.JoinHorizontal for left+right panes,
-              lipgloss.JoinVertical for panes+help bar.
-              Layout: 1/3 left (min 28 chars), 2/3 right, calculated from
-              WindowSizeMsg. Tab toggles focus — focused pane gets accent border,
-              unfocused gets dim border.
-              Global keys: q/Ctrl+C quit (browse), Tab switches focus.
-              Tests: mode routing, focus toggle, layout calculation at various
-              widths, window resize handling.
-            deliverable: "Root Model with two-pane layout and focus management"
 
-          - id: t-6.1.3
-            title: Implement browse mode with bead list, async loading, and cursor navigation
+          - title: "Update help text for new navigation keys"
             priority: 3
-            tdd: true
-            depends_on: [t-6.1.2]
-            description: >
-              internal/dashboard/browse.go:
-              Browse mode state: []BeadSummary, cursor int, loading bool, err error.
-              Init fires tea.Cmd calling BeadLister.Ready() asynchronously.
-              Hand-rolled list rendering (not bubbles/list) for full control
-              over cursor position, priority badges, and phase indicators.
-              Render each bead: cursor marker, bead ID, priority badge, title.
-              Left-focused keys: up/down move cursor, Enter emits dispatch.
-              Loading state shows spinner. Error state shows message + r to retry.
-              Empty list shows "No ready beads" message.
-              Tests: loading state view, beads loaded view, cursor movement and
-              wrapping, enter dispatches selected bead, error display, empty list.
-            deliverable: "Browse mode with bead list and cursor navigation"
+            depends_on: ["Implement left arrow collapse logic"]
+            tracer: "Discoverability - proves users know about new keys"
+            description: |
+              - Update BrowseKeyMap to include →←hl bindings
+              - Add help text: "→/l expand, ←/h collapse"
+              - Update ShortHelp and FullHelp methods
+              - Ensure help bar shows new keys
+            deliverable: "Help text includes directional navigation"
+            tdd: false
 
-          - id: t-6.1.4
-            title: Implement bead resolution with cache and detail viewport
-            priority: 3
-            tdd: true
-            depends_on: [t-6.1.3]
-            description: >
-              Wire async bead resolution into browse mode:
-              Cursor movement triggers resolveBeadCmd (tea.Cmd calling
-              BeadResolver.Resolve()). Results cached in map[string]*BeadDetail.
-              Cache hit skips CLI call. Cache invalidated on: manual refresh (r),
-              return from summary mode.
-              Right pane renders resolved detail in bubbles/viewport:
-              Bead ID, title, epic/feature/task hierarchy, description,
-              acceptance criteria. Loading state shows spinner in right pane.
-              Failed resolve shows error + suggestion.
-              Right-focused keys: up/down/PgUp/PgDn scroll viewport.
-              Tests: cache hit skips resolve, cache miss triggers resolve,
-              invalidation clears cache, viewport scrolls when focused,
-              loading/error states in right pane.
-            deliverable: "Bead resolution with caching and scrollable detail viewport"
-
-          - id: t-6.1.5
-            title: Wire DashboardCmd in main.go with Run()/run() split and adapters
-            priority: 3
-            tdd: true
-            depends_on: [t-6.1.4]
-            description: >
-              cmd/capsule/main.go:
-              Add DashboardCmd struct to CLI Kong grammar with Provider, Timeout
-              flags. Run() builds real deps (bead.Client adapters for BeadLister
-              and BeadResolver interfaces), run() accepts interfaces for testing.
-              Non-TTY returns error. Creates dashboard.Model, runs tea.NewProgram.
-              Adapter types: beadListerAdapter wraps bead.Client.Ready() to
-              []dashboard.BeadSummary. beadResolverAdapter wraps bead.Client.Resolve()
-              to dashboard.BeadDetail.
-              cmd/capsule/main_test.go: CLI parsing tests (kong.New), run() with
-              mock interfaces.
-              Tests: dashboard subcommand parsed, non-TTY error, run() creates
-              program with mock deps.
-            deliverable: "capsule dashboard command wired to dashboard.Model"
-
-      # ------------------------------------------------------------------
-      # F-6.2: Pipeline Mode with Phase Report Browsing
-      # ------------------------------------------------------------------
-      - id: f-6.2
-        title: Pipeline mode with phase list and report browsing
+      - id: feature-1.3
+        title: "Feature 1.3: Preserve expansion state across operations"
         priority: 3
-        blocks: [f-6.1]
-        user_story: >
-          As a user, I want to dispatch a pipeline from the dashboard and
-          see phase progress in the left pane with detailed phase reports
-          in the right pane so that I have clear visibility into what each
-          phase produced.
+        user_story: "As a dashboard user, I want expansion state to persist during refresh and navigation so that I don't lose my place in the hierarchy"
         acceptance_criteria:
-          - "Given Enter pressed on a bead, When pipeline dispatches, Then left pane switches to phase list with status indicators (spinner, checkmark, cross)"
-          - "Given a completed phase, When its report is available, Then selecting it in the left pane shows summary, files changed, and duration in the right pane"
-          - "Given a running pipeline, When phases complete, Then the cursor auto-follows the running phase"
-          - "Given the user presses up/down during pipeline, Then auto-follow disables and the user can browse completed phase reports"
-          - "Given pipeline completion, When all phases finish, Then the right pane shows overall result summary"
-          - "Given a running pipeline, When I press q/Ctrl+C, Then the pipeline aborts gracefully"
-        tracer_strategy:
-          minimal_flow: "Enter → RunPipeline goroutine → channel → self-scheduling pump → phase list + report rendering"
-          layers: "Pipeline dispatch → channel bridge → phase state tracking → report storage → cursor/auto-follow"
-          expansion: "Raw output view (d key), phase timing chart, retry detail view"
+          - "Expansion state preserved when refreshing bead list"
+          - "Cursor position restored after refresh (snap to last selected ID)"
+          - "Expansion state preserved when returning from pipeline/campaign"
+          - "Expansion state cleared only on explicit user action (collapse all)"
+
         tasks:
-          - id: t-6.2.1
-            title: Implement pipeline mode phase list rendering with spinner and cursor
-            priority: 3
+          - title: "Store expansion state in browse model"
+            priority: 2
+            depends_on: ["Add expansion state to tree nodes"]
+            tracer: "State persistence - proves we can remember expansion across rebuilds"
+            description: |
+              - Add expandedIDs map[string]bool to browseState
+              - Update expand/collapse handlers to update expandedIDs
+              - Update buildTree to read from expandedIDs when setting initial state
+              - Handle case: bead no longer exists (remove from expandedIDs)
+            deliverable: "browseState tracks expansion across tree rebuilds"
             tdd: true
-            depends_on: [t-6.1.2]
-            description: >
-              internal/dashboard/pipeline.go:
-              Pipeline mode state: []PhaseState, cursor int, autoFollow bool,
-              spinner model, running bool.
-              PhaseState: Name, Status (pending/running/pass/fail), Attempt,
-              MaxRetry, Duration. Status indicators reimplemented from tui.Model
-              (~15 lines duplication to avoid coupling): checkmark=pass, cross=fail,
-              spinner=running, dot=pending. Retry counter (2/3). Duration per phase.
-              Left-focused keys: up/down move cursor (disables autoFollow).
-              Auto-follow: cursor tracks running phase by default.
-              Tests: phase list rendering at each state, cursor movement disables
-              auto-follow, auto-follow tracks running phase.
-            deliverable: "Phase list rendering with spinner, status indicators, and cursor"
 
-          - id: t-6.2.2
-            title: Implement PhaseReport storage and right-pane rendering
-            priority: 3
+          - title: "Restore expansion state on refresh"
+            priority: 2
+            depends_on: ["Store expansion state in browse model"]
+            tracer: "Refresh preservation - proves state survives bead list reload"
+            description: |
+              - Update BeadListMsg handler to preserve expandedIDs
+              - Rebuild tree with preserved expansion state
+              - Restore cursor to lastDispatchedID if set
+              - Test: refresh with mixed expanded/collapsed nodes
+            deliverable: "Refresh preserves expansion and cursor"
             tdd: true
-            depends_on: [t-6.2.1]
-            description: >
-              Store phase reports in map[string]*PhaseReport as phases complete.
-              PhaseReport: PhaseName, Status, Summary, Feedback, FilesChanged,
-              Duration. Populated from StatusUpdateMsg when status is pass/fail.
-              Right pane renders report for cursor-selected phase in viewport:
-              Phase name + status header, summary, files changed list, duration,
-              feedback (if failed). Pending phase shows "Waiting...".
-              Running phase shows spinner text + elapsed time.
-              Tests: report stored on phase completion, right pane shows correct
-              report for selected phase, pending/running state rendering.
-            deliverable: "Phase report storage and right-pane rendering per selected phase"
 
-          - id: t-6.2.3
-            title: Wire pipeline dispatch with channel, goroutine, and self-scheduling pump
-            priority: 3
-            tdd: true
-            depends_on: [t-6.2.2, t-6.1.5]
-            description: >
-              Wire Enter keypress to pipeline execution:
-              1. Create context.WithCancel for pipeline abort
-              2. Create buffered channel for phase events
-              3. Launch PipelineRunner.RunPipeline() in goroutine
-              4. Self-scheduling channel pump:
-                 func listenForEvents(ch) tea.Cmd returns func() tea.Msg
-                 that reads one event from channel, returns channelClosedMsg
-                 on close. Re-schedule after each event in Update().
-              5. Convert orchestrator StatusUpdate to dashboard PhaseUpdateMsg
-              6. Pipeline goroutine sends events to channel, sends done/error on completion
-              7. q/Ctrl+C during pipeline cancels context (graceful abort)
-              Interface: PipelineRunner with RunPipeline(ctx, PipelineInput)
-              returning (PipelineOutput, error).
-              Tests: mock PipelineRunner, verify events flow through channel to
-              model, verify abort cancels context, verify channel closed transitions
-              to summary.
-            deliverable: "Pipeline dispatch with channel-based event bridging"
+          - title: "Add collapse-all action (optional)"
+            priority: 4
+            depends_on: ["Store expansion state in browse model"]
+            tracer: "Reset action - proves users can quickly collapse everything"
+            description: |
+              - Add 'c' key binding for collapse-all
+              - Clear expandedIDs map
+              - Rebuild tree with default expansion
+              - Update help text
+            deliverable: "Collapse-all key binding"
+            tdd: false
 
-          - id: t-6.2.4
-            title: Implement summary mode with any-key return to browse and refresh
-            priority: 3
-            tdd: true
-            depends_on: [t-6.2.3]
-            description: >
-              Summary mode triggered on pipeline completion (channel closed).
-              Left pane: phase list with final checkmark/cross statuses frozen.
-              Right pane: overall result summary:
-              - Pass: green checkmark, "N/N phases passed in Xs"
-              - Fail: red cross, error message, "N/M phases passed"
-              - Post-pipeline status (merge/cleanup if applicable)
-              Footer: "Press any key to continue"
-              Any keypress: transition back to browse mode, invalidate bead cache,
-              trigger BeadLister.Ready() refresh (closed bead disappears).
-              Tests: pass summary display, fail summary with error, any key
-              transitions to browse, cache invalidated on return.
-            deliverable: "Summary mode with result display and any-key return to browse"
+  - id: phase-2
+    title: "Phase 2: Enhanced Browse Experience"
+    description: "Polish and edge cases for collapsible navigation"
 
-      # ------------------------------------------------------------------
-      # F-6.3: Polish and Edge Cases
-      # ------------------------------------------------------------------
-      - id: f-6.3
-        title: Polish, shared lifecycle, and edge case handling
-        priority: 3
-        blocks: [f-6.2]
-        user_story: >
-          As a user, I want the dashboard to handle edge cases gracefully
-          and share post-pipeline lifecycle with capsule run so that the
-          dashboard is robust and reliable in real use.
-        acceptance_criteria:
-          - "Given a successful pipeline, When returning to browse, Then post-pipeline lifecycle (merge, cleanup, close bead) runs in the background"
-          - "Given a terminal resize, When the window size changes, Then both panes re-layout proportionally"
-          - "Given Ctrl+C during pipeline, When abort triggers, Then cleanup runs and dashboard returns to browse"
-          - "Given bd is not installed, When dashboard launches, Then a clear error message is shown"
-          - "Given an empty bead list, When dashboard renders, Then 'No ready beads' message with refresh hint is shown"
-        tracer_strategy:
-          minimal_flow: "Extract postPipeline → wire background lifecycle → handle resize → handle abort → error states"
-          layers: "Shared lifecycle → background goroutines → terminal resize → error UX"
-          expansion: "Double-press force quit, failed bead load retry, network error handling"
-        tasks:
-          - id: t-6.3.1
-            title: Extract shared postPipeline helper and wire background lifecycle
-            priority: 3
-            tdd: true
-            depends_on: [t-6.2.4]
-            description: >
-              cmd/capsule/main.go:
-              Extract RunCmd.runPostPipeline() logic into standalone function:
-              postPipeline(w io.Writer, beadID string, wt mergeOps, bd beadResolver)
-              Both RunCmd.run() and DashboardCmd.run() call this.
-              RunCmd.runPostPipeline() becomes thin wrapper calling postPipeline().
-              In dashboard: on return from summary, fire tea.Batch with:
-              1. tea.Cmd calling postPipeline() in background goroutine
-                 (merge, cleanup, close bead). Errors logged, not shown.
-              2. tea.Cmd re-fetching BeadLister.Ready() to refresh list.
-              Tests: RunCmd still calls post-pipeline correctly (regression),
-              postPipeline works with mock interfaces, both cmds fire on
-              return from summary.
-            deliverable: "Shared post-pipeline lifecycle callable from both commands"
-
-          - id: t-6.3.2
-            title: Handle error states — loading spinners, failed loads, empty list
-            priority: 3
-            tdd: true
-            depends_on: [t-6.3.1]
-            description: >
-              Comprehensive error state handling:
-              1. Loading spinner: shown in both panes during initial bead fetch
-                 and during bead resolution. Uses bubbles/spinner.
-              2. Failed bead load: left pane shows error message + "press r to retry".
-              3. Empty bead list: "No ready beads — press r to refresh" message.
-              4. Failed resolve: right pane shows "Could not load bead detail"
-                 with error text. Bead list still navigable.
-              5. bd not installed: early error in DashboardCmd.Run() before
-                 launching TUI.
-              Tests: each error state renders correctly, r retries from error,
-              failed resolve doesn't crash navigation.
-            deliverable: "Robust error state handling for all failure modes"
-
-          - id: t-6.3.3
-            title: Handle edge cases — terminal resize, abort during pipeline, force quit
-            priority: 3
-            tdd: true
-            depends_on: [t-6.3.2]
-            description: >
-              Edge case handling:
-              1. Terminal resize: WindowSizeMsg recalculates pane widths
-                 (1/3 + 2/3, min 28 left), re-renders both panes. Viewport
-                 width/height updated.
-              2. Abort during pipeline: Ctrl+C cancels pipeline context,
-                 shows "Aborting..." in phase status, waits for cleanup,
-                 transitions to browse mode (not summary).
-              3. Double-press force quit: second q/Ctrl+C during abort
-                 forces tea.Quit immediately.
-              4. Focus interaction: left focus up/down moves list cursor,
-                 right focus up/down/PgUp/PgDn scrolls viewport. Global keys
-                 (q, Ctrl+C, Tab, r) work regardless of focus.
-              Tests: resize recalculates layout, abort during pipeline cancels
-              context, double-press force quits, focus-dependent key routing.
-            deliverable: "Edge case handling for resize, abort, and focus interactions"
-
-  # ============================================================================
-  # EPIC 5: MULTI-CLI SUPPORT (Unscoped)
-  # ============================================================================
-
-  - id: epic-5
-    title: "Multi-CLI Support"
-    description: >
-      Support multiple AI CLI tools beyond Claude Code. Provider
-      interface extensions for OpenCode, Kiro, and other headless
-      CLI tools with provider-specific prompt adaptation.
-    smoke_tests:
-      - "capsule run --provider=opencode executes pipeline with OpenCode CLI"
     features:
-      - id: f-5.1
-        title: Provider interface extensions for multi-CLI (placeholder)
-        priority: 4
-        user_story: "As a user, I want to use capsule with different AI CLI tools so that I'm not locked into one provider."
-        acceptance_criteria: ["TBD during Epic 5 scoping"]
-        tasks: []
-      - id: f-5.2
-        title: Provider-specific prompt adaptation (placeholder)
-        priority: 4
-        user_story: "As a user, I want prompts that adapt to each provider's capabilities so that the pipeline works well regardless of provider."
-        acceptance_criteria: ["TBD during Epic 5 scoping"]
-        tasks: []
+      - id: feature-2.1
+        title: "Feature 2.1: Smart cursor movement and edge cases"
+        priority: 3
+        user_story: "As a dashboard user, I want cursor movement to feel natural when expanding/collapsing nodes so that navigation is intuitive"
+        acceptance_criteria:
+          - "Expanding a node moves cursor to first child (if children exist)"
+          - "Collapsing a node keeps cursor on the collapsed node"
+          - "Left arrow on root node is no-op (no parent to navigate to)"
+          - "Right arrow on empty epic/feature shows '(no open tasks)' message"
+          - "Cursor never lands on invalid index after expand/collapse"
 
-# ============================================================================
-# Expansion Items (beyond Epic 5)
-# ============================================================================
-expansion_items:
-  - id: e-001
-    title: File watching with fsnotify for real-time worktree observation
-  - id: e-002
-    title: Multi-mission orchestration (parallel pipelines)
-  - id: e-003
-    title: Web dashboard for remote monitoring
-  - id: e-004
-    title: Plugin system for custom phases and quality gates
-  - id: e-005
-    title: Bead lifecycle integration (claim/close/reopen/follow-up)
+        tasks:
+          - title: "Handle empty expandable nodes"
+            priority: 2
+            depends_on: ["Implement right arrow expand logic"]
+            tracer: "Empty node handling - proves we handle epics/features with no open children"
+            description: |
+              - Detect when expandable node has zero open children
+              - Show "(no open tasks)" in tree view when expanded
+              - Right arrow on empty node: expand but don't move cursor
+              - Update child count badge to show [0]
+            deliverable: "Empty nodes display correctly"
+            tdd: true
+
+          - title: "Add cursor bounds checking"
+            priority: 2
+            depends_on: ["Implement left arrow collapse logic"]
+            tracer: "Safety - proves cursor never goes out of bounds"
+            description: |
+              - Add bounds check after expand/collapse operations
+              - Clamp cursor to valid range [0, len(flatNodes)-1]
+              - Handle edge case: collapsing last visible node
+              - Add test: collapse node that cursor is on
+            deliverable: "Cursor always valid after operations"
+            tdd: true
+
+          - title: "Optimize tree rebuild performance"
+            priority: 4
+            depends_on: ["Store expansion state in browse model"]
+            tracer: "Performance - proves large trees don't lag"
+            description: |
+              - Profile buildTree and flattenTree with 100+ nodes
+              - Cache flattened tree until expansion state changes
+              - Only rebuild on expand/collapse/refresh, not on cursor move
+              - Benchmark: <10ms for 100 node tree
+            deliverable: "Tree operations are fast"
+            tdd: false
