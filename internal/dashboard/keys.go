@@ -10,6 +10,8 @@ import (
 type browseKeys struct {
 	Up       key.Binding
 	Down     key.Binding
+	Right    key.Binding
+	Left     key.Binding
 	Enter    key.Binding
 	Tab      key.Binding
 	Provider key.Binding
@@ -19,7 +21,7 @@ type browseKeys struct {
 
 // ShortHelp returns the browse mode bindings for the help bar.
 func (k browseKeys) ShortHelp() []key.Binding {
-	bindings := []key.Binding{k.Up, k.Down, k.Enter, k.Tab}
+	bindings := []key.Binding{k.Up, k.Down, k.Right, k.Left, k.Enter, k.Tab}
 	if k.Provider.Enabled() {
 		bindings = append(bindings, k.Provider)
 	}
@@ -34,7 +36,7 @@ func (k browseKeys) FullHelp() [][]key.Binding {
 	}
 	row2 = append(row2, k.Refresh, k.Quit)
 	return [][]key.Binding{
-		{k.Up, k.Down, k.Enter},
+		{k.Up, k.Down, k.Right, k.Left, k.Enter},
 		row2,
 	}
 }
@@ -88,6 +90,14 @@ func BrowseKeyMap() browseKeys {
 		Down: key.NewBinding(
 			key.WithKeys("down", "j"),
 			key.WithHelp("↓/j", "down"),
+		),
+		Right: key.NewBinding(
+			key.WithKeys("right", "l"),
+			key.WithHelp("→/l", "expand"),
+		),
+		Left: key.NewBinding(
+			key.WithKeys("left", "h"),
+			key.WithHelp("←/h", "collapse"),
 		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),

@@ -13,7 +13,7 @@ func TestBrowseKeys_ContainsExpected(t *testing.T) {
 	allKeys := collectKeys(bindings)
 
 	// Then: all expected navigation and action keys are present
-	expected := []string{"up", "down", "enter", "tab", "r", "q"}
+	expected := []string{"up", "down", "right", "left", "enter", "tab", "r", "q"}
 	for _, want := range expected {
 		if !containsKey(allKeys, want) {
 			t.Errorf("BrowseKeyMap missing key %q, got %v", want, allKeys)

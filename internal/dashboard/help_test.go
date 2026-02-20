@@ -106,9 +106,9 @@ func TestHelpBindings_BrowseNoHistoryKey(t *testing.T) {
 	bindings := km.ShortHelp()
 	allKeys := collectKeys(bindings)
 
-	// Then: 'h' key is not present (history toggle removed)
-	if containsKey(allKeys, "h") {
-		t.Error("browse help should not contain 'h' key (history removed)")
+	// Then: 'h' key is present (used for collapse navigation)
+	if !containsKey(allKeys, "h") {
+		t.Error("browse help should contain 'h' key (collapse navigation)")
 	}
 }
 
