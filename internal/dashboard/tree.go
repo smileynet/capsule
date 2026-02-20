@@ -9,6 +9,7 @@ type treeNode struct {
 	Bead     BeadSummary
 	Children []*treeNode
 	IsLast   bool // true if this is the last child of its parent
+	expanded bool // true if this node's children should be visible
 }
 
 // flatNode is a treeNode with pre-computed prefix strings for rendering.
@@ -77,7 +78,13 @@ func findParent(childID string, nodes map[string]*treeNode) string {
 }
 
 // finalizeNode sorts children by ID and marks the last child at each level.
+// It also sets default expansion state: epics expanded, features collapsed.
 func finalizeNode(n *treeNode) {
+	// Set default expansion based on type
+	if len(n.Children) > 0 {
+		n.expanded = n.Bead.Type == "epic"
+	}
+
 	if len(n.Children) == 0 {
 		return
 	}
@@ -154,4 +161,9 @@ func treeProgress(node *treeNode) treeStats {
 		stats.Closed += childStats.Closed
 	}
 	return stats
+}
+
+// isExpandable returns true if the node has children.
+func isExpandable(node *treeNode) bool {
+	return len(node.Children) > 0
 }
