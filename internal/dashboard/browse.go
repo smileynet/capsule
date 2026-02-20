@@ -137,13 +137,19 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
 			node := bs.flatNodes[bs.cursor].Node
 			if isExpandable(node) {
-				if !node.expanded {
+				wasExpanded := node.expanded
+				hasOpenChildren := openChildCount(node) > 0
+
+				// Always mark as expanded in the map (even if already expanded)
+				bs.expandedIDs[node.Bead.ID] = true
+
+				if !wasExpanded {
 					node.expanded = true
-					bs.expandedIDs[node.Bead.ID] = true
 					bs.flatNodes = flattenTree(bs.roots)
 				}
-				// Move cursor to first child
-				if bs.cursor+1 < len(bs.flatNodes) {
+
+				// Move cursor to first child only if there are open children
+				if hasOpenChildren && bs.cursor+1 < len(bs.flatNodes) {
 					bs.cursor++
 				}
 			}
@@ -299,6 +305,27 @@ func (bs browseState) View(width, height int, spinnerView string) string {
 				}
 				b.WriteString(progress)
 			}
+		}
+
+		// Add placeholder if this node is expanded with no open children
+		if hasChildren && fn.Node.expanded && openChildCount(fn.Node) == 0 {
+			b.WriteByte('\n')
+			b.WriteString("  ") // No cursor marker for placeholder
+
+			// Build child prefix
+			var childPrefix string
+			if fn.Depth == 0 {
+				childPrefix = ""
+			} else {
+				if fn.Node.IsLast {
+					childPrefix = fn.Prefix[:len(fn.Prefix)-4] + "    "
+				} else {
+					childPrefix = fn.Prefix[:len(fn.Prefix)-4] + "│   "
+				}
+			}
+			b.WriteString(childPrefix)
+			b.WriteString("└── ")
+			b.WriteString(dimStyle.Render("(no open tasks)"))
 		}
 	}
 	return b.String()
