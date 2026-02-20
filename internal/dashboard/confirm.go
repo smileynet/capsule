@@ -83,45 +83,42 @@ func (cs confirmState) viewCampaign(b *strings.Builder) {
 }
 
 // countOpenChildren counts how many open direct children a parent has in the
-// flat node list. Used by the help bar to show "run campaign (N tasks)".
-func countOpenChildren(nodes []flatNode, parentID string) int {
-	return len(collectOpenChildren(nodes, parentID))
+// tree. Used by the help bar to show "run campaign (N tasks)".
+func countOpenChildren(roots []*treeNode, parentID string) int {
+	return len(collectOpenChildren(roots, parentID))
 }
 
-// collectOpenChildren walks the browse tree's flatNodes to find open children
-// of parentID. Only direct children (depth = parentDepth+1) are collected.
-func collectOpenChildren(nodes []flatNode, parentID string) []confirmChild {
-	// Find the parent node index.
-	parentIdx := -1
-	parentDepth := -1
-	for i, fn := range nodes {
-		if fn.Node.Bead.ID == parentID {
-			parentIdx = i
-			parentDepth = fn.Depth
-			break
-		}
-	}
-	if parentIdx < 0 {
+// collectOpenChildren walks the tree to find open children of parentID.
+// Only direct children are collected, not grandchildren.
+func collectOpenChildren(roots []*treeNode, parentID string) []confirmChild {
+	// Find the parent node in the tree.
+	parent := findNodeByID(roots, parentID)
+	if parent == nil {
 		return nil
 	}
 
 	var children []confirmChild
-	for i := parentIdx + 1; i < len(nodes); i++ {
-		fn := nodes[i]
-		if fn.Depth <= parentDepth {
-			break // Exited the subtree.
-		}
-		// Only direct children, not grandchildren.
-		if fn.Depth != parentDepth+1 {
-			continue
-		}
-		if fn.Node.Bead.Closed {
+	for _, child := range parent.Children {
+		if child.Bead.Closed {
 			continue
 		}
 		children = append(children, confirmChild{
-			ID:    fn.Node.Bead.ID,
-			Title: fn.Node.Bead.Title,
+			ID:    child.Bead.ID,
+			Title: child.Bead.Title,
 		})
 	}
 	return children
+}
+
+// findNodeByID recursively searches for a node with the given ID.
+func findNodeByID(roots []*treeNode, id string) *treeNode {
+	for _, root := range roots {
+		if root.Bead.ID == id {
+			return root
+		}
+		if found := findNodeByID(root.Children, id); found != nil {
+			return found
+		}
+	}
+	return nil
 }

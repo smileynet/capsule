@@ -685,7 +685,7 @@ func (m Model) handleConfirmRequest(msg ConfirmRequestMsg) (tea.Model, tea.Cmd) 
 	}
 	// For features/epics, collect open children from the browse tree.
 	if msg.BeadType == "feature" || msg.BeadType == "epic" {
-		cs.children = collectOpenChildren(m.browse.flatNodes, msg.BeadID)
+		cs.children = collectOpenChildren(m.browse.roots, msg.BeadID)
 	}
 	m.confirm = cs
 	m.mode = ModeConfirm
@@ -867,7 +867,7 @@ func (m Model) helpBindings() help.KeyMap {
 		} else if bead, ok := m.browse.SelectedBead(); ok && !bead.Closed {
 			childCount := 0
 			if bead.Type == "feature" || bead.Type == "epic" {
-				childCount = countOpenChildren(m.browse.flatNodes, bead.ID)
+				childCount = countOpenChildren(m.browse.roots, bead.ID)
 			}
 			km = BrowseKeyMapForBead(bead.Type, childCount)
 		} else {

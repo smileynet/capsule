@@ -170,15 +170,16 @@ func TestBuildTree_IsLastMarking(t *testing.T) {
 func TestFlattenTree_BoxDrawing(t *testing.T) {
 	// Given: a tree with nested children
 	beads := []BeadSummary{
-		{ID: "demo-1", Title: "Epic"},
-		{ID: "demo-1.1", Title: "Feature"},
-		{ID: "demo-1.1.1", Title: "Task A"},
-		{ID: "demo-1.1.2", Title: "Task B"},
-		{ID: "demo-1.2", Title: "Feature B"},
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Feature", Type: "feature"},
+		{ID: "demo-1.1.1", Title: "Task A", Type: "task"},
+		{ID: "demo-1.1.2", Title: "Task B", Type: "task"},
+		{ID: "demo-1.2", Title: "Feature B", Type: "feature"},
 	}
 
-	// When: the tree is flattened
+	// When: the tree is built and features are expanded
 	roots := buildTree(beads)
+	roots[0].Children[0].expanded = true // Expand demo-1.1 to show tasks
 	flat := flattenTree(roots)
 
 	// Then: prefixes contain box-drawing characters
@@ -211,12 +212,14 @@ func TestFlattenTree_BoxDrawing(t *testing.T) {
 func TestFlattenTree_Depth(t *testing.T) {
 	// Given: a 3-level tree
 	beads := []BeadSummary{
-		{ID: "demo-1", Title: "Epic"},
-		{ID: "demo-1.1", Title: "Feature"},
-		{ID: "demo-1.1.1", Title: "Task"},
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Feature", Type: "feature"},
+		{ID: "demo-1.1.1", Title: "Task", Type: "task"},
 	}
 
+	// When: tree is built and feature is expanded
 	roots := buildTree(beads)
+	roots[0].Children[0].expanded = true // Expand feature to show task
 	flat := flattenTree(roots)
 
 	// Then: depths are [0, 1, 2]
@@ -244,13 +247,15 @@ func TestFlattenTree_EmptyInput(t *testing.T) {
 func TestFlattenTree_ContinuationPrefix(t *testing.T) {
 	// Given: a tree where non-last children have descendants
 	beads := []BeadSummary{
-		{ID: "demo-1", Title: "Epic"},
-		{ID: "demo-1.1", Title: "Feature A"},
-		{ID: "demo-1.1.1", Title: "Task A"},
-		{ID: "demo-1.2", Title: "Feature B"},
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Feature A", Type: "feature"},
+		{ID: "demo-1.1.1", Title: "Task A", Type: "task"},
+		{ID: "demo-1.2", Title: "Feature B", Type: "feature"},
 	}
 
+	// When: tree is built and feature is expanded
 	roots := buildTree(beads)
+	roots[0].Children[0].expanded = true // Expand demo-1.1 to show task
 	flat := flattenTree(roots)
 
 	// Then: task under non-last feature has "│   " continuation

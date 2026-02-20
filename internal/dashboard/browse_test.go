@@ -515,11 +515,19 @@ func TestBrowse_TreeHierarchyRendering(t *testing.T) {
 	if !strings.Contains(plain, "├── ") && !strings.Contains(plain, "└── ") {
 		t.Errorf("view should contain tree connectors, got:\n%s", plain)
 	}
-	// And: all beads are present
-	for _, b := range beads {
-		if !strings.Contains(plain, b.Title) {
-			t.Errorf("view should contain %q, got:\n%s", b.Title, plain)
-		}
+	// And: epic and feature are visible (feature collapsed by default)
+	if !strings.Contains(plain, "Epic") {
+		t.Errorf("view should contain %q, got:\n%s", "Epic", plain)
+	}
+	if !strings.Contains(plain, "Feature A") {
+		t.Errorf("view should contain %q, got:\n%s", "Feature A", plain)
+	}
+	// And: tasks are hidden (feature is collapsed)
+	if strings.Contains(plain, "Task A") {
+		t.Errorf("view should NOT contain %q (feature collapsed), got:\n%s", "Task A", plain)
+	}
+	if strings.Contains(plain, "Task B") {
+		t.Errorf("view should NOT contain %q (feature collapsed), got:\n%s", "Task B", plain)
 	}
 }
 

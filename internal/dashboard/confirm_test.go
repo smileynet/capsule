@@ -142,10 +142,9 @@ func TestCollectOpenChildren_DirectChildrenOnly(t *testing.T) {
 		{ID: "demo-1.2", Title: "Feature B", Type: "feature"},
 	}
 	roots := buildTree(beads)
-	flat := flattenTree(roots)
 
 	// When: collecting open children of demo-1
-	children := collectOpenChildren(flat, "demo-1")
+	children := collectOpenChildren(roots, "demo-1")
 
 	// Then: only direct children (features) are returned, not grandchildren (tasks)
 	if len(children) != 2 {
@@ -167,10 +166,9 @@ func TestCollectOpenChildren_SkipsClosedChildren(t *testing.T) {
 		{ID: "demo-1.2", Title: "Open", Type: "task"},
 	}
 	roots := buildTree(beads)
-	flat := flattenTree(roots)
 
 	// When: collecting open children
-	children := collectOpenChildren(flat, "demo-1")
+	children := collectOpenChildren(roots, "demo-1")
 
 	// Then: only the open child is returned
 	if len(children) != 1 {
@@ -187,10 +185,9 @@ func TestCollectOpenChildren_ParentNotFound(t *testing.T) {
 		{ID: "cap-001", Title: "Task"},
 	}
 	roots := buildTree(beads)
-	flat := flattenTree(roots)
 
 	// When: collecting children of a non-existent parent
-	children := collectOpenChildren(flat, "nonexistent")
+	children := collectOpenChildren(roots, "nonexistent")
 
 	// Then: no children returned
 	if len(children) != 0 {

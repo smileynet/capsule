@@ -131,3 +131,92 @@ func TestBuildTree_NestedDefaultExpansion(t *testing.T) {
 		t.Error("leaf task should not be expanded")
 	}
 }
+
+func TestFlattenTree_CollapsedNodeHidesChildren(t *testing.T) {
+	// Given: epic → feature (collapsed) → task hierarchy
+	beads := []BeadSummary{
+		{ID: "epic-1", Title: "Epic", Type: "epic"},
+		{ID: "epic-1.1", Title: "Feature", Type: "feature"},
+		{ID: "epic-1.1.1", Title: "Task A", Type: "task"},
+		{ID: "epic-1.1.2", Title: "Task B", Type: "task"},
+	}
+
+	// When: tree is built and feature is collapsed
+	roots := buildTree(beads)
+	roots[0].Children[0].expanded = false
+
+	// And: tree is flattened
+	flat := flattenTree(roots)
+
+	// Then: only epic and feature should be visible (tasks hidden)
+	if len(flat) != 2 {
+		t.Errorf("flat nodes = %d, want 2 (epic + feature, tasks hidden)", len(flat))
+	}
+	if flat[0].Node.Bead.ID != "epic-1" {
+		t.Errorf("flat[0] = %q, want %q", flat[0].Node.Bead.ID, "epic-1")
+	}
+	if flat[1].Node.Bead.ID != "epic-1.1" {
+		t.Errorf("flat[1] = %q, want %q", flat[1].Node.Bead.ID, "epic-1.1")
+	}
+}
+
+func TestFlattenTree_ExpandedNodeShowsChildren(t *testing.T) {
+	// Given: epic → feature (expanded) → task hierarchy
+	beads := []BeadSummary{
+		{ID: "epic-1", Title: "Epic", Type: "epic"},
+		{ID: "epic-1.1", Title: "Feature", Type: "feature"},
+		{ID: "epic-1.1.1", Title: "Task A", Type: "task"},
+		{ID: "epic-1.1.2", Title: "Task B", Type: "task"},
+	}
+
+	// When: tree is built and feature is expanded
+	roots := buildTree(beads)
+	roots[0].Children[0].expanded = true
+
+	// And: tree is flattened
+	flat := flattenTree(roots)
+
+	// Then: all nodes should be visible
+	if len(flat) != 4 {
+		t.Errorf("flat nodes = %d, want 4 (all visible)", len(flat))
+	}
+	wantIDs := []string{"epic-1", "epic-1.1", "epic-1.1.1", "epic-1.1.2"}
+	for i, want := range wantIDs {
+		if flat[i].Node.Bead.ID != want {
+			t.Errorf("flat[%d] = %q, want %q", i, flat[i].Node.Bead.ID, want)
+		}
+	}
+}
+
+func TestFlattenTree_MixedExpansionStates(t *testing.T) {
+	// Given: epic with 2 features, one expanded, one collapsed
+	beads := []BeadSummary{
+		{ID: "epic-1", Title: "Epic", Type: "epic"},
+		{ID: "epic-1.1", Title: "Feature A", Type: "feature"},
+		{ID: "epic-1.1.1", Title: "Task A1", Type: "task"},
+		{ID: "epic-1.2", Title: "Feature B", Type: "feature"},
+		{ID: "epic-1.2.1", Title: "Task B1", Type: "task"},
+	}
+
+	// When: tree is built with mixed expansion
+	roots := buildTree(beads)
+	roots[0].Children[0].expanded = true  // Feature A expanded
+	roots[0].Children[1].expanded = false // Feature B collapsed
+
+	// And: tree is flattened
+	flat := flattenTree(roots)
+
+	// Then: epic, both features, and only Feature A's task visible
+	if len(flat) != 4 {
+		t.Errorf("flat nodes = %d, want 4 (epic + 2 features + 1 task)", len(flat))
+	}
+	wantIDs := []string{"epic-1", "epic-1.1", "epic-1.1.1", "epic-1.2"}
+	for i, want := range wantIDs {
+		if i >= len(flat) {
+			t.Fatalf("flat[%d] missing, want %q", i, want)
+		}
+		if flat[i].Node.Bead.ID != want {
+			t.Errorf("flat[%d] = %q, want %q", i, flat[i].Node.Bead.ID, want)
+		}
+	}
+}

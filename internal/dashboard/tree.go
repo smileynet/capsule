@@ -125,6 +125,11 @@ func flattenNode(n *treeNode, parentPrefix string, depth int, result []flatNode)
 		Depth:  depth,
 	})
 
+	// Skip children if node is collapsed
+	if !n.expanded {
+		return result
+	}
+
 	// Build the continuation prefix for children.
 	var childPrefix string
 	if depth == 0 {

@@ -16,6 +16,7 @@ const closedBeadLimit = 50
 // browseState manages the bead list, cursor, and loading/error states
 // for browse mode's left pane. Shows all beads (open + closed) in a tree.
 type browseState struct {
+	roots     []*treeNode // Tree structure for accessing children
 	flatNodes []flatNode
 	cursor    int
 	loading   bool
@@ -87,12 +88,13 @@ func (bs browseState) applyBeadList(beads []BeadSummary, err error) browseState 
 	bs.loading = false
 	if err != nil {
 		bs.err = err
+		bs.roots = nil
 		bs.flatNodes = nil
 		return bs
 	}
 	bs.err = nil
-	roots := buildTree(beads)
-	bs.flatNodes = flattenTree(roots)
+	bs.roots = buildTree(beads)
+	bs.flatNodes = flattenTree(bs.roots)
 	bs.cursor = 0
 	return bs
 }
