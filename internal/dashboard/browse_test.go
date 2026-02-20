@@ -39,6 +39,59 @@ func sampleBeads() []BeadSummary {
 	}
 }
 
+func TestBrowse_RefreshPreservesExpansionState(t *testing.T) {
+	// Given: a browse state with mixed expanded/collapsed nodes
+	bs := newBrowseState()
+	beads := []BeadSummary{
+		{ID: "cap-001", Title: "Parent 1", Priority: 1, Type: "feature"},
+		{ID: "cap-001.1", Title: "Child 1", Priority: 2, Type: "task"},
+		{ID: "cap-002", Title: "Parent 2", Priority: 1, Type: "feature"},
+		{ID: "cap-002.1", Title: "Child 2", Priority: 2, Type: "task"},
+	}
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Expand cap-001 only
+	bs.expandedIDs["cap-001"] = true
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: refresh is triggered with same beads
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Then: expansion state is preserved
+	if !bs.expandedIDs["cap-001"] {
+		t.Error("cap-001 should remain expanded after refresh")
+	}
+	if bs.expandedIDs["cap-002"] {
+		t.Error("cap-002 should remain collapsed after refresh")
+	}
+
+	// And: tree reflects preserved state
+	if len(bs.flatNodes) != 3 { // cap-001, cap-001.1, cap-002
+		t.Errorf("expected 3 flat nodes (cap-001 expanded), got %d", len(bs.flatNodes))
+	}
+}
+
+func TestBrowse_RefreshRestoresCursor(t *testing.T) {
+	// Given: a model with lastDispatchedID set
+	m := newSizedModel(80, 24)
+	m.browse, _ = m.browse.Update(BeadListMsg{Beads: sampleBeads()})
+	m.lastDispatchedID = "cap-002"
+
+	// When: refresh occurs
+	updated, _ := m.Update(BeadListMsg{Beads: sampleBeads()})
+	m = updated.(Model)
+
+	// Then: cursor moves to lastDispatchedID
+	if m.browse.SelectedID() != "cap-002" {
+		t.Errorf("expected cursor at cap-002, got %s", m.browse.SelectedID())
+	}
+
+	// And: lastDispatchedID is cleared
+	if m.lastDispatchedID != "" {
+		t.Error("lastDispatchedID should be cleared after restore")
+	}
+}
+
 func TestBrowse_LoadingState(t *testing.T) {
 	// Given: a fresh browse state with no beads loaded
 	bs := newBrowseState()
