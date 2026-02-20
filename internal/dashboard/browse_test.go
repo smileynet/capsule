@@ -783,3 +783,88 @@ func TestBrowse_RightArrowKeyAlias(t *testing.T) {
 		t.Errorf("cursor = %d, want 1", bs.cursor)
 	}
 }
+
+func TestBrowse_LeftArrowCollapsesExpandedNode(t *testing.T) {
+	// Given: an expanded parent node with children
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+	// Expand the parent
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// Move cursor to child
+	if bs.cursor != 1 {
+		t.Fatalf("setup: cursor should be at child, got %d", bs.cursor)
+	}
+
+	// When: left arrow is pressed on the child
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: cursor moves to parent
+	if bs.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (parent)", bs.cursor)
+	}
+}
+
+func TestBrowse_LeftArrowOnCollapsedNodeMovesToParent(t *testing.T) {
+	// Given: a collapsed child node
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Feature", Type: "feature"},
+		{ID: "demo-1.1.1", Title: "Task", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+	// Expand epic to see feature
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// Move cursor to feature (collapsed)
+	if bs.cursor != 1 {
+		t.Fatalf("setup: cursor should be at feature, got %d", bs.cursor)
+	}
+
+	// When: left arrow is pressed on the collapsed feature
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: cursor moves to parent (epic)
+	if bs.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (parent epic)", bs.cursor)
+	}
+}
+
+func TestBrowse_LeftArrowOnRootNodeNoOp(t *testing.T) {
+	// Given: cursor on a root node
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: left arrow is pressed on the root
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+
+	// Then: no change (cursor stays at 0)
+	if bs.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (no-op on root)", bs.cursor)
+	}
+}
+
+func TestBrowse_LeftArrowKeyAlias(t *testing.T) {
+	// Given: an expanded parent with cursor on child
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// When: "left" key is pressed
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyLeft})
+
+	// Then: cursor moves to parent
+	if bs.cursor != 0 {
+		t.Errorf("cursor = %d, want 0", bs.cursor)
+	}
+}

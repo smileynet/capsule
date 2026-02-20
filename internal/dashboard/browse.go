@@ -135,6 +135,28 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		}
 		return bs, nil
 
+	case "left", "h":
+		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
+			currentNode := bs.flatNodes[bs.cursor].Node
+			currentID := currentNode.Bead.ID
+
+			// Find parent ID
+			parentID := findParentID(currentID)
+			if parentID == "" {
+				// Root node, no-op
+				return bs, nil
+			}
+
+			// Find parent in flatNodes
+			for i, fn := range bs.flatNodes {
+				if fn.Node.Bead.ID == parentID {
+					bs.cursor = i
+					break
+				}
+			}
+		}
+		return bs, nil
+
 	case "enter":
 		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
 			node := bs.flatNodes[bs.cursor].Node
@@ -155,6 +177,17 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 	}
 
 	return bs, nil
+}
+
+// findParentID returns the parent ID for a given bead ID, or "" if it's a root.
+// Example: "demo-1.1.2" -> "demo-1.1", "demo-1" -> ""
+func findParentID(id string) string {
+	for i := len(id) - 1; i >= 0; i-- {
+		if id[i] == '.' {
+			return id[:i]
+		}
+	}
+	return ""
 }
 
 // SelectedID returns the bead ID at the current cursor position,
