@@ -29,7 +29,8 @@ type treeStats struct {
 // A bead is a child of the bead with the longest matching ID prefix.
 // Beads with no parent in the list become roots.
 // Children are sorted by ID within each parent.
-func buildTree(beads []BeadSummary) []*treeNode {
+// expandedIDs is used to restore expansion state from previous builds.
+func buildTree(beads []BeadSummary, expandedIDs map[string]bool) []*treeNode {
 	// Build nodes indexed by ID.
 	nodes := make(map[string]*treeNode, len(beads))
 	for _, b := range beads {
@@ -58,7 +59,7 @@ func buildTree(beads []BeadSummary) []*treeNode {
 
 	// Mark last children and sort children by ID at each level.
 	for _, root := range roots {
-		finalizeNode(root)
+		finalizeNode(root, expandedIDs)
 	}
 	return roots
 }
@@ -78,11 +79,16 @@ func findParent(childID string, nodes map[string]*treeNode) string {
 }
 
 // finalizeNode sorts children by ID and marks the last child at each level.
-// It also sets default expansion state: epics expanded, features collapsed.
-func finalizeNode(n *treeNode) {
-	// Set default expansion based on type
+// It also sets expansion state: restored from expandedIDs if present, otherwise
+// defaults to epics expanded, features collapsed.
+func finalizeNode(n *treeNode, expandedIDs map[string]bool) {
+	// Set expansion state: check expandedIDs first, then fall back to default
 	if len(n.Children) > 0 {
-		n.expanded = n.Bead.Type == "epic"
+		if expanded, ok := expandedIDs[n.Bead.ID]; ok {
+			n.expanded = expanded
+		} else {
+			n.expanded = n.Bead.Type == "epic"
+		}
 	}
 
 	if len(n.Children) == 0 {
@@ -93,7 +99,7 @@ func finalizeNode(n *treeNode) {
 	})
 	for i, child := range n.Children {
 		child.IsLast = i == len(n.Children)-1
-		finalizeNode(child)
+		finalizeNode(child, expandedIDs)
 	}
 }
 

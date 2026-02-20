@@ -16,16 +16,20 @@ const closedBeadLimit = 50
 // browseState manages the bead list, cursor, and loading/error states
 // for browse mode's left pane. Shows all beads (open + closed) in a tree.
 type browseState struct {
-	roots     []*treeNode // Tree structure for accessing children
-	flatNodes []flatNode
-	cursor    int
-	loading   bool
-	err       error
+	roots       []*treeNode // Tree structure for accessing children
+	flatNodes   []flatNode
+	cursor      int
+	loading     bool
+	err         error
+	expandedIDs map[string]bool // Tracks which nodes are expanded
 }
 
 // newBrowseState returns a browseState in the loading state.
 func newBrowseState() browseState {
-	return browseState{loading: true}
+	return browseState{
+		loading:     true,
+		expandedIDs: make(map[string]bool),
+	}
 }
 
 // initBrowse returns a tea.Cmd that fetches both ready and closed beads,
@@ -93,9 +97,19 @@ func (bs browseState) applyBeadList(beads []BeadSummary, err error) browseState 
 		return bs
 	}
 	bs.err = nil
-	bs.roots = buildTree(beads)
+	bs.roots = buildTree(beads, bs.expandedIDs)
 	bs.flatNodes = flattenTree(bs.roots)
 	bs.cursor = 0
+	// Clean up expandedIDs for beads that no longer exist
+	validIDs := make(map[string]bool)
+	for _, b := range beads {
+		validIDs[b.ID] = true
+	}
+	for id := range bs.expandedIDs {
+		if !validIDs[id] {
+			delete(bs.expandedIDs, id)
+		}
+	}
 	return bs
 }
 
@@ -125,6 +139,7 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 			if isExpandable(node) {
 				if !node.expanded {
 					node.expanded = true
+					bs.expandedIDs[node.Bead.ID] = true
 					bs.flatNodes = flattenTree(bs.roots)
 				}
 				// Move cursor to first child

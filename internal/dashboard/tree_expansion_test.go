@@ -24,7 +24,7 @@ func TestBuildTree_DefaultExpansion(t *testing.T) {
 	}
 
 	// When: tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: epics should be expanded by default
 	epic := roots[0]
@@ -111,7 +111,7 @@ func TestBuildTree_NestedDefaultExpansion(t *testing.T) {
 	}
 
 	// When: tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: epic is expanded
 	epic := roots[0]
@@ -142,7 +142,7 @@ func TestFlattenTree_CollapsedNodeHidesChildren(t *testing.T) {
 	}
 
 	// When: tree is built and feature is collapsed
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 	roots[0].Children[0].expanded = false
 
 	// And: tree is flattened
@@ -170,7 +170,7 @@ func TestFlattenTree_ExpandedNodeShowsChildren(t *testing.T) {
 	}
 
 	// When: tree is built and feature is expanded
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 	roots[0].Children[0].expanded = true
 
 	// And: tree is flattened
@@ -199,7 +199,7 @@ func TestFlattenTree_MixedExpansionStates(t *testing.T) {
 	}
 
 	// When: tree is built with mixed expansion
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 	roots[0].Children[0].expanded = true  // Feature A expanded
 	roots[0].Children[1].expanded = false // Feature B collapsed
 

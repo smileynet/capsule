@@ -25,7 +25,7 @@ func TestBuildTree_FlatList(t *testing.T) {
 	}
 
 	// When: the tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: all beads are roots
 	if len(roots) != 3 {
@@ -47,7 +47,7 @@ func TestBuildTree_SingleLevel(t *testing.T) {
 	}
 
 	// When: the tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: there is 1 root with 2 children
 	if len(roots) != 1 {
@@ -78,7 +78,7 @@ func TestBuildTree_MultiLevel(t *testing.T) {
 	}
 
 	// When: the tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: structure is demo-1 → demo-1.1 → [demo-1.1.1, demo-1.1.2]
 	if len(roots) != 1 {
@@ -111,7 +111,7 @@ func TestBuildTree_OrphanChildren(t *testing.T) {
 	}
 
 	// When: the tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: both are roots (orphans)
 	if len(roots) != 2 {
@@ -129,7 +129,7 @@ func TestBuildTree_ChildrenSortedByID(t *testing.T) {
 	}
 
 	// When: the tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: children are sorted by ID
 	if len(roots) != 1 {
@@ -155,7 +155,7 @@ func TestBuildTree_IsLastMarking(t *testing.T) {
 	}
 
 	// When: the tree is built
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	// Then: the last child is marked
 	children := roots[0].Children
@@ -178,7 +178,7 @@ func TestFlattenTree_BoxDrawing(t *testing.T) {
 	}
 
 	// When: the tree is built and features are expanded
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 	roots[0].Children[0].expanded = true // Expand demo-1.1 to show tasks
 	flat := flattenTree(roots)
 
@@ -218,7 +218,7 @@ func TestFlattenTree_Depth(t *testing.T) {
 	}
 
 	// When: tree is built and feature is expanded
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 	roots[0].Children[0].expanded = true // Expand feature to show task
 	flat := flattenTree(roots)
 
@@ -254,7 +254,7 @@ func TestFlattenTree_ContinuationPrefix(t *testing.T) {
 	}
 
 	// When: tree is built and feature is expanded
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 	roots[0].Children[0].expanded = true // Expand demo-1.1 to show task
 	flat := flattenTree(roots)
 
@@ -393,7 +393,7 @@ func TestBuildTree_MultipleRoots(t *testing.T) {
 		{ID: "beta-1.1", Title: "Beta Task"},
 	}
 
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 
 	if len(roots) != 2 {
 		t.Fatalf("roots = %d, want 2", len(roots))
@@ -413,7 +413,7 @@ func TestFlattenTree_MultipleRoots(t *testing.T) {
 		{ID: "b", Title: "Root B"},
 	}
 
-	roots := buildTree(beads)
+	roots := buildTree(beads, nil)
 	flat := flattenTree(roots)
 
 	if len(flat) != 2 {

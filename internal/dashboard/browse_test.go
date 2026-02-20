@@ -868,3 +868,72 @@ func TestBrowse_LeftArrowKeyAlias(t *testing.T) {
 		t.Errorf("cursor = %d, want 0", bs.cursor)
 	}
 }
+
+func TestBrowse_ExpansionStatePreservedAcrossRebuild(t *testing.T) {
+	// Given: a browse state with a feature (collapsed by default) that is manually expanded
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Feature", Type: "feature"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+	// Expand the feature (overriding default collapsed state)
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// When: the tree is rebuilt with the same beads
+	bs = bs.applyBeadList(beads, nil)
+
+	// Then: the feature should still be expanded (not reverted to default)
+	if len(bs.flatNodes) != 2 {
+		t.Errorf("flatNodes = %d, want 2 (parent + child visible)", len(bs.flatNodes))
+	}
+	if !bs.flatNodes[0].Node.expanded {
+		t.Error("feature should remain expanded after rebuild (not revert to default)")
+	}
+}
+
+func TestBrowse_CollapsedStatePreservedAcrossRebuild(t *testing.T) {
+	// Given: a browse state with a collapsed parent (default for features)
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Feature", Type: "feature"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: the tree is rebuilt with the same beads
+	bs = bs.applyBeadList(beads, nil)
+
+	// Then: the parent should still be collapsed
+	if len(bs.flatNodes) != 1 {
+		t.Errorf("flatNodes = %d, want 1 (parent only, child hidden)", len(bs.flatNodes))
+	}
+	if bs.flatNodes[0].Node.expanded {
+		t.Error("feature should remain collapsed after rebuild")
+	}
+}
+
+func TestBrowse_ExpansionStateHandlesDeletedBead(t *testing.T) {
+	// Given: a browse state with an expanded parent
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// When: the tree is rebuilt without the parent
+	newBeads := []BeadSummary{
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs = bs.applyBeadList(newBeads, nil)
+
+	// Then: the state should not crash and should show the remaining bead
+	if len(bs.flatNodes) != 1 {
+		t.Errorf("flatNodes = %d, want 1", len(bs.flatNodes))
+	}
+	if bs.flatNodes[0].Node.Bead.ID != "demo-1.1" {
+		t.Errorf("remaining bead ID = %q, want %q", bs.flatNodes[0].Node.Bead.ID, "demo-1.1")
+	}
+}
