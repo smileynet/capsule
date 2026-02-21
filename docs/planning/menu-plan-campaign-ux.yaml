@@ -143,7 +143,7 @@ phases:
             tracer: "Foundation — proves errors are no longer silently swallowed"
             description: |
               - Add a logger (io.Writer or *log.Logger) to campaign.Runner (via Config)
-              - Replace all 6 instances of `_ = r.store.Save(state)` with:
+              - Replace all 7 instances of `_ = r.store.Save(state)` with:
                 `if err := r.store.Save(state); err != nil { log warning }`
               - Replace `_ = r.beads.Close(beadID)` in runPostPipeline with logged warning
               - Campaign continues on save failure (best-effort, not fatal)
