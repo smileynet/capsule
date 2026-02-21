@@ -193,6 +193,20 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		}
 		return bs, nil
 
+	case "c":
+		// Collapse all nodes
+		bs.expandedIDs = make(map[string]bool)
+		bs.roots = buildTree(getAllBeads(bs.roots), bs.expandedIDs)
+		bs.flatNodes = flattenTree(bs.roots)
+		// Clamp cursor after collapse
+		if bs.cursor >= len(bs.flatNodes) {
+			bs.cursor = len(bs.flatNodes) - 1
+		}
+		if bs.cursor < 0 && len(bs.flatNodes) > 0 {
+			bs.cursor = 0
+		}
+		return bs, nil
+
 	case "enter":
 		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
 			node := bs.flatNodes[bs.cursor].Node
@@ -241,6 +255,22 @@ func (bs browseState) SelectedBead() (BeadSummary, bool) {
 		return BeadSummary{}, false
 	}
 	return bs.flatNodes[bs.cursor].Node.Bead, true
+}
+
+// getAllBeads extracts all BeadSummary from tree nodes.
+func getAllBeads(roots []*treeNode) []BeadSummary {
+	var beads []BeadSummary
+	var walk func(*treeNode)
+	walk = func(n *treeNode) {
+		beads = append(beads, n.Bead)
+		for _, child := range n.Children {
+			walk(child)
+		}
+	}
+	for _, root := range roots {
+		walk(root)
+	}
+	return beads
 }
 
 // View renders the browse pane content for the given dimensions.

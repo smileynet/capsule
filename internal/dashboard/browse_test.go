@@ -92,6 +92,36 @@ func TestBrowse_RefreshRestoresCursor(t *testing.T) {
 	}
 }
 
+func TestBrowse_CollapseAll(t *testing.T) {
+	// Given: a browse state with multiple expanded nodes
+	bs := newBrowseState()
+	beads := []BeadSummary{
+		{ID: "cap-001", Title: "Parent 1", Priority: 1, Type: "feature"},
+		{ID: "cap-001.1", Title: "Child 1", Priority: 2, Type: "task"},
+		{ID: "cap-002", Title: "Parent 2", Priority: 1, Type: "feature"},
+		{ID: "cap-002.1", Title: "Child 2", Priority: 2, Type: "task"},
+	}
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Expand both parents
+	bs.expandedIDs["cap-001"] = true
+	bs.expandedIDs["cap-002"] = true
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: 'c' key is pressed
+	bs, _ = bs.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+
+	// Then: all nodes are collapsed
+	if len(bs.expandedIDs) != 0 {
+		t.Errorf("expected expandedIDs to be empty, got %d entries", len(bs.expandedIDs))
+	}
+
+	// And: tree is rebuilt with all nodes collapsed
+	if len(bs.flatNodes) != 2 { // Only root nodes visible
+		t.Errorf("expected 2 flat nodes (all collapsed), got %d", len(bs.flatNodes))
+	}
+}
+
 func TestBrowse_LoadingState(t *testing.T) {
 	// Given: a fresh browse state with no beads loaded
 	bs := newBrowseState()

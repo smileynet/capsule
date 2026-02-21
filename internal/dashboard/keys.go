@@ -8,15 +8,16 @@ import (
 
 // browseKeys holds key bindings for browse mode.
 type browseKeys struct {
-	Up       key.Binding
-	Down     key.Binding
-	Right    key.Binding
-	Left     key.Binding
-	Enter    key.Binding
-	Tab      key.Binding
-	Provider key.Binding
-	Refresh  key.Binding
-	Quit     key.Binding
+	Up          key.Binding
+	Down        key.Binding
+	Right       key.Binding
+	Left        key.Binding
+	Enter       key.Binding
+	Tab         key.Binding
+	Provider    key.Binding
+	CollapseAll key.Binding
+	Refresh     key.Binding
+	Quit        key.Binding
 }
 
 // ShortHelp returns the browse mode bindings for the help bar.
@@ -25,7 +26,7 @@ func (k browseKeys) ShortHelp() []key.Binding {
 	if k.Provider.Enabled() {
 		bindings = append(bindings, k.Provider)
 	}
-	return append(bindings, k.Refresh, k.Quit)
+	return append(bindings, k.CollapseAll, k.Refresh, k.Quit)
 }
 
 // FullHelp returns the browse mode bindings grouped for expanded help.
@@ -34,7 +35,7 @@ func (k browseKeys) FullHelp() [][]key.Binding {
 	if k.Provider.Enabled() {
 		row2 = append(row2, k.Provider)
 	}
-	row2 = append(row2, k.Refresh, k.Quit)
+	row2 = append(row2, k.CollapseAll, k.Refresh, k.Quit)
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Right, k.Left, k.Enter},
 		row2,
@@ -111,6 +112,10 @@ func BrowseKeyMap() browseKeys {
 			key.WithKeys("p"),
 			key.WithHelp("p", "provider"),
 			key.WithDisabled(),
+		),
+		CollapseAll: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "collapse all"),
 		),
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),
