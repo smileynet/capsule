@@ -1,0 +1,13 @@
+2026-02-21 | brainstorm | Subcampaign overlay not tree state | Max depth 3; flat overlay simpler for one nesting level
+2026-02-21 | brainstorm | PostTaskFunc injection not callback method | Callbacks are notification-only; func returns error for flow control
+2026-02-21 | brainstorm | Worktree lifecycle first, then errors, then animation | Data integrity before visual polish; errors are small and independent
+2026-02-21 | brainstorm | Defer observability wishlist to separate epic | Core fixes are independent; wishlist items are enhancements
+2026-02-21 | brainstorm | Agent pair resolves merge conflicts first | execute → sign-off pair with conflict context; pause + toast if unresolvable after retries
+2026-02-21 | brainstorm | All behavior driven by agent pairs | When items missed, invoke contextually appropriate pair — see catalog in brainstorm doc
+2026-02-21 | brainstorm | Non-blocking notifications for campaign issues | Five-layer model: animation → status bar → toast → right-pane → event log. Never modal
+2026-02-21 | scope | Two phases: data integrity first, then animation | Worktree + errors must be solid before nested animation layer
+2026-02-21 | scope | Conflict resolution as separate feature (1.2) not part of worktree lifecycle (1.1) | Agent pair invocation is complex enough to be its own feature; 1.1 can ship without it
+2026-02-21 | scope | PostTaskFunc for task-level only, not feature/epic beads | Feature beads don't have worktrees — they're containers. Only leaf tasks run pipelines in worktrees
+2026-02-21 | scope | Single subcampaign pointer not array | Only one feature runs at a time within an epic; no need for concurrent subcampaign state
+2026-02-21 | finalize | Epic cap-9f0 with 4 features, 14 tasks | Converted menu plan to beads with dependencies
+2026-02-21 | finalize | 4 BDD feature files + 10 TDD spec files | Language-agnostic test specifications for /cook phase

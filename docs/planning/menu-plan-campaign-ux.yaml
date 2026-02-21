@@ -1,0 +1,279 @@
+phases:
+  - id: phase-1
+    title: "Phase 1: Campaign Data Integrity"
+    description: "Fix worktree lifecycle and error visibility so campaigns produce correct results"
+
+    features:
+      - id: feature-1.1
+        title: "Feature 1.1: Worktree merge/cleanup per campaign task"
+        priority: 1
+        user_story: "As a developer running a multi-task campaign, I want each task's changes merged to main before the next task starts so that tasks build on each other's work and worktrees don't accumulate"
+        acceptance_criteria:
+          - "Each successful task's worktree is merged to main, removed, and pruned before the next task starts"
+          - "Campaign tasks branch from updated main (containing all prior task merges)"
+          - "PostTaskFunc is injectable — campaign package does not import worktree package"
+          - "CLI campaign command (`capsule campaign`) wires PostTaskFunc with existing merge/cleanup logic"
+          - "Dashboard campaign dispatch wires PostTaskFunc identically"
+        tracer_strategy:
+          minimal_flow: "PostTaskFunc injection → merge after task 1 → task 2 branches from updated main"
+          layers: "campaign.Runner config → runRecursive call site → main.go wiring"
+          expansion: "Conflict resolution via agent pair (feature 1.2), feature-level cleanup"
+
+        tasks:
+          - title: "Add PostTaskFunc to campaign.Config and call after successful task"
+            priority: 1
+            tracer: "Foundation — proves the injection point works and is called at the right time"
+            description: |
+              - Add `PostTaskFunc func(beadID string) error` to campaign.Config
+              - In runRecursive, after successful pipeline.RunPipeline and before state advance:
+                call PostTaskFunc if non-nil
+              - If PostTaskFunc returns error: treat as task failure (apply failure mode)
+              - Replace hardcoded `runPostPipeline` method: if PostTaskFunc is set, call it
+                instead of the bare `beads.Close(beadID)`
+              - When PostTaskFunc is nil: fall back to current behavior (bead close only)
+              - Update campaign_test.go: verify PostTaskFunc is called after each task success,
+                not called on task failure, not called for recursive feature/epic entries
+            deliverable: "campaign.Config.PostTaskFunc field, called in runRecursive"
+            tdd: true
+
+          - title: "Wire PostTaskFunc in CLI campaign command"
+            priority: 1
+            depends_on: ["Add PostTaskFunc to campaign.Config and call after successful task"]
+            tracer: "CLI wiring — proves existing merge/cleanup runs per campaign task"
+            description: |
+              - In CampaignCmd.Run (main.go): construct PostTaskFunc closure that calls
+                postPipeline(io.Discard, beadID, wtMgr, bdClient)
+              - Pass it via campaign.Config when constructing campaign.Runner
+              - Verify: run `capsule campaign` on a feature with 2 tasks — both worktrees
+                should be merged and cleaned up
+            deliverable: "CampaignCmd wires PostTaskFunc"
+            tdd: true
+
+          - title: "Wire PostTaskFunc in dashboard campaign dispatch"
+            priority: 1
+            depends_on: ["Add PostTaskFunc to campaign.Config and call after successful task"]
+            tracer: "Dashboard wiring — proves merge/cleanup runs when dispatched from TUI"
+            description: |
+              - In dashboardCampaignAdapter.RunCampaign (main.go): pass PostTaskFunc through
+                campaign.Config, same closure as CLI wiring
+              - The adapter already has access to worktree manager and bead client
+              - Verify: dispatch a feature from dashboard — worktrees merged after each task
+            deliverable: "Dashboard campaign adapter wires PostTaskFunc"
+            tdd: true
+
+      - id: feature-1.2
+        title: "Feature 1.2: Agent-driven merge conflict resolution"
+        priority: 2
+        blocks: []
+        user_story: "As a developer running a campaign, I want merge conflicts to be resolved automatically by the agent pair when possible, and to receive a non-blocking notification when manual intervention is needed, so that campaigns continue without unnecessary interruption"
+        acceptance_criteria:
+          - "On ErrMergeConflict in PostTaskFunc, the execute → sign-off agent pair is invoked with conflict context"
+          - "If the agent pair resolves the conflict (sign-off PASS), the merge is retried and succeeds"
+          - "If the agent pair cannot resolve after max retries, the campaign pauses"
+          - "A non-blocking notification (status bar / toast) informs the user of the unresolved conflict"
+          - "The paused campaign is resumable from the conflicted task"
+        tracer_strategy:
+          minimal_flow: "Detect conflict → invoke agent pair → retry merge or pause"
+          layers: "PostTaskFunc error handling → orchestrator pair invocation → campaign pause + notification"
+          expansion: "Confidence scoring by conflict type, structured conflict context prompt"
+
+        tasks:
+          - title: "Add conflict resolution callback to PostTaskFunc"
+            priority: 2
+            depends_on: ["Add PostTaskFunc to campaign.Config and call after successful task"]
+            tracer: "Conflict detection — proves PostTaskFunc can detect and route merge conflicts"
+            description: |
+              - Add `ConflictResolver func(beadID string, conflictErr error) error` to campaign.Config
+              - In PostTaskFunc wiring (main.go): when MergeToMain returns ErrMergeConflict,
+                call ConflictResolver if set
+              - ConflictResolver invokes orchestrator.RunPhasePair(execute, sign-off) with
+                conflict context (files in conflict, diff of both sides)
+              - If ConflictResolver succeeds: retry MergeToMain
+              - If ConflictResolver fails: return error to campaign runner (triggers pause)
+              - Test: mock conflict resolver that succeeds → merge retried
+              - Test: mock conflict resolver that fails → campaign pauses
+            deliverable: "ConflictResolver in Config, wired in PostTaskFunc"
+            tdd: true
+
+          - title: "Add conflict resolution prompt template"
+            priority: 2
+            depends_on: ["Add conflict resolution callback to PostTaskFunc"]
+            tracer: "Agent context — proves the agent pair gets the right conflict information"
+            description: |
+              - Create prompts/conflict-resolve.md template
+              - Include: files in conflict, git diff --diff-filter=U output, both sides
+              - Template variables: {{CONFLICT_FILES}}, {{CONFLICT_DIFF}}, {{BEAD_CONTEXT}}
+              - The execute phase uses this template when invoked for conflict resolution
+              - sign-off evaluates whether the resolution is correct
+            deliverable: "prompts/conflict-resolve.md template"
+            tdd: false
+
+          - title: "Emit non-blocking notification on unresolved conflict"
+            priority: 2
+            depends_on: ["Add conflict resolution callback to PostTaskFunc"]
+            tracer: "User notification — proves unresolved conflicts are visible without blocking"
+            description: |
+              - When ConflictResolver fails and campaign pauses: emit a campaign event
+                (CampaignPausedMsg with reason and conflict details)
+              - Dashboard shows toast notification with conflict summary
+              - Status bar shows "Paused: merge conflict in <beadID>"
+              - Right pane shows resolution instructions when paused task is selected
+              - CLI adapter prints conflict details to stderr
+            deliverable: "Non-blocking conflict notification in dashboard and CLI"
+            tdd: true
+
+      - id: feature-1.3
+        title: "Feature 1.3: Campaign error observability"
+        priority: 1
+        user_story: "As a developer running a campaign, I want to see why tasks failed and be alerted to infrastructure issues so that I can diagnose problems without checking log files manually"
+        acceptance_criteria:
+          - "State save failures are logged to stderr (not silently discarded)"
+          - "Failed tasks include error detail text in the dashboard"
+          - "Selecting a failed task in campaign view shows error + reviewer feedback in right pane"
+          - "Bead close failures are logged as warnings"
+          - "CLI campaign output includes error detail for failed tasks"
+        tracer_strategy:
+          minimal_flow: "Replace _ = with log → add Error to message → show in right pane"
+          layers: "campaign.go save logging → msg.go Error field → campaign.go right pane view"
+          expansion: "Structured JSONL event log, error accumulator summary (deferred)"
+
+        tasks:
+          - title: "Log state save and bead close failures in campaign runner"
+            priority: 1
+            tracer: "Foundation — proves errors are no longer silently swallowed"
+            description: |
+              - Add a logger (io.Writer or *log.Logger) to campaign.Runner (via Config)
+              - Replace all 6 instances of `_ = r.store.Save(state)` with:
+                `if err := r.store.Save(state); err != nil { log warning }`
+              - Replace `_ = r.beads.Close(beadID)` in runPostPipeline with logged warning
+              - Campaign continues on save failure (best-effort, not fatal)
+              - Test: mock StateStore that returns error → verify warning logged
+            deliverable: "All silent _ = discards replaced with logged warnings"
+            tdd: true
+
+          - title: "Add error detail to CampaignTaskDoneMsg and wire in callback"
+            priority: 1
+            depends_on: ["Log state save and bead close failures in campaign runner"]
+            tracer: "Error propagation — proves error text reaches the dashboard"
+            description: |
+              - Add `Error string` field to CampaignTaskDoneMsg (internal/dashboard/msg.go)
+              - In dashboardCampaignCallback.OnTaskFail: stop discarding err parameter,
+                populate Error field with err.Error()
+              - In campaignState: store error text per task (add `taskErrors map[string]string`
+                or `[]string` parallel to taskStatuses)
+              - In campaignState.Update: when CampaignTaskDoneMsg has Error, store it
+              - Test: verify OnTaskFail propagates error string through to campaignState
+            deliverable: "Error text flows from callback to dashboard state"
+            tdd: true
+
+          - title: "Display error detail in dashboard right pane for failed tasks"
+            priority: 1
+            depends_on: ["Add error detail to CampaignTaskDoneMsg and wire in callback"]
+            tracer: "User visibility — proves developers can see why a task failed"
+            description: |
+              - In campaignState.ViewReport (right pane): when selected task is failed,
+                show error text prominently (red, above phase reports)
+              - Include the reviewer's final feedback if available in phase reports
+              - Follow existing pattern: right pane already shows phase reports for
+                completed tasks
+              - Also add error detail to CLI adapter's OnTaskFail output
+            deliverable: "Failed tasks show error in right pane"
+            tdd: false
+
+  - id: phase-2
+    title: "Phase 2: Nested Campaign Animation"
+    description: "Fix epic-level dashboard display so features and their tasks render as a nested hierarchy"
+
+    features:
+      - id: feature-2.1
+        title: "Feature 2.1: Depth-aware campaign callback adapter"
+        priority: 2
+        user_story: "As a developer dispatching an epic from the dashboard, I want to see the epic's features as the top-level campaign view with tasks nested under the running feature, so that I can track progress at every level of the hierarchy"
+        acceptance_criteria:
+          - "Epic dispatch shows features as top-level rows (not replaced by feature tasks)"
+          - "When a feature starts, its child tasks appear nested below the feature row"
+          - "Pipeline phases animate under the active task within the feature"
+          - "When a feature completes, nested tasks collapse and feature shows checkmark + duration"
+          - "Background mode works correctly with nested campaign messages"
+          - "CLI adapter logs subcampaign events with indented formatting"
+        tracer_strategy:
+          minimal_flow: "Depth tracking in callback → SubCampaignStartMsg → dashboard overlays tasks under feature"
+          layers: "dashboardCampaignCallback stack → new msg types → campaignState subcampaign fields → view rendering"
+          expansion: "Feature validation display, animated transitions on collapse"
+
+        tasks:
+          - title: "Add depth tracking and stack to dashboardCampaignCallback"
+            priority: 1
+            tracer: "Foundation — proves callback distinguishes root vs nested campaigns"
+            description: |
+              - Add `depth int` and `stack []campaignLevel` to dashboardCampaignCallback
+              - struct campaignLevel { parentID string, taskIndex int, taskTotal int }
+              - OnCampaignStart: if depth == 0, send CampaignStartMsg (as today);
+                if depth > 0, push current state to stack, send SubCampaignStartMsg
+              - OnCampaignComplete: if depth > 0, pop stack, send SubCampaignDoneMsg;
+                if depth == 0, send CampaignDoneMsg (as today)
+              - OnTaskStart/OnTaskComplete/OnTaskFail: route to correct level based on depth
+              - Increment depth on push, decrement on pop
+              - Test: simulate epic → feature → task sequence, verify correct message types
+            deliverable: "Callback adapter with depth stack"
+            tdd: true
+
+          - title: "Add SubCampaignStartMsg and SubCampaignDoneMsg message types"
+            priority: 1
+            depends_on: ["Add depth tracking and stack to dashboardCampaignCallback"]
+            tracer: "Message types — proves new events flow through the Bubble Tea event loop"
+            description: |
+              - Add to internal/dashboard/msg.go:
+                SubCampaignStartMsg { ParentBeadID string, Tasks []CampaignTaskInfo }
+                SubCampaignDoneMsg { ParentBeadID string, Duration time.Duration }
+              - Add routing in Model.Update: forward to campaignState.Update
+              - Verify messages route correctly in both ModeCampaign and backgroundMode
+            deliverable: "New msg types routed through Model.Update"
+            tdd: true
+
+          - title: "Add subcampaign overlay state to campaignState"
+            priority: 1
+            depends_on: ["Add SubCampaignStartMsg and SubCampaignDoneMsg message types"]
+            tracer: "State management — proves nested task state coexists with parent campaign state"
+            description: |
+              - Add to campaignState struct:
+                subcampaign *subcampaignState (nil when no subcampaign active)
+              - subcampaignState: { parentBeadID, tasks, statuses, durations, reports,
+                currentIdx, pipeline pipelineState }
+              - campaignState.Update handles SubCampaignStartMsg: create subcampaignState,
+                tasks overlay under the running feature row
+              - campaignState.Update handles SubCampaignDoneMsg: clear subcampaignState
+              - Route CampaignTaskStartMsg/DoneMsg to subcampaign when active
+                (check depth or parentID match)
+              - Test: start subcampaign → tasks tracked → done → subcampaign cleared
+            deliverable: "campaignState with subcampaign overlay"
+            tdd: true
+
+          - title: "Render nested task rows under running feature in campaign view"
+            priority: 2
+            depends_on: ["Add subcampaign overlay state to campaignState"]
+            tracer: "Visual correctness — proves the nested hierarchy renders as designed in handoff doc"
+            description: |
+              - Update campaignState.View to render subcampaign tasks indented under
+                the running feature row
+              - Indentation levels: feature row (1 indent), task row (2 indents),
+                phase row (3 indents)
+              - Active task shows pipeline phases underneath (reuse pipelineState rendering)
+              - Completed tasks show checkmark + duration, collapsed phases
+              - Failed tasks show red X, selectable for error detail
+              - When subcampaign is nil: render feature rows as today (flat)
+              - Match the UX vision from docs/handoff-campaign-ux.md
+            deliverable: "Nested campaign view matching handoff UX spec"
+            tdd: false
+
+          - title: "Update CLI adapter for nested campaign output"
+            priority: 3
+            depends_on: ["Add depth tracking and stack to dashboardCampaignCallback"]
+            tracer: "CLI parity — proves plain text output shows nesting"
+            description: |
+              - Update campaignPlainTextCallback to handle depth
+              - Indent output lines based on depth level
+              - Format: "[timestamp]   Task 1a — title" (extra indent for subcampaign tasks)
+              - Subcampaign start/done logged as section headers
+            deliverable: "CLI campaign output with indented subcampaign formatting"
+            tdd: false
