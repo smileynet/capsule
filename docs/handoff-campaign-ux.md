@@ -46,7 +46,7 @@ capsule dashboard → select epic → Enter → Enter
 
 ### 3. Silent Error Handling (observability)
 
-**Symptom**: Things fail and nobody knows. The campaign has 6 instances of `_ = r.store.Save(state)`. Failed tasks show no error detail in the dashboard — just a red X with no explanation.
+**Symptom**: Things fail and nobody knows. The campaign has 7 instances of `_ = r.store.Save(state)`. Failed tasks show no error detail in the dashboard — just a red X with no explanation.
 
 **Fix idea**: Log state save failures to stderr. Add error text to `CampaignTaskDoneMsg`. Show error in the dashboard's right pane when a failed task is selected.
 

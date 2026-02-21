@@ -25,7 +25,7 @@ Feature: Worktree merge/cleanup per campaign task
   Scenario: PostTaskFunc is injectable without importing worktree package
     Given a campaign runner configured with a PostTaskFunc
     Then the campaign package should not import the worktree package
-    And PostTaskFunc should receive the completed task's bead ID and result
+    And PostTaskFunc should receive the completed task's bead ID
 
   Scenario: CLI campaign command wires PostTaskFunc with merge/cleanup logic
     Given the CLI campaign command is invoked

@@ -7,7 +7,7 @@ Foundation — proves errors are no longer silently swallowed.
 
 ## Context
 - Add logger (`io.Writer`) to `campaign.Runner` via `Config`
-- Replace all 6 `_ = r.store.Save(state)` with logged warnings
+- Replace all 7 `_ = r.store.Save(state)` with logged warnings
 - Replace `_ = r.beads.Close(beadID)` in `runPostPipeline` with logged warning
 - Campaign continues after save/close failure (best-effort, not fatal)
 
@@ -18,16 +18,17 @@ Foundation — proves errors are no longer silently swallowed.
 | store.Save returns error | Warning written to logger | No longer silent |
 | beads.Close returns error | Warning written to logger | No longer silent |
 | store.Save fails, campaign continues | Next task still runs | Best-effort save |
-| All 6 Save call sites fail | 6 distinct warnings logged | Full coverage |
+| All 7 Save call sites fail | 7 distinct warnings logged | Full coverage |
 | Logger is nil | No panic, warnings silently dropped | Nil-safe |
 | Logger set to bytes.Buffer | Buffer contains warning text | Testable output |
 
 ## Edge Cases
 - [ ] Save failure at circuit breaker trip (line 193)
-- [ ] Save failure at context cancellation (line 219)
+- [ ] Save failure at context cancellation (line 218)
 - [ ] Save failure at pipeline pause (line 225)
 - [ ] Save failure at task failure in abort mode (line 236)
 - [ ] Save failure at task failure in continue mode (line 240)
+- [ ] Save failure after successful task state advance (line 251)
 - [ ] Save failure at campaign completion (line 262)
 - [ ] Warning message includes state ID and error text
 

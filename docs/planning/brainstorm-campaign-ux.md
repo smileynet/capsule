@@ -19,7 +19,7 @@ in three distinct ways:
    it skips `MergeToMain`, `Remove`, and `Prune`. The next task branches from
    stale main, missing previous changes.
 
-3. **Silent failures**: Six instances of `_ = r.store.Save(state)` in the
+3. **Silent failures**: Seven instances of `_ = r.store.Save(state)` in the
    campaign runner. `OnTaskFail` in the dashboard adapter discards the error
    parameter entirely. Failed tasks show a red X with no explanation.
 
@@ -64,7 +64,7 @@ dashboard. Only epic-level dispatch is visually broken.
 - `PostPipelineFunc` exists on dashboard model but explicitly skipped for campaigns
 
 **Error handling**:
-- 6× `_ = r.store.Save(state)` in campaign.go
+- 7× `_ = r.store.Save(state)` in campaign.go
 - `dashboardCampaignCallback.OnTaskFail(beadID string, _ error)` — error discarded
 - `CampaignTaskDoneMsg` has no error text field
 - `fileDiscoveries` is the only place errors surface to stderr
@@ -276,7 +276,7 @@ advancing to the next task.
 
 This is straightforward; no alternatives needed:
 
-1. **State save failures**: Replace `_ = r.store.Save(state)` with
+1. **State save failures**: Replace all 7 `_ = r.store.Save(state)` with
    `if err := r.store.Save(state); err != nil { log to stderr }`.
    Campaign should continue — state saves are best-effort.
 
@@ -342,14 +342,17 @@ separate from the three core problems. Capture as a separate epic or backlog:
    addresses the gap (see Agent Pair Catalog above) and invoke it rather
    than patching around the issue.
 
+## Resolved Questions (continued)
+
+3. **PostTaskFunc for recursive entries** (resolved): No — PostTaskFunc runs
+   for task-level beads only, not for feature/epic beads. Feature beads are
+   containers; they don't have worktrees. Only leaf tasks run pipelines in
+   worktrees. The existing `runPostPipeline` (bead close only) remains for
+   recursive entries.
+
 ## Open Questions
 
-1. **PostTaskFunc for recursive entries**: When a feature finishes (all its
-   tasks completed), should `PostTaskFunc` also run for the feature's own
-   bead? Currently `runPostPipeline` runs for it. Probably yes — the feature
-   bead itself may need its worktree closed.
-
-2. **Validation and worktrees**: Feature validation runs after all tasks.
+1. **Validation and worktrees**: Feature validation runs after all tasks.
    Does validation need its own worktree, or does it run on main after all
    merges?
 
