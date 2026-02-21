@@ -754,13 +754,18 @@ func TestBrowse_EnterConfirmRequestIncludesBeadTitle(t *testing.T) {
 }
 
 func TestBrowse_RightArrowExpandsCollapsedNode(t *testing.T) {
-	// Given: a collapsed parent node with children
+	// Given: a collapsed parent node with children (feature is collapsed by default)
 	beads := []BeadSummary{
-		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1", Title: "Feature", Type: "feature"},
 		{ID: "demo-1.1", Title: "Task A", Type: "task"},
 	}
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Verify feature is collapsed by default
+	if len(bs.flatNodes) != 1 {
+		t.Fatalf("setup: expected 1 flat node (feature collapsed), got %d", len(bs.flatNodes))
+	}
 
 	// When: right arrow is pressed on the collapsed parent
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
@@ -785,17 +790,21 @@ func TestBrowse_RightArrowOnExpandedNodeMovesToChild(t *testing.T) {
 	}
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: beads})
-	// Expand the parent first
-	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	// Move cursor back to parent
-	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyUp})
 
-	// When: right arrow is pressed again on the expanded parent
+	// Verify epic is expanded by default
+	if len(bs.flatNodes) != 2 {
+		t.Fatalf("setup: expected 2 flat nodes (epic expanded), got %d", len(bs.flatNodes))
+	}
+
+	// When: right arrow is pressed on the expanded parent
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 
-	// Then: cursor moves to first child (no state change)
-	if bs.cursor != 1 {
-		t.Errorf("cursor = %d, want 1 (first child)", bs.cursor)
+	// Then: the node is collapsed (toggle behavior)
+	if len(bs.flatNodes) != 1 {
+		t.Errorf("flatNodes = %d, want 1 (parent only, children hidden)", len(bs.flatNodes))
+	}
+	if bs.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (stays on parent)", bs.cursor)
 	}
 }
 
@@ -817,13 +826,18 @@ func TestBrowse_RightArrowOnLeafNodeNoOp(t *testing.T) {
 }
 
 func TestBrowse_RightArrowKeyAlias(t *testing.T) {
-	// Given: a collapsed parent node
+	// Given: a collapsed parent node (feature is collapsed by default)
 	beads := []BeadSummary{
-		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1", Title: "Feature", Type: "feature"},
 		{ID: "demo-1.1", Title: "Task A", Type: "task"},
 	}
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Verify feature is collapsed by default
+	if len(bs.flatNodes) != 1 {
+		t.Fatalf("setup: expected 1 flat node (feature collapsed), got %d", len(bs.flatNodes))
+	}
 
 	// When: "right" key is pressed
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRight})
@@ -845,12 +859,14 @@ func TestBrowse_LeftArrowCollapsesExpandedNode(t *testing.T) {
 	}
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: beads})
-	// Expand the parent
-	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	// Move cursor to child
-	if bs.cursor != 1 {
-		t.Fatalf("setup: cursor should be at child, got %d", bs.cursor)
+
+	// Verify epic is expanded by default and cursor moves to child
+	if len(bs.flatNodes) != 2 {
+		t.Fatalf("setup: expected 2 flat nodes (epic expanded), got %d", len(bs.flatNodes))
 	}
+
+	// Move cursor to child
+	bs.cursor = 1
 
 	// When: left arrow is pressed on the child
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
@@ -870,12 +886,14 @@ func TestBrowse_LeftArrowOnCollapsedNodeMovesToParent(t *testing.T) {
 	}
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: beads})
-	// Expand epic to see feature
-	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
-	// Move cursor to feature (collapsed)
-	if bs.cursor != 1 {
-		t.Fatalf("setup: cursor should be at feature, got %d", bs.cursor)
+
+	// Verify epic is expanded by default, feature is visible but collapsed
+	if len(bs.flatNodes) != 2 {
+		t.Fatalf("setup: expected 2 flat nodes (epic expanded, feature collapsed), got %d", len(bs.flatNodes))
 	}
+
+	// Move cursor to feature (collapsed)
+	bs.cursor = 1
 
 	// When: left arrow is pressed on the collapsed feature
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
@@ -914,8 +932,11 @@ func TestBrowse_CursorClampedAfterCollapseRemovesNode(t *testing.T) {
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: beads})
 
-	// Expand epic
-	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// Verify epic is expanded by default (shows epic + feature)
+	if len(bs.flatNodes) != 2 {
+		t.Fatalf("setup: expected 2 flat nodes (epic expanded, feature collapsed), got %d", len(bs.flatNodes))
+	}
+
 	// Expand feature
 	bs.cursor = 1
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
@@ -1031,5 +1052,34 @@ func TestBrowse_ExpansionStateHandlesDeletedBead(t *testing.T) {
 	}
 	if bs.flatNodes[0].Node.Bead.ID != "demo-1.1" {
 		t.Errorf("remaining bead ID = %q, want %q", bs.flatNodes[0].Node.Bead.ID, "demo-1.1")
+	}
+}
+
+func TestBrowse_RightArrowCollapsesExpandedNode(t *testing.T) {
+	// Given: an expanded parent node with children
+	beads := []BeadSummary{
+		{ID: "demo-1", Title: "Epic", Type: "epic"},
+		{ID: "demo-1.1", Title: "Task A", Type: "task"},
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// Verify epic is expanded by default
+	if len(bs.flatNodes) != 2 {
+		t.Fatalf("setup: expected 2 flat nodes (epic expanded), got %d", len(bs.flatNodes))
+	}
+
+	// When: right arrow is pressed on the expanded parent
+	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+
+	// Then: the node is collapsed and children are hidden
+	if len(bs.flatNodes) != 1 {
+		t.Errorf("flatNodes = %d, want 1 (parent only, children hidden)", len(bs.flatNodes))
+	}
+	if bs.flatNodes[0].Node.expanded {
+		t.Error("node should be collapsed after right arrow on expanded node")
+	}
+	if bs.expandedIDs["demo-1"] {
+		t.Error("expandedIDs should mark node as collapsed")
 	}
 }

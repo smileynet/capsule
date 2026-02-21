@@ -17,11 +17,9 @@ func TestEmptyExpandableNode_ShowsNoOpenTasks(t *testing.T) {
 		{ID: "cap-1.2", Title: "Task B", Type: "task", Closed: true},
 	}
 
-	// When: the tree is built and the epic is expanded
+	// When: the tree is built (epic is expanded by default)
 	bs := newBrowseState()
 	bs, _ = bs.Update(BeadListMsg{Beads: beads})
-	// Expand the epic
-	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 
 	// Then: the epic should show [0] badge
 	view := bs.View(80, 20, "")
@@ -39,11 +37,11 @@ func TestEmptyExpandableNode_ShowsNoOpenTasks(t *testing.T) {
 // TestEmptyExpandableNode_RightArrowExpandsButDoesNotMoveCursor tests that
 // pressing right arrow on an empty expandable node expands it but keeps cursor in place.
 func TestEmptyExpandableNode_RightArrowExpandsButDoesNotMoveCursor(t *testing.T) {
-	// Given: an epic with only closed children, collapsed
+	// Given: a feature with only closed children, collapsed by default
 	beads := []BeadSummary{
-		{ID: "cap-1", Title: "Epic", Type: "epic"},
+		{ID: "cap-1", Title: "Feature", Type: "feature"},
 		{ID: "cap-1.1", Title: "Task A", Type: "task", Closed: true},
-		{ID: "cap-2", Title: "Another Epic", Type: "epic"},
+		{ID: "cap-2", Title: "Another Feature", Type: "feature"},
 	}
 
 	bs := newBrowseState()
@@ -51,12 +49,12 @@ func TestEmptyExpandableNode_RightArrowExpandsButDoesNotMoveCursor(t *testing.T)
 
 	initialID := bs.SelectedID()
 
-	// When: right arrow is pressed on the empty epic
+	// When: right arrow is pressed on the empty feature
 	bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 
 	// Then: the node should be expanded
 	if !bs.expandedIDs["cap-1"] {
-		t.Error("Epic should be expanded after right arrow")
+		t.Error("Feature should be expanded after right arrow")
 	}
 
 	// And: cursor should remain on the same node (not move to closed child)

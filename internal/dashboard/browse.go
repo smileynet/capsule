@@ -143,24 +143,29 @@ func (bs browseState) handleKey(msg tea.KeyMsg) (browseState, tea.Cmd) {
 		if len(bs.flatNodes) > 0 && bs.cursor < len(bs.flatNodes) {
 			node := bs.flatNodes[bs.cursor].Node
 			if isExpandable(node) {
-				wasExpanded := node.expanded
-				hasOpenChildren := openChildCount(node) > 0
-
-				// Always mark as expanded in the map (even if already expanded)
-				bs.expandedIDs[node.Bead.ID] = true
-
-				if !wasExpanded {
+				if node.expanded {
+					// Collapse: hide children
+					bs.expandedIDs[node.Bead.ID] = false
+					node.expanded = false
+					bs.flatNodes = flattenTree(bs.roots)
+					// Clamp cursor after collapse
+					if bs.cursor >= len(bs.flatNodes) {
+						bs.cursor = len(bs.flatNodes) - 1
+					}
+				} else {
+					// Expand: show children
+					bs.expandedIDs[node.Bead.ID] = true
 					node.expanded = true
 					bs.flatNodes = flattenTree(bs.roots)
 					// Clamp cursor after expand
 					if bs.cursor >= len(bs.flatNodes) {
 						bs.cursor = len(bs.flatNodes) - 1
 					}
-				}
-
-				// Move cursor to first child only if there are open children
-				if hasOpenChildren && bs.cursor+1 < len(bs.flatNodes) {
-					bs.cursor++
+					// Move cursor to first child if there are open children
+					hasOpenChildren := openChildCount(node) > 0
+					if hasOpenChildren && bs.cursor+1 < len(bs.flatNodes) {
+						bs.cursor++
+					}
 				}
 			}
 		}
