@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -1111,5 +1112,32 @@ func TestBrowse_RightArrowCollapsesExpandedNode(t *testing.T) {
 	}
 	if bs.expandedIDs["demo-1"] {
 		t.Error("expandedIDs should mark node as collapsed")
+	}
+}
+
+func TestBrowse_TreeRebuildPerformance(t *testing.T) {
+	// Given: a large tree with 100 nodes
+	beads := make([]BeadSummary, 100)
+	for i := 0; i < 100; i++ {
+		beads[i] = BeadSummary{
+			ID:       fmt.Sprintf("cap-%d", i),
+			Title:    fmt.Sprintf("Task %d", i),
+			Priority: 2,
+			Type:     "task",
+		}
+	}
+	bs := newBrowseState()
+	bs, _ = bs.Update(BeadListMsg{Beads: beads})
+
+	// When: cursor moves (should not rebuild tree)
+	start := time.Now()
+	for i := 0; i < 10; i++ {
+		bs, _ = bs.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	elapsed := time.Since(start)
+
+	// Then: cursor moves should be fast (<10ms for 10 moves)
+	if elapsed > 10*time.Millisecond {
+		t.Errorf("cursor moves took %v, want <10ms (tree should not rebuild on cursor move)", elapsed)
 	}
 }
