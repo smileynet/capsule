@@ -711,6 +711,38 @@ func TestCampaign_ViewReport_SelectedPendingTask(t *testing.T) {
 	}
 }
 
+func TestCampaign_ViewReport_SelectedFailedTask_ShowsError(t *testing.T) {
+	// Given: task 0 failed with error text and phase reports
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  false,
+		Duration: 3 * time.Second,
+		Error:    "pipeline failed: test phase timeout",
+		PhaseReports: []PhaseReport{
+			{PhaseName: "plan", Status: PhasePassed, Summary: "All planned"},
+			{PhaseName: "code", Status: PhaseFailed, Summary: "Tests timed out"},
+		},
+	})
+
+	// When: ViewReport is called (selectedIdx 0 = failed task)
+	view := cs.ViewReport(60, 20)
+	plain := stripANSI(view)
+
+	// Then: shows error prominently above phase reports
+	if !strings.Contains(plain, "pipeline failed: test phase timeout") {
+		t.Errorf("ViewReport should show error text for failed task, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("ViewReport should show phase 'plan' for failed task, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "code") {
+		t.Errorf("ViewReport should show phase 'code' for failed task, got:\n%s", plain)
+	}
+}
+
 // --- Validation state tests ---
 
 func TestCampaign_ValidationStart_SetsValidating(t *testing.T) {

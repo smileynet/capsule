@@ -250,6 +250,11 @@ func (cs campaignState) formatTaskReport(task CampaignTaskInfo, reports []PhaseR
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", task.Title)
 
+	// Show error prominently for failed tasks.
+	if errText, ok := cs.taskErrors[task.BeadID]; ok && errText != "" {
+		fmt.Fprintf(&b, "\n%s\n", pipeFailedStyle.Render("⚠ "+errText))
+	}
+
 	for _, r := range reports {
 		var renderedStatus string
 		switch r.Status {
