@@ -508,6 +508,10 @@ func (d *DashboardCmd) Run() error {
 			DiscoveryFiling:  cfg.Campaign.DiscoveryFiling,
 			CrossRunContext:  cfg.Campaign.CrossRunContext,
 			ValidationPhases: cfg.Campaign.ValidationPhases,
+			PostTaskFunc: func(beadID string) error {
+				postPipeline(io.Discard, beadID, wtMgr, bdClient)
+				return nil
+			},
 		},
 	}
 
