@@ -117,14 +117,10 @@ func (c *CampaignCmd) Run() error {
 
 	// Construct ConflictResolver to invoke agent pair for conflict resolution
 	conflictResolver := func(beadID string, conflictErr error) error {
-		// Extract conflict information
-		conflictFiles, err := wtMgr.GetConflictFiles()
-		if err != nil {
-			return fmt.Errorf("failed to get conflict files: %w", err)
-		}
-		conflictDiff, err := wtMgr.GetConflictDiff()
-		if err != nil {
-			return fmt.Errorf("failed to get conflict diff: %w", err)
+		// Extract conflict information from MergeConflictError
+		var mce *worktree.MergeConflictError
+		if !errors.As(conflictErr, &mce) {
+			return fmt.Errorf("conflict resolver: expected MergeConflictError, got: %w", conflictErr)
 		}
 
 		// Get bead context
@@ -139,8 +135,8 @@ func (c *CampaignCmd) Run() error {
 		resolveInput := orchestrator.ConflictResolutionInput{
 			BeadID:        beadID,
 			WorktreePath:  wtPath,
-			ConflictFiles: conflictFiles,
-			ConflictDiff:  conflictDiff,
+			ConflictFiles: mce.ConflictFiles,
+			ConflictDiff:  mce.ConflictDiff,
 			BeadContext:   beadContext,
 		}
 
@@ -568,14 +564,10 @@ func (d *DashboardCmd) Run() error {
 
 	// Construct ConflictResolver to invoke agent pair for conflict resolution
 	conflictResolver := func(beadID string, conflictErr error) error {
-		// Extract conflict information
-		conflictFiles, err := wtMgr.GetConflictFiles()
-		if err != nil {
-			return fmt.Errorf("failed to get conflict files: %w", err)
-		}
-		conflictDiff, err := wtMgr.GetConflictDiff()
-		if err != nil {
-			return fmt.Errorf("failed to get conflict diff: %w", err)
+		// Extract conflict information from MergeConflictError
+		var mce *worktree.MergeConflictError
+		if !errors.As(conflictErr, &mce) {
+			return fmt.Errorf("conflict resolver: expected MergeConflictError, got: %w", conflictErr)
 		}
 
 		// Get bead context
@@ -599,8 +591,8 @@ func (d *DashboardCmd) Run() error {
 		resolveInput := orchestrator.ConflictResolutionInput{
 			BeadID:        beadID,
 			WorktreePath:  wtPath,
-			ConflictFiles: conflictFiles,
-			ConflictDiff:  conflictDiff,
+			ConflictFiles: mce.ConflictFiles,
+			ConflictDiff:  mce.ConflictDiff,
 			BeadContext:   beadContext,
 		}
 

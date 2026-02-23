@@ -219,19 +219,32 @@ func (cs campaignState) View(width, height int) string {
 			fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", cs.taskDurations[i].Seconds())))
 		}
 
-		// Running task: show indented live phases below.
-		if i == cs.currentIdx && status == CampaignTaskRunning && len(cs.pipeline.phases) > 0 {
-			for _, phase := range cs.pipeline.phases {
-				b.WriteByte('\n')
-				pInd := pipeIndicator(phase.Status, cs.pipeline.spinner.View())
-				pName := pipePhaseName(phase.Status, phase.Name)
-				fmt.Fprintf(&b, "      %s %s", pInd, pName)
-				if phase.Status == PhaseRunning && !cs.pipeline.phaseStartedAt.IsZero() && !cs.pipeline.aborting {
-					elapsed := int(time.Since(cs.pipeline.phaseStartedAt).Seconds())
-					fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("(%ds)", elapsed)))
+		// Running task: show indented live phases or subcampaign tasks below.
+		if i == cs.currentIdx && status == CampaignTaskRunning {
+			if cs.subcampaign != nil {
+				// Render subcampaign tasks indented beneath parent.
+				for j, subTask := range cs.subcampaign.tasks {
+					b.WriteByte('\n')
+					subStatus := cs.subcampaign.statuses[j]
+					subInd := cs.subcampaignTaskIndicator(subStatus)
+					fmt.Fprintf(&b, "      %s %s", subInd, subTask.Title)
+					if cs.subcampaign.durations[j] > 0 {
+						fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", cs.subcampaign.durations[j].Seconds())))
+					}
 				}
-				if phase.Duration > 0 {
-					fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", phase.Duration.Seconds())))
+			} else if len(cs.pipeline.phases) > 0 {
+				for _, phase := range cs.pipeline.phases {
+					b.WriteByte('\n')
+					pInd := pipeIndicator(phase.Status, cs.pipeline.spinner.View())
+					pName := pipePhaseName(phase.Status, phase.Name)
+					fmt.Fprintf(&b, "      %s %s", pInd, pName)
+					if phase.Status == PhaseRunning && !cs.pipeline.phaseStartedAt.IsZero() && !cs.pipeline.aborting {
+						elapsed := int(time.Since(cs.pipeline.phaseStartedAt).Seconds())
+						fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("(%ds)", elapsed)))
+					}
+					if phase.Duration > 0 {
+						fmt.Fprintf(&b, " %s", pipeDurationStyle.Render(fmt.Sprintf("%.1fs", phase.Duration.Seconds())))
+					}
 				}
 			}
 		}
@@ -268,6 +281,23 @@ func (cs campaignState) View(width, height int) string {
 	}
 
 	return b.String()
+}
+
+func (cs campaignState) subcampaignTaskIndicator(status CampaignTaskStatus) string {
+	switch status {
+	case CampaignTaskPending:
+		return pipePendingStyle.Render(SymbolPending)
+	case CampaignTaskRunning:
+		return cs.subcampaign.pipeline.spinner.View()
+	case CampaignTaskPassed:
+		return pipePassedStyle.Render(SymbolCheck)
+	case CampaignTaskFailed:
+		return pipeFailedStyle.Render(SymbolCross)
+	case CampaignTaskSkipped:
+		return pipeSkippedStyle.Render(SymbolSkipped)
+	default:
+		return "?"
+	}
 }
 
 func (cs campaignState) taskIndicator(status CampaignTaskStatus) string {

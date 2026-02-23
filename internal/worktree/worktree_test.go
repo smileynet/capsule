@@ -490,6 +490,30 @@ func TestMergeToMain_Conflict(t *testing.T) {
 		t.Fatalf("expected ErrMergeConflict, got %v", err)
 	}
 
+	// Then MergeConflictError carries conflict details.
+	var mce *MergeConflictError
+	if !errors.As(err, &mce) {
+		t.Fatalf("expected *MergeConflictError, got %T", err)
+	}
+	if len(mce.ConflictFiles) == 0 {
+		t.Error("MergeConflictError.ConflictFiles should not be empty")
+	}
+	foundConflictFile := false
+	for _, f := range mce.ConflictFiles {
+		if f == "conflict.txt" {
+			foundConflictFile = true
+		}
+	}
+	if !foundConflictFile {
+		t.Errorf("ConflictFiles should contain 'conflict.txt', got %v", mce.ConflictFiles)
+	}
+	if mce.ConflictDiff == "" {
+		t.Error("MergeConflictError.ConflictDiff should not be empty")
+	}
+	if !strings.Contains(mce.ConflictDiff, "conflict.txt") {
+		t.Errorf("ConflictDiff should reference conflict.txt, got: %s", mce.ConflictDiff)
+	}
+
 	// Then the original branch (main) is restored.
 	cur := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
 	cur.Dir = repoDir

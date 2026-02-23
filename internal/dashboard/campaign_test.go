@@ -1024,3 +1024,69 @@ func TestCampaign_CampaignTaskDoneMsg_RoutesToSubcampaign(t *testing.T) {
 		t.Errorf("main campaign taskStatuses[0] = %q, want %q (unchanged)", cs.taskStatuses[0], CampaignTaskRunning)
 	}
 }
+
+// --- View: subcampaign rendering ---
+
+func TestCampaign_View_SubcampaignTasksRendered(t *testing.T) {
+	// Given: a campaign with a running task that has an active subcampaign
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	subTasks := []CampaignTaskInfo{
+		{BeadID: "cap-001.1", Title: "Subtask Alpha", Priority: 1},
+		{BeadID: "cap-001.2", Title: "Subtask Beta", Priority: 2},
+	}
+	cs, _ = cs.Update(SubCampaignStartMsg{
+		ParentID:    "cap-001",
+		ParentTitle: "First task",
+		Tasks:       subTasks,
+	})
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001.1", Index: 0, Total: 2})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID: "cap-001.1", Index: 0, Success: true, Duration: 2 * time.Second,
+	})
+
+	// When: the view is rendered
+	view := cs.View(80, 30)
+	plain := stripANSI(view)
+
+	// Then: subcampaign tasks appear indented below the running parent task
+	if !strings.Contains(plain, "Subtask Alpha") {
+		t.Errorf("view should contain subcampaign task 'Subtask Alpha', got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Subtask Beta") {
+		t.Errorf("view should contain subcampaign task 'Subtask Beta', got:\n%s", plain)
+	}
+
+	// Subtasks should be indented (6+ spaces before task indicator)
+	lines := strings.Split(plain, "\n")
+	indentedSubtasks := 0
+	for _, line := range lines {
+		if strings.Contains(line, "Subtask") {
+			trimmed := strings.TrimLeft(line, " ")
+			indent := len(line) - len(trimmed)
+			if indent >= 6 {
+				indentedSubtasks++
+			}
+		}
+	}
+	if indentedSubtasks != 2 {
+		t.Errorf("expected 2 indented subtask lines, got %d:\n%s", indentedSubtasks, plain)
+	}
+}
+
+func TestCampaign_View_NoSubcampaignWhenNil(t *testing.T) {
+	// Given: a campaign with a running task but no subcampaign, with pipeline phases
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs.pipeline = newPipelineState([]string{"plan", "code"})
+	cs, _ = cs.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+
+	// When: the view is rendered
+	view := cs.View(60, 20)
+	plain := stripANSI(view)
+
+	// Then: pipeline phases are shown (not subcampaign tasks)
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("should show pipeline phases when no subcampaign, got:\n%s", plain)
+	}
+}

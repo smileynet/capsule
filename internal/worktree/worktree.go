@@ -19,6 +19,22 @@ var (
 	ErrMergeConflict = errors.New("worktree: merge conflict")
 )
 
+// MergeConflictError is returned by MergeToMain when a merge conflict occurs.
+// It wraps ErrMergeConflict and carries the conflict file list and diff
+// captured before the merge is aborted.
+type MergeConflictError struct {
+	Branch        string
+	Into          string
+	ConflictFiles []string
+	ConflictDiff  string
+}
+
+func (e *MergeConflictError) Error() string {
+	return fmt.Sprintf("%v: merging %s into %s", ErrMergeConflict, e.Branch, e.Into)
+}
+
+func (e *MergeConflictError) Unwrap() error { return ErrMergeConflict }
+
 // validateID checks that id is safe for use as a path component and git argument.
 // Rejects empty, path traversal (/ \ . ..), and flag-like IDs (starting with -).
 func validateID(id string) error {
@@ -221,21 +237,32 @@ func (m *Manager) MergeToMain(id, mainBranch, commitMsg string) error {
 		outStr := string(out)
 		isConflict := strings.Contains(outStr, "CONFLICT")
 
-		// On conflict, abort the merge to leave the repo clean.
+		// On conflict, capture conflict info before aborting.
 		if isConflict {
+			conflictFiles := m.captureConflictFiles()
+			conflictDiff := m.captureConflictDiff()
+
 			abort := exec.Command("git", "merge", "--abort")
 			abort.Dir = m.repoRoot
 			_ = abort.Run()
+
+			// Restore original branch.
+			restore := exec.Command("git", "checkout", origBranch, "-q")
+			restore.Dir = m.repoRoot
+			_ = restore.Run()
+
+			return &MergeConflictError{
+				Branch:        branchName,
+				Into:          mainBranch,
+				ConflictFiles: conflictFiles,
+				ConflictDiff:  conflictDiff,
+			}
 		}
 
 		// Restore original branch.
 		restore := exec.Command("git", "checkout", origBranch, "-q")
 		restore.Dir = m.repoRoot
 		_ = restore.Run()
-
-		if isConflict {
-			return fmt.Errorf("%w: merging %s into %s", ErrMergeConflict, branchName, mainBranch)
-		}
 		return fmt.Errorf("worktree: git merge: %w\n%s", mergeErr, strings.TrimSpace(outStr))
 	}
 	return nil
@@ -274,30 +301,32 @@ func (m *Manager) DetectMainBranch() (string, error) {
 	return "", errors.New("worktree: cannot detect main branch")
 }
 
-// GetConflictFiles returns a list of files with merge conflicts.
-// Should be called after a merge that returned ErrMergeConflict.
-func (m *Manager) GetConflictFiles() ([]string, error) {
+// captureConflictFiles returns files with merge conflicts in repoRoot.
+// Must be called while a merge conflict is active (before --abort).
+// Returns nil on any error (best-effort).
+func (m *Manager) captureConflictFiles() []string {
 	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
 	cmd.Dir = m.repoRoot
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("worktree: git diff --name-only: %w", err)
+		return nil
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) == 1 && lines[0] == "" {
-		return []string{}, nil
+		return nil
 	}
-	return lines, nil
+	return lines
 }
 
-// GetConflictDiff returns the full diff output for conflicted files.
-// Should be called after a merge that returned ErrMergeConflict.
-func (m *Manager) GetConflictDiff() (string, error) {
+// captureConflictDiff returns the diff for conflicted files in repoRoot.
+// Must be called while a merge conflict is active (before --abort).
+// Returns empty string on any error (best-effort).
+func (m *Manager) captureConflictDiff() string {
 	cmd := exec.Command("git", "diff", "--diff-filter=U")
 	cmd.Dir = m.repoRoot
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("worktree: git diff: %w", err)
+		return ""
 	}
-	return string(out), nil
+	return string(out)
 }
