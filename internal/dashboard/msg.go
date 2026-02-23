@@ -275,6 +275,13 @@ type CampaignErrorMsg struct {
 	Err error
 }
 
+// CampaignPausedMsg signals that a campaign has paused due to unresolved conflict.
+type CampaignPausedMsg struct {
+	BeadID  string
+	Reason  string
+	Details string
+}
+
 // CampaignValidationStartMsg signals that a campaign validation pipeline is starting.
 type CampaignValidationStartMsg struct{}
 

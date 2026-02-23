@@ -26,6 +26,10 @@ type campaignState struct {
 	completed     int
 	failed        int
 
+	pausedBeadID  string // Set when campaign pauses due to conflict
+	pausedReason  string
+	pausedDetails string
+
 	validating       bool                       // true while validation pipeline is running
 	validationResult *CampaignValidationDoneMsg // set on validation completion
 
@@ -69,6 +73,8 @@ func (cs campaignState) Update(msg tea.Msg) (campaignState, tea.Cmd) {
 		return cs.handleTaskStart(msg), nil
 	case CampaignTaskDoneMsg:
 		return cs.handleTaskDone(msg), nil
+	case CampaignPausedMsg:
+		return cs.handlePaused(msg), nil
 	case SubCampaignStartMsg:
 		return cs.handleSubCampaignStart(msg), nil
 	case SubCampaignDoneMsg:
@@ -151,6 +157,13 @@ func (cs campaignState) handleTaskDone(msg CampaignTaskDoneMsg) campaignState {
 	if msg.Error != "" {
 		cs.taskErrors[msg.BeadID] = msg.Error
 	}
+	return cs
+}
+
+func (cs campaignState) handlePaused(msg CampaignPausedMsg) campaignState {
+	cs.pausedBeadID = msg.BeadID
+	cs.pausedReason = msg.Reason
+	cs.pausedDetails = msg.Details
 	return cs
 }
 

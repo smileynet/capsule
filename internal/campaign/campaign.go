@@ -70,6 +70,7 @@ type Callback interface {
 	OnTaskStart(beadID string)
 	OnTaskComplete(result TaskResult)
 	OnTaskFail(beadID string, err error)
+	OnCampaignPaused(beadID string, reason string, details string)
 	OnDiscoveryFiled(finding provider.Finding, newBeadID string)
 	OnValidationStart()
 	OnValidationComplete(result TaskResult)
@@ -274,6 +275,7 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 				task.Error = postErr.Error()
 				state.ConsecFailures++
 				r.callback.OnTaskFail(task.BeadID, postErr)
+				r.callback.OnCampaignPaused(task.BeadID, "post_task_error", postErr.Error())
 
 				if r.config.FailureMode == "abort" {
 					state.Status = CampaignFailed

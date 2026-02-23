@@ -93,11 +93,18 @@ func (m *mockStateStore) Load(id string) (State, bool, error) {
 
 func (m *mockStateStore) Remove(string) error { return nil }
 
+type pausedCall struct {
+	beadID  string
+	reason  string
+	details string
+}
+
 type mockCallback struct {
 	campaignStarted  bool
 	tasksStarted     []string
 	tasksCompleted   []TaskResult
 	tasksFailed      []string
+	pausedCalls      []pausedCall
 	discoveriesFiled []string
 	validationStart  bool
 	validationDone   bool
@@ -108,6 +115,9 @@ func (m *mockCallback) OnCampaignStart(string, []BeadInfo) { m.campaignStarted =
 func (m *mockCallback) OnTaskStart(id string)              { m.tasksStarted = append(m.tasksStarted, id) }
 func (m *mockCallback) OnTaskComplete(r TaskResult)        { m.tasksCompleted = append(m.tasksCompleted, r) }
 func (m *mockCallback) OnTaskFail(id string, _ error)      { m.tasksFailed = append(m.tasksFailed, id) }
+func (m *mockCallback) OnCampaignPaused(beadID, reason, details string) {
+	m.pausedCalls = append(m.pausedCalls, pausedCall{beadID, reason, details})
+}
 func (m *mockCallback) OnDiscoveryFiled(f provider.Finding, newID string) {
 	m.discoveriesFiled = append(m.discoveriesFiled, newID)
 }
@@ -1144,6 +1154,52 @@ func TestRunner_LogsCloseErrors(t *testing.T) {
 	}
 	if !contains(logs, "close bead") || !contains(logs, "connection lost") {
 		t.Errorf("log = %q, want close bead warning with error", logs)
+	}
+}
+
+func TestRunner_PostTaskFuncError_EmitsPauseCallback(t *testing.T) {
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+
+	postTaskErr := errors.New("merge conflict in cap-1")
+	postTaskFunc := func(beadID string) error {
+		return postTaskErr
+	}
+
+	config := Config{
+		FailureMode:  "abort",
+		PostTaskFunc: postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	err := r.Run(context.Background(), "cap-feature")
+
+	if err == nil {
+		t.Fatal("expected error from PostTaskFunc, got nil")
+	}
+	if !contains(err.Error(), "merge conflict") {
+		t.Errorf("error = %v, want merge conflict error", err)
+	}
+
+	if len(cb.pausedCalls) != 1 {
+		t.Fatalf("OnCampaignPaused calls = %d, want 1", len(cb.pausedCalls))
+	}
+	call := cb.pausedCalls[0]
+	if call.beadID != "cap-1" {
+		t.Errorf("paused beadID = %q, want %q", call.beadID, "cap-1")
+	}
+	if call.reason != "post_task_error" {
+		t.Errorf("paused reason = %q, want %q", call.reason, "post_task_error")
+	}
+	if !contains(call.details, "merge conflict") {
+		t.Errorf("paused details = %q, want merge conflict message", call.details)
 	}
 }
 

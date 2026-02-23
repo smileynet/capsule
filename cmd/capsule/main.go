@@ -833,6 +833,11 @@ func (c *campaignPlainTextCallback) OnTaskFail(beadID string, err error) {
 	_, _ = fmt.Fprintf(c.w, "[%s] [%s] failed: %v\n", ts, beadID, err)
 }
 
+func (c *campaignPlainTextCallback) OnCampaignPaused(beadID, reason, details string) {
+	_, _ = fmt.Fprintf(c.w, "\n⚠️  Campaign paused: %s in %s\n", reason, beadID)
+	_, _ = fmt.Fprintf(c.w, "Details: %s\n", details)
+}
+
 func (c *campaignPlainTextCallback) OnDiscoveryFiled(f provider.Finding, newBeadID string) {
 	_, _ = fmt.Fprintf(c.w, "  Filed: %s [P%d]: %s\n", newBeadID, severityToPriorityCLI(f.Severity), f.Title)
 }
@@ -1087,6 +1092,14 @@ func (c *dashboardCampaignCallback) OnTaskFail(beadID string, err error) {
 		Error:   err.Error(),
 	})
 	c.taskIndex++
+}
+
+func (c *dashboardCampaignCallback) OnCampaignPaused(beadID, reason, details string) {
+	c.statusFn(dashboard.CampaignPausedMsg{
+		BeadID:  beadID,
+		Reason:  reason,
+		Details: details,
+	})
 }
 
 func (c *dashboardCampaignCallback) OnDiscoveryFiled(_ provider.Finding, _ string) {

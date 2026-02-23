@@ -405,6 +405,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.campaignDone = &msg
 		return m, listenForEvents(m.eventCh)
 
+	case CampaignPausedMsg:
+		m.statusMsg = fmt.Sprintf("⚠️  Paused: %s in %s", msg.Reason, msg.BeadID)
+		var cmd tea.Cmd
+		m.campaign, cmd = m.campaign.Update(msg)
+		cmds := []tea.Cmd{cmd, listenForEvents(m.eventCh)}
+		cmds = append(cmds, tea.Tick(statusLineDuration, func(time.Time) tea.Msg {
+			return statusClearMsg{}
+		}))
+		return m, tea.Batch(cmds...)
+
 	case CampaignErrorMsg:
 		m.campaignErr = msg.Err
 		return m, listenForEvents(m.eventCh)

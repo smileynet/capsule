@@ -1755,6 +1755,55 @@ func TestFeature_CampaignPostTaskFunc(t *testing.T) {
 			t.Error("bead should not be closed after conflict resolution failure")
 		}
 	})
+
+	t.Run("dashboardCampaignCallback emits CampaignPausedMsg on PostTaskFunc error", func(t *testing.T) {
+		// Given: a callback that captures messages
+		var captured []tea.Msg
+		statusFn := func(msg tea.Msg) { captured = append(captured, msg) }
+		cb := &dashboardCampaignCallback{statusFn: statusFn}
+
+		// When: OnCampaignPaused is called
+		cb.OnCampaignPaused("cap-123", "post_task_error", "merge conflict in cap-123")
+
+		// Then: CampaignPausedMsg is emitted
+		if len(captured) != 1 {
+			t.Fatalf("captured messages = %d, want 1", len(captured))
+		}
+		msg, ok := captured[0].(dashboard.CampaignPausedMsg)
+		if !ok {
+			t.Fatalf("message type = %T, want CampaignPausedMsg", captured[0])
+		}
+		if msg.BeadID != "cap-123" {
+			t.Errorf("BeadID = %q, want %q", msg.BeadID, "cap-123")
+		}
+		if msg.Reason != "post_task_error" {
+			t.Errorf("Reason = %q, want %q", msg.Reason, "post_task_error")
+		}
+		if msg.Details != "merge conflict in cap-123" {
+			t.Errorf("Details = %q, want %q", msg.Details, "merge conflict in cap-123")
+		}
+	})
+
+	t.Run("campaignPlainTextCallback prints pause notification", func(t *testing.T) {
+		// Given: a callback with a buffer writer
+		var buf bytes.Buffer
+		cb := &campaignPlainTextCallback{w: &buf}
+
+		// When: OnCampaignPaused is called
+		cb.OnCampaignPaused("cap-456", "post_task_error", "merge conflict in cap-456")
+
+		// Then: pause notification is printed
+		output := buf.String()
+		if !strings.Contains(output, "Campaign paused") {
+			t.Errorf("output missing 'Campaign paused': %q", output)
+		}
+		if !strings.Contains(output, "cap-456") {
+			t.Errorf("output missing bead ID: %q", output)
+		}
+		if !strings.Contains(output, "merge conflict") {
+			t.Errorf("output missing conflict details: %q", output)
+		}
+	})
 }
 
 // mockCampaignRunner captures campaign.Config for testing.
