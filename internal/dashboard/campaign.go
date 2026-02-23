@@ -18,6 +18,7 @@ type campaignState struct {
 	tasks         []CampaignTaskInfo
 	taskStatuses  []CampaignTaskStatus
 	taskDurations []time.Duration
+	taskErrors    map[string]string        // Error text keyed by bead ID.
 	taskReports   map[string][]PhaseReport // Phase reports keyed by bead ID.
 	currentIdx    int                      // -1 = no task running
 	selectedIdx   int                      // Cursor for browsing tasks (independent of currentIdx).
@@ -41,6 +42,7 @@ func newCampaignState(parentID, parentTitle string, tasks []CampaignTaskInfo) ca
 		tasks:         tasks,
 		taskStatuses:  statuses,
 		taskDurations: make([]time.Duration, len(tasks)),
+		taskErrors:    make(map[string]string),
 		taskReports:   make(map[string][]PhaseReport),
 		currentIdx:    -1,
 		pipeline:      newPipelineState(nil),
@@ -105,6 +107,9 @@ func (cs campaignState) handleTaskDone(msg CampaignTaskDoneMsg) campaignState {
 	}
 	if len(msg.PhaseReports) > 0 {
 		cs.taskReports[msg.BeadID] = msg.PhaseReports
+	}
+	if msg.Error != "" {
+		cs.taskErrors[msg.BeadID] = msg.Error
 	}
 	return cs
 }

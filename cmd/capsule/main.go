@@ -991,11 +991,12 @@ func (c *dashboardCampaignCallback) OnTaskComplete(result campaign.TaskResult) {
 	c.taskIndex++
 }
 
-func (c *dashboardCampaignCallback) OnTaskFail(beadID string, _ error) {
+func (c *dashboardCampaignCallback) OnTaskFail(beadID string, err error) {
 	c.statusFn(dashboard.CampaignTaskDoneMsg{
 		BeadID:  beadID,
 		Index:   c.taskIndex,
 		Success: false,
+		Error:   err.Error(),
 	})
 	c.taskIndex++
 }

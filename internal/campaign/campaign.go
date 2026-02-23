@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -98,11 +99,12 @@ const (
 
 // Config holds campaign-specific settings.
 type Config struct {
-	FailureMode      string                  // "abort" | "continue"
-	CircuitBreaker   int                     // Max consecutive failures before stopping.
-	DiscoveryFiling  bool                    // File findings as new beads.
-	CrossRunContext  bool                    // Include sibling context in prompts.
-	ValidationPhases string                  // Phase set name for feature validation.
+	Logger           io.Writer                 // Optional logger for warnings (nil-safe).
+	FailureMode      string                    // "abort" | "continue"
+	CircuitBreaker   int                       // Max consecutive failures before stopping.
+	DiscoveryFiling  bool                      // File findings as new beads.
+	CrossRunContext  bool                      // Include sibling context in prompts.
+	ValidationPhases string                    // Phase set name for feature validation.
 	PostTaskFunc     func(beadID string) error // Called after successful task completion.
 }
 
@@ -143,6 +145,13 @@ func NewRunner(pipeline PipelineRunner, beads BeadClient, store StateStore, conf
 		store:    store,
 		config:   config,
 		callback: callback,
+	}
+}
+
+// logWarning writes a warning message to the logger if configured.
+func (r *Runner) logWarning(format string, args ...any) {
+	if r.config.Logger != nil {
+		_, _ = fmt.Fprintf(r.config.Logger, format, args...)
 	}
 }
 
@@ -191,7 +200,9 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 
 		if r.config.CircuitBreaker > 0 && state.ConsecFailures >= r.config.CircuitBreaker {
 			state.Status = CampaignFailed
-			_ = r.store.Save(state)
+			if err := r.store.Save(state); err != nil {
+				r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+			}
 			return ErrCircuitBroken
 		}
 
@@ -216,14 +227,18 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 			if ctx.Err() != nil {
 				task.Status = TaskPending
 				state.Status = CampaignPaused
-				_ = r.store.Save(state)
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
 				return ErrCampaignAborted
 			}
 
 			if errors.Is(err, orchestrator.ErrPipelinePaused) {
 				task.Status = TaskPending
 				state.Status = CampaignPaused
-				_ = r.store.Save(state)
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
 				return ErrCampaignPaused
 			}
 
@@ -234,11 +249,15 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 
 			if r.config.FailureMode == "abort" {
 				state.Status = CampaignFailed
-				_ = r.store.Save(state)
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
 				return fmt.Errorf("campaign: task %s failed: %w", task.BeadID, err)
 			}
 			state.CurrentTaskIdx = i + 1
-			_ = r.store.Save(state)
+			if err := r.store.Save(state); err != nil {
+				r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+			}
 			continue
 		}
 
@@ -257,11 +276,15 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 
 				if r.config.FailureMode == "abort" {
 					state.Status = CampaignFailed
-					_ = r.store.Save(state)
+					if err := r.store.Save(state); err != nil {
+						r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+					}
 					return fmt.Errorf("campaign: task %s failed: %w", task.BeadID, postErr)
 				}
 				state.CurrentTaskIdx = i + 1
-				_ = r.store.Save(state)
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
 				continue
 			}
 		} else {
@@ -270,7 +293,9 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 		}
 
 		state.CurrentTaskIdx = i + 1
-		_ = r.store.Save(state)
+		if err := r.store.Save(state); err != nil {
+			r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+		}
 	}
 
 	// All tasks done — run feature validation if configured.
@@ -281,7 +306,9 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 	}
 
 	state.Status = CampaignCompleted
-	_ = r.store.Save(state)
+	if err := r.store.Save(state); err != nil {
+		r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+	}
 	r.callback.OnCampaignComplete(state)
 	return nil
 }
@@ -379,7 +406,9 @@ func (r *Runner) fileDiscoveries(output orchestrator.PipelineOutput, parentID st
 
 // runPostPipeline closes the bead after successful pipeline completion (best-effort).
 func (r *Runner) runPostPipeline(beadID string) {
-	_ = r.beads.Close(beadID)
+	if err := r.beads.Close(beadID); err != nil {
+		r.logWarning("campaign: warning: close bead %s: %v\n", beadID, err)
+	}
 }
 
 // allComplete returns true when every task has finished (completed or skipped).

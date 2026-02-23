@@ -72,13 +72,14 @@ func (m *mockBeadClient) Create(input BeadInput) (string, error) {
 }
 
 type mockStateStore struct {
-	saved  []State
-	loaded map[string]State
+	saved   []State
+	loaded  map[string]State
+	saveErr error
 }
 
 func (m *mockStateStore) Save(state State) error {
 	m.saved = append(m.saved, state)
-	return nil
+	return m.saveErr
 }
 
 func (m *mockStateStore) Load(id string) (State, bool, error) {
@@ -1089,4 +1090,102 @@ func TestRun_PostTaskFuncErrorTreatedAsFailure(t *testing.T) {
 	if len(cb.tasksFailed) != 1 || cb.tasksFailed[0] != "cap-1" {
 		t.Errorf("tasks failed = %v, want [cap-1]", cb.tasksFailed)
 	}
+}
+
+func TestRunner_LogsSaveErrors(t *testing.T) {
+	var logBuf []byte
+	logger := &testWriter{buf: &logBuf}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+	}
+	store := &mockStateStore{saveErr: errors.New("disk full")}
+	cb := &mockCallback{}
+	config := Config{Logger: logger}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	_ = r.Run(context.Background(), "cap-feature")
+
+	logs := string(logBuf)
+	if logs == "" {
+		t.Fatal("expected warning logged, got empty")
+	}
+	if !contains(logs, "save state") || !contains(logs, "disk full") {
+		t.Errorf("log = %q, want save state warning with error", logs)
+	}
+}
+
+func TestRunner_LogsCloseErrors(t *testing.T) {
+	var logBuf []byte
+	logger := &testWriter{buf: &logBuf}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+		closeErr: errors.New("connection lost"),
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+	config := Config{Logger: logger}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	_ = r.Run(context.Background(), "cap-feature")
+
+	logs := string(logBuf)
+	if logs == "" {
+		t.Fatal("expected warning logged, got empty")
+	}
+	if !contains(logs, "close bead") || !contains(logs, "connection lost") {
+		t.Errorf("log = %q, want close bead warning with error", logs)
+	}
+}
+
+func TestRunner_NilLoggerDoesNotPanic(t *testing.T) {
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+		closeErr: errors.New("connection lost"),
+	}
+	store := &mockStateStore{saveErr: errors.New("disk full")}
+	cb := &mockCallback{}
+	config := Config{Logger: nil}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	err := r.Run(context.Background(), "cap-feature")
+
+	if err != nil {
+		t.Errorf("expected nil error with nil logger, got %v", err)
+	}
+}
+
+type testWriter struct {
+	buf *[]byte
+}
+
+func (w *testWriter) Write(p []byte) (n int, err error) {
+	*w.buf = append(*w.buf, p...)
+	return len(p), nil
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

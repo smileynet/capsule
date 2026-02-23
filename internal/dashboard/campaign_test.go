@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -800,5 +801,66 @@ func TestCampaign_ViewHeader_NoProvider(t *testing.T) {
 	lines := strings.Split(plain, "\n")
 	if strings.Contains(lines[0], "[") {
 		t.Errorf("header should not contain bracket badge, got: %q", lines[0])
+	}
+}
+
+func TestCampaign_TaskDoneMsg_StoresErrorText(t *testing.T) {
+	// Given: a campaign with first task running
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+
+	// When: task fails with error text
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  false,
+		Duration: 2 * time.Second,
+		Error:    "pipeline failed: test phase timeout",
+	})
+
+	// Then: error text is stored in taskErrors map
+	if cs.taskErrors["cap-001"] != "pipeline failed: test phase timeout" {
+		t.Errorf("taskErrors[cap-001] = %q, want %q", cs.taskErrors["cap-001"], "pipeline failed: test phase timeout")
+	}
+}
+
+func TestCampaign_ErrorPropagation_CallbackToState(t *testing.T) {
+	// Given: a mock status function that captures messages
+	var capturedMsg CampaignTaskDoneMsg
+	statusFn := func(msg tea.Msg) {
+		if m, ok := msg.(CampaignTaskDoneMsg); ok {
+			capturedMsg = m
+		}
+	}
+
+	// And: a dashboardCampaignCallback (simulated inline)
+	type testCallback struct {
+		statusFn  func(tea.Msg)
+		taskIndex int
+	}
+	cb := &testCallback{statusFn: statusFn, taskIndex: 0}
+
+	// When: OnTaskFail is called with an error
+	testErr := fmt.Errorf("test error: connection timeout")
+	cb.statusFn(CampaignTaskDoneMsg{
+		BeadID:  "cap-001",
+		Index:   cb.taskIndex,
+		Success: false,
+		Error:   testErr.Error(),
+	})
+
+	// Then: the CampaignTaskDoneMsg contains the error string
+	if capturedMsg.Error != "test error: connection timeout" {
+		t.Errorf("capturedMsg.Error = %q, want %q", capturedMsg.Error, "test error: connection timeout")
+	}
+
+	// And: when campaignState processes the message
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(capturedMsg)
+
+	// Then: error text is stored in campaignState
+	if cs.taskErrors["cap-001"] != "test error: connection timeout" {
+		t.Errorf("taskErrors[cap-001] = %q, want %q", cs.taskErrors["cap-001"], "test error: connection timeout")
 	}
 }

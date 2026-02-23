@@ -242,6 +242,7 @@ type CampaignTaskDoneMsg struct {
 	Success      bool
 	Duration     time.Duration
 	PhaseReports []PhaseReport
+	Error        string
 }
 
 // CampaignDoneMsg signals that the entire campaign has completed.
