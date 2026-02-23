@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Worktree merge/cleanup per campaign task (cap-9f0.1)
+  - Each successful task's worktree merges to main before next task starts
+  - Campaign tasks branch from updated main containing all prior work
+  - PostTaskFunc injection enables campaign package to trigger merge/cleanup
+  - CLI and dashboard commands wire PostTaskFunc identically
 - Depth-aware campaign callback adapter (cap-9f0.4)
   - Epic dispatch shows features as top-level campaign rows
   - Feature tasks nest under running feature with indentation
