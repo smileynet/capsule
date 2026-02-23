@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Depth-aware campaign callback adapter (cap-9f0.4)
+  - Epic dispatch shows features as top-level campaign rows
+  - Feature tasks nest under running feature with indentation
+  - Pipeline phases animate under active task within feature
+  - Subcampaign state overlay tracks nested task progress
+  - Background mode handles nested campaign messages
+  - CLI adapter logs subcampaign events with depth-aware formatting
 - Campaign error observability (cap-9f0.3)
   - State save and bead close failures logged to stderr
   - Failed tasks display error detail in dashboard right pane
