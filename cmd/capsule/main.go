@@ -151,7 +151,7 @@ func (c *CampaignCmd) Run() error {
 
 	// Construct PostTaskFunc closure that calls postPipelineWithConflictResolver.
 	postTaskFunc := func(beadID string) error {
-		return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient.client, conflictResolver)
+		return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient.client, conflictResolver)
 	}
 
 	campaignCfg := campaign.Config{
