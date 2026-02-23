@@ -918,3 +918,175 @@ func TestRun_RecursiveFeatureAbortOnFailure(t *testing.T) {
 		t.Error("expected at least one task failure callback")
 	}
 }
+
+func TestRun_PostTaskFuncCalledAfterSuccess(t *testing.T) {
+	// Given: PostTaskFunc is configured
+	var postTaskCalls []string
+	postTaskFunc := func(beadID string) error {
+		postTaskCalls = append(postTaskCalls, beadID)
+		return nil
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput(), passOutput()},
+		errs:    []error{nil, nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+		},
+	}
+	config := Config{
+		FailureMode:  "abort",
+		CircuitBreaker: 3,
+		PostTaskFunc: postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
+
+	// When Run is called
+	err := r.Run(context.Background(), "cap-feature")
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And PostTaskFunc was called for each successful task
+	if len(postTaskCalls) != 2 {
+		t.Errorf("PostTaskFunc calls = %d, want 2", len(postTaskCalls))
+	}
+	if postTaskCalls[0] != "cap-1" {
+		t.Errorf("PostTaskFunc call 0 = %q, want %q", postTaskCalls[0], "cap-1")
+	}
+	if postTaskCalls[1] != "cap-2" {
+		t.Errorf("PostTaskFunc call 1 = %q, want %q", postTaskCalls[1], "cap-2")
+	}
+}
+
+func TestRun_PostTaskFuncNotCalledOnFailure(t *testing.T) {
+	// Given: PostTaskFunc is configured, task 1 fails
+	var postTaskCalls []string
+	postTaskFunc := func(beadID string) error {
+		postTaskCalls = append(postTaskCalls, beadID)
+		return nil
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{{}},
+		errs:    []error{fmt.Errorf("task failed")},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+	}
+	config := Config{
+		FailureMode:  "abort",
+		CircuitBreaker: 3,
+		PostTaskFunc: postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
+
+	// When Run is called
+	_ = r.Run(context.Background(), "cap-feature")
+
+	// Then PostTaskFunc was NOT called
+	if len(postTaskCalls) != 0 {
+		t.Errorf("PostTaskFunc calls = %d, want 0 (should not be called on failure)", len(postTaskCalls))
+	}
+}
+
+func TestRun_PostTaskFuncNotCalledForRecursiveEntries(t *testing.T) {
+	// Given: PostTaskFunc is configured, epic with feature child with task child
+	var postTaskCalls []string
+	postTaskFunc := func(beadID string) error {
+		postTaskCalls = append(postTaskCalls, beadID)
+		return nil
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		childrenMap: map[string][]BeadInfo{
+			"epic-1":   {{ID: "epic-1.1", Title: "Feature 1", Type: "feature"}},
+			"epic-1.1": {{ID: "epic-1.1.1", Title: "Task 1", Type: "task"}},
+		},
+	}
+	config := Config{
+		FailureMode:  "abort",
+		CircuitBreaker: 5,
+		PostTaskFunc: postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
+
+	// When Run is called on the epic
+	err := r.Run(context.Background(), "epic-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then PostTaskFunc was called only for the leaf task, not for feature/epic
+	if len(postTaskCalls) != 1 {
+		t.Errorf("PostTaskFunc calls = %d, want 1 (only leaf task)", len(postTaskCalls))
+	}
+	if len(postTaskCalls) > 0 && postTaskCalls[0] != "epic-1.1.1" {
+		t.Errorf("PostTaskFunc call 0 = %q, want %q", postTaskCalls[0], "epic-1.1.1")
+	}
+}
+
+func TestRun_PostTaskFuncErrorTreatedAsFailure(t *testing.T) {
+	// Given: PostTaskFunc returns an error
+	postTaskFunc := func(beadID string) error {
+		return fmt.Errorf("post-task failed for %s", beadID)
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput(), passOutput()},
+		errs:    []error{nil, nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+		},
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+	config := Config{
+		FailureMode:  "abort",
+		CircuitBreaker: 3,
+		PostTaskFunc: postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+
+	// When Run is called
+	err := r.Run(context.Background(), "cap-feature")
+
+	// Then it returns an error (abort mode)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// And task 1 was marked as failed
+	if len(store.saved) == 0 {
+		t.Fatal("expected state to be saved")
+	}
+	var task1Failed bool
+	for _, s := range store.saved {
+		for _, task := range s.Tasks {
+			if task.BeadID == "cap-1" && task.Status == TaskFailed {
+				task1Failed = true
+			}
+		}
+	}
+	if !task1Failed {
+		t.Error("task 1 should be marked as failed when PostTaskFunc returns error")
+	}
+	// And task 1 was reported as failed
+	if len(cb.tasksFailed) != 1 || cb.tasksFailed[0] != "cap-1" {
+		t.Errorf("tasks failed = %v, want [cap-1]", cb.tasksFailed)
+	}
+}

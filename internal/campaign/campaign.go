@@ -98,11 +98,12 @@ const (
 
 // Config holds campaign-specific settings.
 type Config struct {
-	FailureMode      string // "abort" | "continue"
-	CircuitBreaker   int    // Max consecutive failures before stopping.
-	DiscoveryFiling  bool   // File findings as new beads.
-	CrossRunContext  bool   // Include sibling context in prompts.
-	ValidationPhases string // Phase set name for feature validation.
+	FailureMode      string                  // "abort" | "continue"
+	CircuitBreaker   int                     // Max consecutive failures before stopping.
+	DiscoveryFiling  bool                    // File findings as new beads.
+	CrossRunContext  bool                    // Include sibling context in prompts.
+	ValidationPhases string                  // Phase set name for feature validation.
+	PostTaskFunc     func(beadID string) error // Called after successful task completion.
 }
 
 // State holds the complete campaign state for persistence.
@@ -245,7 +246,28 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 		state.ConsecFailures = 0
 		r.callback.OnTaskComplete(*task)
 
-		r.runPostPipeline(task.BeadID)
+		// Call PostTaskFunc after successful task (only for leaf tasks, not recursive entries).
+		if r.config.PostTaskFunc != nil && childType != "feature" && childType != "epic" {
+			if postErr := r.config.PostTaskFunc(task.BeadID); postErr != nil {
+				// Treat PostTaskFunc error as task failure.
+				task.Status = TaskFailed
+				task.Error = postErr.Error()
+				state.ConsecFailures++
+				r.callback.OnTaskFail(task.BeadID, postErr)
+
+				if r.config.FailureMode == "abort" {
+					state.Status = CampaignFailed
+					_ = r.store.Save(state)
+					return fmt.Errorf("campaign: task %s failed: %w", task.BeadID, postErr)
+				}
+				state.CurrentTaskIdx = i + 1
+				_ = r.store.Save(state)
+				continue
+			}
+		} else {
+			// Fallback to legacy behavior when PostTaskFunc is nil.
+			r.runPostPipeline(task.BeadID)
+		}
 
 		state.CurrentTaskIdx = i + 1
 		_ = r.store.Save(state)
