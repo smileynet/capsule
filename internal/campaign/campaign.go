@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -69,6 +70,7 @@ type Callback interface {
 	OnTaskStart(beadID string)
 	OnTaskComplete(result TaskResult)
 	OnTaskFail(beadID string, err error)
+	OnCampaignPaused(beadID string, reason string, details string)
 	OnDiscoveryFiled(finding provider.Finding, newBeadID string)
 	OnValidationStart()
 	OnValidationComplete(result TaskResult)
@@ -98,11 +100,14 @@ const (
 
 // Config holds campaign-specific settings.
 type Config struct {
-	FailureMode      string // "abort" | "continue"
-	CircuitBreaker   int    // Max consecutive failures before stopping.
-	DiscoveryFiling  bool   // File findings as new beads.
-	CrossRunContext  bool   // Include sibling context in prompts.
-	ValidationPhases string // Phase set name for feature validation.
+	Logger           io.Writer                                    // Optional logger for warnings (nil-safe).
+	FailureMode      string                                       // "abort" | "continue"
+	CircuitBreaker   int                                          // Max consecutive failures before stopping.
+	DiscoveryFiling  bool                                         // File findings as new beads.
+	CrossRunContext  bool                                         // Include sibling context in prompts.
+	ValidationPhases string                                       // Phase set name for feature validation.
+	PostTaskFunc     func(beadID string) error                    // Called after successful task completion.
+	ConflictResolver func(beadID string, conflictErr error) error // Called when merge conflict occurs.
 }
 
 // State holds the complete campaign state for persistence.
@@ -142,6 +147,13 @@ func NewRunner(pipeline PipelineRunner, beads BeadClient, store StateStore, conf
 		store:    store,
 		config:   config,
 		callback: callback,
+	}
+}
+
+// logWarning writes a warning message to the logger if configured.
+func (r *Runner) logWarning(format string, args ...any) {
+	if r.config.Logger != nil {
+		_, _ = fmt.Fprintf(r.config.Logger, format, args...)
 	}
 }
 
@@ -190,7 +202,9 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 
 		if r.config.CircuitBreaker > 0 && state.ConsecFailures >= r.config.CircuitBreaker {
 			state.Status = CampaignFailed
-			_ = r.store.Save(state)
+			if err := r.store.Save(state); err != nil {
+				r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+			}
 			return ErrCircuitBroken
 		}
 
@@ -215,14 +229,18 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 			if ctx.Err() != nil {
 				task.Status = TaskPending
 				state.Status = CampaignPaused
-				_ = r.store.Save(state)
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
 				return ErrCampaignAborted
 			}
 
 			if errors.Is(err, orchestrator.ErrPipelinePaused) {
 				task.Status = TaskPending
 				state.Status = CampaignPaused
-				_ = r.store.Save(state)
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
 				return ErrCampaignPaused
 			}
 
@@ -233,11 +251,15 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 
 			if r.config.FailureMode == "abort" {
 				state.Status = CampaignFailed
-				_ = r.store.Save(state)
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
 				return fmt.Errorf("campaign: task %s failed: %w", task.BeadID, err)
 			}
 			state.CurrentTaskIdx = i + 1
-			_ = r.store.Save(state)
+			if err := r.store.Save(state); err != nil {
+				r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+			}
 			continue
 		}
 
@@ -245,10 +267,38 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 		state.ConsecFailures = 0
 		r.callback.OnTaskComplete(*task)
 
-		r.runPostPipeline(task.BeadID)
+		// Call PostTaskFunc after successful task (only for leaf tasks, not recursive entries).
+		if r.config.PostTaskFunc != nil && childType != "feature" && childType != "epic" {
+			if postErr := r.config.PostTaskFunc(task.BeadID); postErr != nil {
+				// Treat PostTaskFunc error as task failure.
+				task.Status = TaskFailed
+				task.Error = postErr.Error()
+				state.ConsecFailures++
+				r.callback.OnTaskFail(task.BeadID, postErr)
+				r.callback.OnCampaignPaused(task.BeadID, "post_task_error", postErr.Error())
+
+				if r.config.FailureMode == "abort" {
+					state.Status = CampaignFailed
+					if err := r.store.Save(state); err != nil {
+						r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+					}
+					return fmt.Errorf("campaign: task %s failed: %w", task.BeadID, postErr)
+				}
+				state.CurrentTaskIdx = i + 1
+				if err := r.store.Save(state); err != nil {
+					r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+				}
+				continue
+			}
+		} else {
+			// Fallback to legacy behavior when PostTaskFunc is nil.
+			r.runPostPipeline(task.BeadID)
+		}
 
 		state.CurrentTaskIdx = i + 1
-		_ = r.store.Save(state)
+		if err := r.store.Save(state); err != nil {
+			r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+		}
 	}
 
 	// All tasks done — run feature validation if configured.
@@ -259,7 +309,9 @@ func (r *Runner) runRecursive(ctx context.Context, parentID string, depth int, v
 	}
 
 	state.Status = CampaignCompleted
-	_ = r.store.Save(state)
+	if err := r.store.Save(state); err != nil {
+		r.logWarning("campaign: warning: save state %s: %v\n", state.ID, err)
+	}
 	r.callback.OnCampaignComplete(state)
 	return nil
 }
@@ -357,7 +409,9 @@ func (r *Runner) fileDiscoveries(output orchestrator.PipelineOutput, parentID st
 
 // runPostPipeline closes the bead after successful pipeline completion (best-effort).
 func (r *Runner) runPostPipeline(beadID string) {
-	_ = r.beads.Close(beadID)
+	if err := r.beads.Close(beadID); err != nil {
+		r.logWarning("campaign: warning: close bead %s: %v\n", beadID, err)
+	}
 }
 
 // allComplete returns true when every task has finished (completed or skipped).

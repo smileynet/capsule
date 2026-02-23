@@ -72,13 +72,14 @@ func (m *mockBeadClient) Create(input BeadInput) (string, error) {
 }
 
 type mockStateStore struct {
-	saved  []State
-	loaded map[string]State
+	saved   []State
+	loaded  map[string]State
+	saveErr error
 }
 
 func (m *mockStateStore) Save(state State) error {
 	m.saved = append(m.saved, state)
-	return nil
+	return m.saveErr
 }
 
 func (m *mockStateStore) Load(id string) (State, bool, error) {
@@ -92,11 +93,18 @@ func (m *mockStateStore) Load(id string) (State, bool, error) {
 
 func (m *mockStateStore) Remove(string) error { return nil }
 
+type pausedCall struct {
+	beadID  string
+	reason  string
+	details string
+}
+
 type mockCallback struct {
 	campaignStarted  bool
 	tasksStarted     []string
 	tasksCompleted   []TaskResult
 	tasksFailed      []string
+	pausedCalls      []pausedCall
 	discoveriesFiled []string
 	validationStart  bool
 	validationDone   bool
@@ -107,6 +115,9 @@ func (m *mockCallback) OnCampaignStart(string, []BeadInfo) { m.campaignStarted =
 func (m *mockCallback) OnTaskStart(id string)              { m.tasksStarted = append(m.tasksStarted, id) }
 func (m *mockCallback) OnTaskComplete(r TaskResult)        { m.tasksCompleted = append(m.tasksCompleted, r) }
 func (m *mockCallback) OnTaskFail(id string, _ error)      { m.tasksFailed = append(m.tasksFailed, id) }
+func (m *mockCallback) OnCampaignPaused(beadID, reason, details string) {
+	m.pausedCalls = append(m.pausedCalls, pausedCall{beadID, reason, details})
+}
 func (m *mockCallback) OnDiscoveryFiled(f provider.Finding, newID string) {
 	m.discoveriesFiled = append(m.discoveriesFiled, newID)
 }
@@ -917,4 +928,320 @@ func TestRun_RecursiveFeatureAbortOnFailure(t *testing.T) {
 	if len(cb.tasksFailed) == 0 {
 		t.Error("expected at least one task failure callback")
 	}
+}
+
+func TestRun_PostTaskFuncCalledAfterSuccess(t *testing.T) {
+	// Given: PostTaskFunc is configured
+	var postTaskCalls []string
+	postTaskFunc := func(beadID string) error {
+		postTaskCalls = append(postTaskCalls, beadID)
+		return nil
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput(), passOutput()},
+		errs:    []error{nil, nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+		},
+	}
+	config := Config{
+		FailureMode:    "abort",
+		CircuitBreaker: 3,
+		PostTaskFunc:   postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
+
+	// When Run is called
+	err := r.Run(context.Background(), "cap-feature")
+
+	// Then it completes without error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// And PostTaskFunc was called for each successful task
+	if len(postTaskCalls) != 2 {
+		t.Errorf("PostTaskFunc calls = %d, want 2", len(postTaskCalls))
+	}
+	if postTaskCalls[0] != "cap-1" {
+		t.Errorf("PostTaskFunc call 0 = %q, want %q", postTaskCalls[0], "cap-1")
+	}
+	if postTaskCalls[1] != "cap-2" {
+		t.Errorf("PostTaskFunc call 1 = %q, want %q", postTaskCalls[1], "cap-2")
+	}
+}
+
+func TestRun_PostTaskFuncNotCalledOnFailure(t *testing.T) {
+	// Given: PostTaskFunc is configured, task 1 fails
+	var postTaskCalls []string
+	postTaskFunc := func(beadID string) error {
+		postTaskCalls = append(postTaskCalls, beadID)
+		return nil
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{{}},
+		errs:    []error{fmt.Errorf("task failed")},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+	}
+	config := Config{
+		FailureMode:    "abort",
+		CircuitBreaker: 3,
+		PostTaskFunc:   postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
+
+	// When Run is called
+	_ = r.Run(context.Background(), "cap-feature")
+
+	// Then PostTaskFunc was NOT called
+	if len(postTaskCalls) != 0 {
+		t.Errorf("PostTaskFunc calls = %d, want 0 (should not be called on failure)", len(postTaskCalls))
+	}
+}
+
+func TestRun_PostTaskFuncNotCalledForRecursiveEntries(t *testing.T) {
+	// Given: PostTaskFunc is configured, epic with feature child with task child
+	var postTaskCalls []string
+	postTaskFunc := func(beadID string) error {
+		postTaskCalls = append(postTaskCalls, beadID)
+		return nil
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		childrenMap: map[string][]BeadInfo{
+			"epic-1":   {{ID: "epic-1.1", Title: "Feature 1", Type: "feature"}},
+			"epic-1.1": {{ID: "epic-1.1.1", Title: "Task 1", Type: "task"}},
+		},
+	}
+	config := Config{
+		FailureMode:    "abort",
+		CircuitBreaker: 5,
+		PostTaskFunc:   postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
+
+	// When Run is called on the epic
+	err := r.Run(context.Background(), "epic-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Then PostTaskFunc was called only for the leaf task, not for feature/epic
+	if len(postTaskCalls) != 1 {
+		t.Errorf("PostTaskFunc calls = %d, want 1 (only leaf task)", len(postTaskCalls))
+	}
+	if len(postTaskCalls) > 0 && postTaskCalls[0] != "epic-1.1.1" {
+		t.Errorf("PostTaskFunc call 0 = %q, want %q", postTaskCalls[0], "epic-1.1.1")
+	}
+}
+
+func TestRun_PostTaskFuncErrorTreatedAsFailure(t *testing.T) {
+	// Given: PostTaskFunc returns an error
+	postTaskFunc := func(beadID string) error {
+		return fmt.Errorf("post-task failed for %s", beadID)
+	}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput(), passOutput()},
+		errs:    []error{nil, nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{
+			{ID: "cap-1", Title: "Task 1"},
+			{ID: "cap-2", Title: "Task 2"},
+		},
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+	config := Config{
+		FailureMode:    "abort",
+		CircuitBreaker: 3,
+		PostTaskFunc:   postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+
+	// When Run is called
+	err := r.Run(context.Background(), "cap-feature")
+
+	// Then it returns an error (abort mode)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// And task 1 was marked as failed
+	if len(store.saved) == 0 {
+		t.Fatal("expected state to be saved")
+	}
+	var task1Failed bool
+	for _, s := range store.saved {
+		for _, task := range s.Tasks {
+			if task.BeadID == "cap-1" && task.Status == TaskFailed {
+				task1Failed = true
+			}
+		}
+	}
+	if !task1Failed {
+		t.Error("task 1 should be marked as failed when PostTaskFunc returns error")
+	}
+	// And task 1 was reported as failed
+	if len(cb.tasksFailed) != 1 || cb.tasksFailed[0] != "cap-1" {
+		t.Errorf("tasks failed = %v, want [cap-1]", cb.tasksFailed)
+	}
+}
+
+func TestRunner_LogsSaveErrors(t *testing.T) {
+	var logBuf []byte
+	logger := &testWriter{buf: &logBuf}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+	}
+	store := &mockStateStore{saveErr: errors.New("disk full")}
+	cb := &mockCallback{}
+	config := Config{Logger: logger}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	_ = r.Run(context.Background(), "cap-feature")
+
+	logs := string(logBuf)
+	if logs == "" {
+		t.Fatal("expected warning logged, got empty")
+	}
+	if !contains(logs, "save state") || !contains(logs, "disk full") {
+		t.Errorf("log = %q, want save state warning with error", logs)
+	}
+}
+
+func TestRunner_LogsCloseErrors(t *testing.T) {
+	var logBuf []byte
+	logger := &testWriter{buf: &logBuf}
+
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+		closeErr: errors.New("connection lost"),
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+	config := Config{Logger: logger}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	_ = r.Run(context.Background(), "cap-feature")
+
+	logs := string(logBuf)
+	if logs == "" {
+		t.Fatal("expected warning logged, got empty")
+	}
+	if !contains(logs, "close bead") || !contains(logs, "connection lost") {
+		t.Errorf("log = %q, want close bead warning with error", logs)
+	}
+}
+
+func TestRunner_PostTaskFuncError_EmitsPauseCallback(t *testing.T) {
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+	}
+	store := &mockStateStore{}
+	cb := &mockCallback{}
+
+	postTaskErr := errors.New("merge conflict in cap-1")
+	postTaskFunc := func(beadID string) error {
+		return postTaskErr
+	}
+
+	config := Config{
+		FailureMode:  "abort",
+		PostTaskFunc: postTaskFunc,
+	}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	err := r.Run(context.Background(), "cap-feature")
+
+	if err == nil {
+		t.Fatal("expected error from PostTaskFunc, got nil")
+	}
+	if !contains(err.Error(), "merge conflict") {
+		t.Errorf("error = %v, want merge conflict error", err)
+	}
+
+	if len(cb.pausedCalls) != 1 {
+		t.Fatalf("OnCampaignPaused calls = %d, want 1", len(cb.pausedCalls))
+	}
+	call := cb.pausedCalls[0]
+	if call.beadID != "cap-1" {
+		t.Errorf("paused beadID = %q, want %q", call.beadID, "cap-1")
+	}
+	if call.reason != "post_task_error" {
+		t.Errorf("paused reason = %q, want %q", call.reason, "post_task_error")
+	}
+	if !contains(call.details, "merge conflict") {
+		t.Errorf("paused details = %q, want merge conflict message", call.details)
+	}
+}
+
+func TestRunner_NilLoggerDoesNotPanic(t *testing.T) {
+	pipeline := &mockPipeline{
+		outputs: []orchestrator.PipelineOutput{passOutput()},
+		errs:    []error{nil},
+	}
+	beads := &mockBeadClient{
+		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
+		closeErr: errors.New("connection lost"),
+	}
+	store := &mockStateStore{saveErr: errors.New("disk full")}
+	cb := &mockCallback{}
+	config := Config{Logger: nil}
+
+	r := NewRunner(pipeline, beads, store, config, cb)
+	err := r.Run(context.Background(), "cap-feature")
+
+	if err != nil {
+		t.Errorf("expected nil error with nil logger, got %v", err)
+	}
+}
+
+type testWriter struct {
+	buf *[]byte
+}
+
+func (w *testWriter) Write(p []byte) (n int, err error) {
+	*w.buf = append(*w.buf, p...)
+	return len(p), nil
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

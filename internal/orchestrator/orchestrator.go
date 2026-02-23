@@ -223,6 +223,67 @@ func WithPauseRequested(fn func() bool) Option {
 	return func(o *Orchestrator) { o.pauseRequested = fn }
 }
 
+// ConflictResolutionInput holds the context needed for conflict resolution.
+type ConflictResolutionInput struct {
+	BeadID        string   // The bead ID that encountered the conflict
+	WorktreePath  string   // Path to the worktree where conflict resolution should occur
+	ConflictFiles []string // List of files with conflicts
+	ConflictDiff  string   // Full git diff output for conflicts
+	BeadContext   string   // Task description and context
+}
+
+// RunConflictResolution runs the execute → sign-off agent pair for conflict resolution.
+// Returns nil if conflicts are resolved successfully, error otherwise.
+func (o *Orchestrator) RunConflictResolution(ctx context.Context, input ConflictResolutionInput) error {
+	if o.promptLoader == nil {
+		return &PipelineError{Phase: "conflict-resolve", Err: errors.New("promptLoader is required")}
+	}
+
+	// Find execute and sign-off phases
+	var executePh, signOffPh PhaseDefinition
+	var foundExecute, foundSignOff bool
+	for _, ph := range o.phases {
+		if ph.Name == "execute" {
+			executePh = ph
+			foundExecute = true
+		}
+		if ph.Name == "sign-off" {
+			signOffPh = ph
+			foundSignOff = true
+		}
+	}
+	if !foundExecute || !foundSignOff {
+		return &PipelineError{Phase: "conflict-resolve", Err: errors.New("execute and sign-off phases required")}
+	}
+
+	// Override execute phase to use conflict-resolve prompt
+	executePh.Prompt = "conflict-resolve"
+
+	// Build prompt context with conflict information
+	pCtx := prompt.Context{
+		BeadID:        input.BeadID,
+		ConflictFiles: strings.Join(input.ConflictFiles, "\n"),
+		ConflictDiff:  input.ConflictDiff,
+		BeadContext:   input.BeadContext,
+	}
+
+	// Run the execute → sign-off pair
+	results, err := o.runPhasePair(ctx, executePh, signOffPh, pCtx, input.WorktreePath, "conflict-resolution", "", 1)
+	if err != nil {
+		return fmt.Errorf("conflict resolution failed: %w", err)
+	}
+
+	// Check if sign-off passed
+	if len(results) > 0 {
+		lastResult := results[len(results)-1]
+		if lastResult.Signal.Status == provider.StatusPass {
+			return nil
+		}
+	}
+
+	return errors.New("conflict resolution did not pass sign-off")
+}
+
 // RunPipeline executes all pipeline phases for the given bead.
 // It creates a worktree and worklog, executes phases sequentially,
 // retries on NEEDS_WORK, and archives the worklog on completion.

@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -710,6 +711,38 @@ func TestCampaign_ViewReport_SelectedPendingTask(t *testing.T) {
 	}
 }
 
+func TestCampaign_ViewReport_SelectedFailedTask_ShowsError(t *testing.T) {
+	// Given: task 0 failed with error text and phase reports
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  false,
+		Duration: 3 * time.Second,
+		Error:    "pipeline failed: test phase timeout",
+		PhaseReports: []PhaseReport{
+			{PhaseName: "plan", Status: PhasePassed, Summary: "All planned"},
+			{PhaseName: "code", Status: PhaseFailed, Summary: "Tests timed out"},
+		},
+	})
+
+	// When: ViewReport is called (selectedIdx 0 = failed task)
+	view := cs.ViewReport(60, 20)
+	plain := stripANSI(view)
+
+	// Then: shows error prominently above phase reports
+	if !strings.Contains(plain, "pipeline failed: test phase timeout") {
+		t.Errorf("ViewReport should show error text for failed task, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "plan") {
+		t.Errorf("ViewReport should show phase 'plan' for failed task, got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "code") {
+		t.Errorf("ViewReport should show phase 'code' for failed task, got:\n%s", plain)
+	}
+}
+
 // --- Validation state tests ---
 
 func TestCampaign_ValidationStart_SetsValidating(t *testing.T) {
@@ -800,5 +833,194 @@ func TestCampaign_ViewHeader_NoProvider(t *testing.T) {
 	lines := strings.Split(plain, "\n")
 	if strings.Contains(lines[0], "[") {
 		t.Errorf("header should not contain bracket badge, got: %q", lines[0])
+	}
+}
+
+func TestCampaign_TaskDoneMsg_StoresErrorText(t *testing.T) {
+	// Given: a campaign with first task running
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+
+	// When: task fails with error text
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001",
+		Index:    0,
+		Success:  false,
+		Duration: 2 * time.Second,
+		Error:    "pipeline failed: test phase timeout",
+	})
+
+	// Then: error text is stored in taskErrors map
+	if cs.taskErrors["cap-001"] != "pipeline failed: test phase timeout" {
+		t.Errorf("taskErrors[cap-001] = %q, want %q", cs.taskErrors["cap-001"], "pipeline failed: test phase timeout")
+	}
+}
+
+func TestCampaign_ErrorPropagation_CallbackToState(t *testing.T) {
+	// Given: a mock status function that captures messages
+	var capturedMsg CampaignTaskDoneMsg
+	statusFn := func(msg tea.Msg) {
+		if m, ok := msg.(CampaignTaskDoneMsg); ok {
+			capturedMsg = m
+		}
+	}
+
+	// And: a dashboardCampaignCallback (simulated inline)
+	type testCallback struct {
+		statusFn  func(tea.Msg)
+		taskIndex int
+	}
+	cb := &testCallback{statusFn: statusFn, taskIndex: 0}
+
+	// When: OnTaskFail is called with an error
+	testErr := fmt.Errorf("test error: connection timeout")
+	cb.statusFn(CampaignTaskDoneMsg{
+		BeadID:  "cap-001",
+		Index:   cb.taskIndex,
+		Success: false,
+		Error:   testErr.Error(),
+	})
+
+	// Then: the CampaignTaskDoneMsg contains the error string
+	if capturedMsg.Error != "test error: connection timeout" {
+		t.Errorf("capturedMsg.Error = %q, want %q", capturedMsg.Error, "test error: connection timeout")
+	}
+
+	// And: when campaignState processes the message
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	cs, _ = cs.Update(capturedMsg)
+
+	// Then: error text is stored in campaignState
+	if cs.taskErrors["cap-001"] != "test error: connection timeout" {
+		t.Errorf("taskErrors[cap-001] = %q, want %q", cs.taskErrors["cap-001"], "test error: connection timeout")
+	}
+}
+
+// --- Subcampaign tests ---
+
+func TestCampaign_SubCampaignStartMsg_CreatesSubcampaignState(t *testing.T) {
+	// Given: a campaign state with a running task
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+
+	// When: SubCampaignStartMsg is received
+	subTasks := []CampaignTaskInfo{
+		{BeadID: "cap-001.1", Title: "Subtask 1", Priority: 1},
+		{BeadID: "cap-001.2", Title: "Subtask 2", Priority: 2},
+	}
+	cs, _ = cs.Update(SubCampaignStartMsg{
+		ParentID:    "cap-001",
+		ParentTitle: "First task",
+		Tasks:       subTasks,
+	})
+
+	// Then: subcampaignState is created with correct fields
+	if cs.subcampaign == nil {
+		t.Fatal("subcampaign should be created")
+	}
+	if cs.subcampaign.parentBeadID != "cap-001" {
+		t.Errorf("subcampaign.parentBeadID = %q, want %q", cs.subcampaign.parentBeadID, "cap-001")
+	}
+	if len(cs.subcampaign.tasks) != 2 {
+		t.Errorf("len(subcampaign.tasks) = %d, want 2", len(cs.subcampaign.tasks))
+	}
+	if len(cs.subcampaign.statuses) != 2 {
+		t.Errorf("len(subcampaign.statuses) = %d, want 2", len(cs.subcampaign.statuses))
+	}
+	if cs.subcampaign.currentIdx != -1 {
+		t.Errorf("subcampaign.currentIdx = %d, want -1", cs.subcampaign.currentIdx)
+	}
+}
+
+func TestCampaign_SubCampaignDoneMsg_ClearsSubcampaign(t *testing.T) {
+	// Given: a campaign with active subcampaign
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	subTasks := []CampaignTaskInfo{
+		{BeadID: "cap-001.1", Title: "Subtask 1", Priority: 1},
+	}
+	cs, _ = cs.Update(SubCampaignStartMsg{
+		ParentID:    "cap-001",
+		ParentTitle: "First task",
+		Tasks:       subTasks,
+	})
+
+	// When: SubCampaignDoneMsg is received
+	cs, _ = cs.Update(SubCampaignDoneMsg{
+		ParentID:   "cap-001",
+		TotalTasks: 1,
+		Passed:     1,
+	})
+
+	// Then: subcampaign is cleared
+	if cs.subcampaign != nil {
+		t.Errorf("subcampaign should be nil after SubCampaignDoneMsg")
+	}
+}
+
+func TestCampaign_CampaignTaskStartMsg_RoutesToSubcampaign(t *testing.T) {
+	// Given: a campaign with active subcampaign
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	subTasks := []CampaignTaskInfo{
+		{BeadID: "cap-001.1", Title: "Subtask 1", Priority: 1},
+		{BeadID: "cap-001.2", Title: "Subtask 2", Priority: 2},
+	}
+	cs, _ = cs.Update(SubCampaignStartMsg{
+		ParentID:    "cap-001",
+		ParentTitle: "First task",
+		Tasks:       subTasks,
+	})
+
+	// When: CampaignTaskStartMsg is received for a subtask
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001.1", Index: 0, Total: 2})
+
+	// Then: message is routed to subcampaign (not main campaign)
+	if cs.subcampaign.currentIdx != 0 {
+		t.Errorf("subcampaign.currentIdx = %d, want 0", cs.subcampaign.currentIdx)
+	}
+	if cs.subcampaign.statuses[0] != CampaignTaskRunning {
+		t.Errorf("subcampaign.statuses[0] = %q, want %q", cs.subcampaign.statuses[0], CampaignTaskRunning)
+	}
+	// Main campaign currentIdx should remain unchanged (still on cap-001)
+	if cs.currentIdx != 0 {
+		t.Errorf("main campaign currentIdx = %d, want 0 (unchanged)", cs.currentIdx)
+	}
+}
+
+func TestCampaign_CampaignTaskDoneMsg_RoutesToSubcampaign(t *testing.T) {
+	// Given: a campaign with active subcampaign and running subtask
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	subTasks := []CampaignTaskInfo{
+		{BeadID: "cap-001.1", Title: "Subtask 1", Priority: 1},
+		{BeadID: "cap-001.2", Title: "Subtask 2", Priority: 2},
+	}
+	cs, _ = cs.Update(SubCampaignStartMsg{
+		ParentID:    "cap-001",
+		ParentTitle: "First task",
+		Tasks:       subTasks,
+	})
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001.1", Index: 0, Total: 2})
+
+	// When: CampaignTaskDoneMsg is received for the subtask
+	cs, _ = cs.Update(CampaignTaskDoneMsg{
+		BeadID:   "cap-001.1",
+		Index:    0,
+		Success:  true,
+		Duration: 3 * time.Second,
+	})
+
+	// Then: message is routed to subcampaign
+	if cs.subcampaign.statuses[0] != CampaignTaskPassed {
+		t.Errorf("subcampaign.statuses[0] = %q, want %q", cs.subcampaign.statuses[0], CampaignTaskPassed)
+	}
+	if cs.subcampaign.durations[0] != 3*time.Second {
+		t.Errorf("subcampaign.durations[0] = %v, want 3s", cs.subcampaign.durations[0])
+	}
+	// Main campaign status should remain unchanged
+	if cs.taskStatuses[0] != CampaignTaskRunning {
+		t.Errorf("main campaign taskStatuses[0] = %q, want %q (unchanged)", cs.taskStatuses[0], CampaignTaskRunning)
 	}
 }

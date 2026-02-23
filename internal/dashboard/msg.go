@@ -242,6 +242,7 @@ type CampaignTaskDoneMsg struct {
 	Success      bool
 	Duration     time.Duration
 	PhaseReports []PhaseReport
+	Error        string
 }
 
 // CampaignDoneMsg signals that the entire campaign has completed.
@@ -253,9 +254,32 @@ type CampaignDoneMsg struct {
 	Skipped    int
 }
 
+// SubCampaignStartMsg signals that a nested campaign has started.
+type SubCampaignStartMsg struct {
+	ParentID    string
+	ParentTitle string
+	Tasks       []CampaignTaskInfo
+}
+
+// SubCampaignDoneMsg signals that a nested campaign has completed.
+type SubCampaignDoneMsg struct {
+	ParentID   string
+	TotalTasks int
+	Passed     int
+	Failed     int
+	Skipped    int
+}
+
 // CampaignErrorMsg signals that the campaign runner returned an error.
 type CampaignErrorMsg struct {
 	Err error
+}
+
+// CampaignPausedMsg signals that a campaign has paused due to unresolved conflict.
+type CampaignPausedMsg struct {
+	BeadID  string
+	Reason  string
+	Details string
 }
 
 // CampaignValidationStartMsg signals that a campaign validation pipeline is starting.

@@ -3375,3 +3375,89 @@ func TestDispatchCampaign_InjectsProviderInPipelineFn(t *testing.T) {
 		t.Errorf("pipelineFn received provider = %q, want %q", capturedProvider, "kiro")
 	}
 }
+
+func TestModel_SubCampaignStartMsgRoutes(t *testing.T) {
+	// Given: a model in campaign mode
+	m := newCampaignModel(90, 40)
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a SubCampaignStartMsg is received
+	updated, _ := m.Update(SubCampaignStartMsg{
+		ParentID:    "cap-sub",
+		ParentTitle: "Subcampaign",
+		Tasks:       sampleCampaignTasks(),
+	})
+	m = updated.(Model)
+
+	// Then: the message is routed to campaignState.Update
+	if m.mode != ModeCampaign {
+		t.Errorf("mode = %d, want ModeCampaign", m.mode)
+	}
+}
+
+func TestModel_SubCampaignDoneMsgRoutes(t *testing.T) {
+	// Given: a model in campaign mode
+	m := newCampaignModel(90, 40)
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a SubCampaignDoneMsg is received
+	updated, _ := m.Update(SubCampaignDoneMsg{
+		ParentID:   "cap-sub",
+		TotalTasks: 3,
+		Passed:     2,
+		Failed:     1,
+	})
+	m = updated.(Model)
+
+	// Then: the message is routed to campaignState.Update
+	if m.mode != ModeCampaign {
+		t.Errorf("mode = %d, want ModeCampaign", m.mode)
+	}
+}
+
+func TestModel_SubCampaignStartMsgRoutesInBackground(t *testing.T) {
+	// Given: a model in browse mode with campaign running in background
+	m := newCampaignModel(90, 40)
+	m.backgroundMode = ModeCampaign
+	m.mode = ModeBrowse
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a SubCampaignStartMsg is received
+	updated, _ := m.Update(SubCampaignStartMsg{
+		ParentID:    "cap-sub",
+		ParentTitle: "Subcampaign",
+		Tasks:       sampleCampaignTasks(),
+	})
+	m = updated.(Model)
+
+	// Then: the message is routed to campaignState.Update and mode stays browse
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+}
+
+func TestModel_SubCampaignDoneMsgRoutesInBackground(t *testing.T) {
+	// Given: a model in browse mode with campaign running in background
+	m := newCampaignModel(90, 40)
+	m.backgroundMode = ModeCampaign
+	m.mode = ModeBrowse
+	ch := make(chan tea.Msg, 1)
+	m.eventCh = ch
+
+	// When: a SubCampaignDoneMsg is received
+	updated, _ := m.Update(SubCampaignDoneMsg{
+		ParentID:   "cap-sub",
+		TotalTasks: 3,
+		Passed:     2,
+		Failed:     1,
+	})
+	m = updated.(Model)
+
+	// Then: the message is routed to campaignState.Update and mode stays browse
+	if m.mode != ModeBrowse {
+		t.Errorf("mode = %d, want ModeBrowse", m.mode)
+	}
+}

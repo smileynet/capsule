@@ -6,6 +6,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Worktree merge/cleanup per campaign task (cap-9f0.1)
+  - Each successful task's worktree merges to main before next task starts
+  - Campaign tasks branch from updated main containing all prior work
+  - PostTaskFunc injection enables campaign package to trigger merge/cleanup
+  - CLI and dashboard commands wire PostTaskFunc identically
+- Depth-aware campaign callback adapter (cap-9f0.4)
+  - Epic dispatch shows features as top-level campaign rows
+  - Feature tasks nest under running feature with indentation
+  - Pipeline phases animate under active task within feature
+  - Subcampaign state overlay tracks nested task progress
+  - Background mode handles nested campaign messages
+  - CLI adapter logs subcampaign events with depth-aware formatting
+- Campaign error observability (cap-9f0.3)
+  - State save and bead close failures logged to stderr
+  - Failed tasks display error detail in dashboard right pane
+  - Error messages flow through CampaignTaskDoneMsg pipeline
 - Go CLI skeleton with Kong: `capsule version`, `capsule run`, `capsule abort`, `capsule clean` (`cmd/capsule`)
 - Provider interface with ClaudeProvider subprocess execution, signal parsing, and timeout handling (`internal/provider`)
 - Provider registry with factory pattern for name-based provider instantiation

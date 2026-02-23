@@ -18,6 +18,7 @@ type campaignState struct {
 	tasks         []CampaignTaskInfo
 	taskStatuses  []CampaignTaskStatus
 	taskDurations []time.Duration
+	taskErrors    map[string]string        // Error text keyed by bead ID.
 	taskReports   map[string][]PhaseReport // Phase reports keyed by bead ID.
 	currentIdx    int                      // -1 = no task running
 	selectedIdx   int                      // Cursor for browsing tasks (independent of currentIdx).
@@ -25,8 +26,25 @@ type campaignState struct {
 	completed     int
 	failed        int
 
+	pausedBeadID  string // Set when campaign pauses due to conflict
+	pausedReason  string
+	pausedDetails string
+
 	validating       bool                       // true while validation pipeline is running
 	validationResult *CampaignValidationDoneMsg // set on validation completion
+
+	subcampaign *subcampaignState // nil when no subcampaign active
+}
+
+// subcampaignState manages a nested campaign overlay.
+type subcampaignState struct {
+	parentBeadID string
+	tasks        []CampaignTaskInfo
+	statuses     []CampaignTaskStatus
+	durations    []time.Duration
+	reports      map[string][]PhaseReport
+	currentIdx   int
+	pipeline     pipelineState
 }
 
 // newCampaignState creates a campaignState for the given parent and tasks.
@@ -41,6 +59,7 @@ func newCampaignState(parentID, parentTitle string, tasks []CampaignTaskInfo) ca
 		tasks:         tasks,
 		taskStatuses:  statuses,
 		taskDurations: make([]time.Duration, len(tasks)),
+		taskErrors:    make(map[string]string),
 		taskReports:   make(map[string][]PhaseReport),
 		currentIdx:    -1,
 		pipeline:      newPipelineState(nil),
@@ -54,6 +73,13 @@ func (cs campaignState) Update(msg tea.Msg) (campaignState, tea.Cmd) {
 		return cs.handleTaskStart(msg), nil
 	case CampaignTaskDoneMsg:
 		return cs.handleTaskDone(msg), nil
+	case CampaignPausedMsg:
+		return cs.handlePaused(msg), nil
+	case SubCampaignStartMsg:
+		return cs.handleSubCampaignStart(msg), nil
+	case SubCampaignDoneMsg:
+		cs.subcampaign = nil
+		return cs, nil
 	case PhaseUpdateMsg, elapsedTickMsg, spinner.TickMsg:
 		var cmd tea.Cmd
 		cs.pipeline, cmd = cs.pipeline.Update(msg)
@@ -84,6 +110,14 @@ func (cs campaignState) handleKey(msg tea.KeyMsg) campaignState {
 }
 
 func (cs campaignState) handleTaskStart(msg CampaignTaskStartMsg) campaignState {
+	if cs.subcampaign != nil {
+		cs.subcampaign.currentIdx = msg.Index
+		if msg.Index >= 0 && msg.Index < len(cs.subcampaign.statuses) {
+			cs.subcampaign.statuses[msg.Index] = CampaignTaskRunning
+		}
+		cs.subcampaign.pipeline = newPipelineState(nil)
+		return cs
+	}
 	cs.currentIdx = msg.Index
 	if msg.Index >= 0 && msg.Index < len(cs.taskStatuses) {
 		cs.taskStatuses[msg.Index] = CampaignTaskRunning
@@ -93,6 +127,20 @@ func (cs campaignState) handleTaskStart(msg CampaignTaskStartMsg) campaignState 
 }
 
 func (cs campaignState) handleTaskDone(msg CampaignTaskDoneMsg) campaignState {
+	if cs.subcampaign != nil {
+		if msg.Index >= 0 && msg.Index < len(cs.subcampaign.statuses) {
+			if msg.Success {
+				cs.subcampaign.statuses[msg.Index] = CampaignTaskPassed
+			} else {
+				cs.subcampaign.statuses[msg.Index] = CampaignTaskFailed
+			}
+			cs.subcampaign.durations[msg.Index] = msg.Duration
+		}
+		if len(msg.PhaseReports) > 0 {
+			cs.subcampaign.reports[msg.BeadID] = msg.PhaseReports
+		}
+		return cs
+	}
 	if msg.Index >= 0 && msg.Index < len(cs.taskStatuses) {
 		if msg.Success {
 			cs.taskStatuses[msg.Index] = CampaignTaskPassed
@@ -105,6 +153,33 @@ func (cs campaignState) handleTaskDone(msg CampaignTaskDoneMsg) campaignState {
 	}
 	if len(msg.PhaseReports) > 0 {
 		cs.taskReports[msg.BeadID] = msg.PhaseReports
+	}
+	if msg.Error != "" {
+		cs.taskErrors[msg.BeadID] = msg.Error
+	}
+	return cs
+}
+
+func (cs campaignState) handlePaused(msg CampaignPausedMsg) campaignState {
+	cs.pausedBeadID = msg.BeadID
+	cs.pausedReason = msg.Reason
+	cs.pausedDetails = msg.Details
+	return cs
+}
+
+func (cs campaignState) handleSubCampaignStart(msg SubCampaignStartMsg) campaignState {
+	statuses := make([]CampaignTaskStatus, len(msg.Tasks))
+	for i := range statuses {
+		statuses[i] = CampaignTaskPending
+	}
+	cs.subcampaign = &subcampaignState{
+		parentBeadID: msg.ParentID,
+		tasks:        msg.Tasks,
+		statuses:     statuses,
+		durations:    make([]time.Duration, len(msg.Tasks)),
+		reports:      make(map[string][]PhaseReport),
+		currentIdx:   -1,
+		pipeline:     newPipelineState(nil),
 	}
 	return cs
 }
@@ -244,6 +319,11 @@ func (cs campaignState) ViewReport(width, height int) string {
 func (cs campaignState) formatTaskReport(task CampaignTaskInfo, reports []PhaseReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", task.Title)
+
+	// Show error prominently for failed tasks.
+	if errText, ok := cs.taskErrors[task.BeadID]; ok && errText != "" {
+		fmt.Fprintf(&b, "\n%s\n", pipeFailedStyle.Render("⚠ "+errText))
+	}
 
 	for _, r := range reports {
 		var renderedStatus string

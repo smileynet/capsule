@@ -115,12 +115,53 @@ func (c *CampaignCmd) Run() error {
 	stateStore := state.NewFileStore(".capsule/campaigns")
 	cb := &campaignPlainTextCallback{w: os.Stdout}
 
+	// Construct ConflictResolver to invoke agent pair for conflict resolution
+	conflictResolver := func(beadID string, conflictErr error) error {
+		// Extract conflict information
+		conflictFiles, err := wtMgr.GetConflictFiles()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict files: %w", err)
+		}
+		conflictDiff, err := wtMgr.GetConflictDiff()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict diff: %w", err)
+		}
+
+		// Get bead context
+		beadInfo, err := bdClient.Show(beadID)
+		if err != nil {
+			return fmt.Errorf("failed to get bead info: %w", err)
+		}
+		beadContext := fmt.Sprintf("%s: %s\n\n%s", beadID, beadInfo.Title, beadInfo.Description)
+
+		// Run conflict resolution via orchestrator
+		wtPath := wtMgr.Path(beadID)
+		resolveInput := orchestrator.ConflictResolutionInput{
+			BeadID:        beadID,
+			WorktreePath:  wtPath,
+			ConflictFiles: conflictFiles,
+			ConflictDiff:  conflictDiff,
+			BeadContext:   beadContext,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Runtime.Timeout)
+		defer cancel()
+		return orch.RunConflictResolution(ctx, resolveInput)
+	}
+
+	// Construct PostTaskFunc closure that calls postPipelineWithConflictResolver.
+	postTaskFunc := func(beadID string) error {
+		return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient.client, conflictResolver)
+	}
+
 	campaignCfg := campaign.Config{
 		FailureMode:      cfg.Campaign.FailureMode,
 		CircuitBreaker:   cfg.Campaign.CircuitBreaker,
 		DiscoveryFiling:  cfg.Campaign.DiscoveryFiling,
 		CrossRunContext:  cfg.Campaign.CrossRunContext,
 		ValidationPhases: cfg.Campaign.ValidationPhases,
+		PostTaskFunc:     postTaskFunc,
+		ConflictResolver: conflictResolver,
 	}
 
 	runner := campaign.NewRunner(orch, bdClient, stateStore, campaignCfg, cb)
@@ -355,6 +396,59 @@ func postPipeline(w io.Writer, beadID string, wt mergeOps, bd beadResolver) {
 	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", beadID)
 }
 
+// postPipelineWithConflictResolver performs merge with conflict resolution support.
+// When merge conflict occurs and resolver is provided, calls resolver and retries merge.
+// Returns error if resolver fails, allowing campaign to pause.
+func postPipelineWithConflictResolver(w io.Writer, beadID string, wt mergeOps, bd beadResolver, resolver func(string, error) error) error {
+	mainBranch, err := wt.DetectMainBranch()
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "warning: cannot detect main branch: %v\n", err)
+		return nil
+	}
+
+	commitMsg := fmt.Sprintf("%s: pipeline complete", beadID)
+	err = wt.MergeToMain(beadID, mainBranch, commitMsg)
+	if err != nil {
+		if errors.Is(err, worktree.ErrMergeConflict) && resolver != nil {
+			if resolveErr := resolver(beadID, err); resolveErr != nil {
+				return resolveErr
+			}
+			// Retry merge after successful resolution
+			err = wt.MergeToMain(beadID, mainBranch, commitMsg)
+		}
+		if err != nil {
+			if errors.Is(err, worktree.ErrMergeConflict) {
+				_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", beadID, mainBranch)
+				_, _ = fmt.Fprintf(w, "  To fix:\n")
+				_, _ = fmt.Fprintf(w, "    git checkout %s\n", mainBranch)
+				_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", beadID)
+				_, _ = fmt.Fprintf(w, "    # resolve conflicts, then:\n")
+				_, _ = fmt.Fprintf(w, "    capsule clean %s\n", beadID)
+				return nil
+			}
+			_, _ = fmt.Fprintf(w, "warning: merge failed: %v\n", err)
+			return nil
+		}
+	}
+	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", beadID, mainBranch)
+
+	if err := wt.Remove(beadID, true); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: cleanup failed: %v\n", err)
+	}
+	if err := wt.Prune(); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: prune failed: %v\n", err)
+	}
+
+	if err := bd.Close(beadID); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: bead close failed: %v\n", err)
+	} else {
+		_, _ = fmt.Fprintf(w, "Closed %s\n", beadID)
+	}
+
+	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", beadID)
+	return nil
+}
+
 // AbortCmd aborts a running capsule by removing the worktree.
 // The branch is preserved so work can be inspected. Use clean to remove everything.
 type AbortCmd struct {
@@ -472,9 +566,51 @@ func (d *DashboardCmd) Run() error {
 	resolver := &beadResolverAdapter{client: bdClient}
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
 
+	// Construct ConflictResolver to invoke agent pair for conflict resolution
+	conflictResolver := func(beadID string, conflictErr error) error {
+		// Extract conflict information
+		conflictFiles, err := wtMgr.GetConflictFiles()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict files: %w", err)
+		}
+		conflictDiff, err := wtMgr.GetConflictDiff()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict diff: %w", err)
+		}
+
+		// Get bead context
+		beadCtx, err := bdClient.Resolve(beadID)
+		if err != nil {
+			return fmt.Errorf("failed to get bead info: %w", err)
+		}
+		beadContext := fmt.Sprintf("%s: %s\n\n%s", beadID, beadCtx.TaskTitle, beadCtx.TaskDescription)
+
+		// Build orchestrator for conflict resolution
+		orch := orchestrator.New(p,
+			orchestrator.WithPromptLoader(prompt.NewLoader(capsule.OverlayFS("prompts", capsule.Prompts))),
+			orchestrator.WithWorktreeManager(wtMgr),
+			orchestrator.WithWorklogManager(worklog.NewManager(capsule.OverlayFS("templates", capsule.Templates), "worklog.md.template", ".capsule/logs")),
+			orchestrator.WithGateRunner(gate.NewRunner()),
+			orchestrator.WithPhases(phases),
+		)
+
+		// Run conflict resolution
+		wtPath := wtMgr.Path(beadID)
+		resolveInput := orchestrator.ConflictResolutionInput{
+			BeadID:        beadID,
+			WorktreePath:  wtPath,
+			ConflictFiles: conflictFiles,
+			ConflictDiff:  conflictDiff,
+			BeadContext:   beadContext,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Runtime.Timeout)
+		defer cancel()
+		return orch.RunConflictResolution(ctx, resolveInput)
+	}
+
 	ppFunc := func(beadID string) error {
-		postPipeline(io.Discard, beadID, wtMgr, bdClient)
-		return nil
+		return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient, conflictResolver)
 	}
 
 	pauseCheck, stopPause := setupPauseTrigger()
@@ -501,6 +637,10 @@ func (d *DashboardCmd) Run() error {
 			DiscoveryFiling:  cfg.Campaign.DiscoveryFiling,
 			CrossRunContext:  cfg.Campaign.CrossRunContext,
 			ValidationPhases: cfg.Campaign.ValidationPhases,
+			PostTaskFunc: func(beadID string) error {
+				return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient, conflictResolver)
+			},
+			ConflictResolver: conflictResolver,
 		},
 	}
 
@@ -736,26 +876,47 @@ func (c *campaignBeadClient) Create(input campaign.BeadInput) (string, error) {
 
 // campaignPlainTextCallback implements campaign.Callback with plain text output.
 type campaignPlainTextCallback struct {
-	w io.Writer
+	w     io.Writer
+	depth int
+	stack []campaignLevel
 }
 
 func (c *campaignPlainTextCallback) OnCampaignStart(parentID string, tasks []campaign.BeadInfo) {
-	_, _ = fmt.Fprintf(c.w, "[campaign] %s (%d tasks)\n", parentID, len(tasks))
+	if c.depth == 0 {
+		_, _ = fmt.Fprintf(c.w, "[campaign] %s (%d tasks)\n", parentID, len(tasks))
+	} else {
+		indent := strings.Repeat("  ", c.depth)
+		c.stack = append(c.stack, campaignLevel{
+			parentID:  parentID,
+			taskIndex: 0,
+			taskTotal: 0,
+		})
+		_, _ = fmt.Fprintf(c.w, "%s[subcampaign] %s (%d tasks)\n", indent, parentID, len(tasks))
+	}
+	c.depth++
 }
 
 func (c *campaignPlainTextCallback) OnTaskStart(beadID string) {
 	ts := time.Now().Format("15:04:05")
-	_, _ = fmt.Fprintf(c.w, "[%s] [%s] starting...\n", ts, beadID)
+	indent := strings.Repeat("  ", c.depth)
+	_, _ = fmt.Fprintf(c.w, "%s[%s] [%s] starting...\n", indent, ts, beadID)
 }
 
 func (c *campaignPlainTextCallback) OnTaskComplete(result campaign.TaskResult) {
 	ts := time.Now().Format("15:04:05")
-	_, _ = fmt.Fprintf(c.w, "[%s] [%s] complete\n", ts, result.BeadID)
+	indent := strings.Repeat("  ", c.depth)
+	_, _ = fmt.Fprintf(c.w, "%s[%s] [%s] complete\n", indent, ts, result.BeadID)
 }
 
 func (c *campaignPlainTextCallback) OnTaskFail(beadID string, err error) {
 	ts := time.Now().Format("15:04:05")
-	_, _ = fmt.Fprintf(c.w, "[%s] [%s] failed: %v\n", ts, beadID, err)
+	indent := strings.Repeat("  ", c.depth)
+	_, _ = fmt.Fprintf(c.w, "%s[%s] [%s] failed: %v\n", indent, ts, beadID, err)
+}
+
+func (c *campaignPlainTextCallback) OnCampaignPaused(beadID, reason, details string) {
+	_, _ = fmt.Fprintf(c.w, "\n⚠️  Campaign paused: %s in %s\n", reason, beadID)
+	_, _ = fmt.Fprintf(c.w, "Details: %s\n", details)
 }
 
 func (c *campaignPlainTextCallback) OnDiscoveryFiled(f provider.Finding, newBeadID string) {
@@ -771,7 +932,14 @@ func (c *campaignPlainTextCallback) OnValidationComplete(result campaign.TaskRes
 }
 
 func (c *campaignPlainTextCallback) OnCampaignComplete(s campaign.State) {
-	_, _ = fmt.Fprintf(c.w, "[campaign] Complete: %d tasks\n", len(s.Tasks))
+	c.depth--
+	if c.depth > 0 {
+		indent := strings.Repeat("  ", c.depth)
+		c.stack = c.stack[:len(c.stack)-1]
+		_, _ = fmt.Fprintf(c.w, "%s[subcampaign] %s done: %d tasks\n", indent, s.ParentBeadID, len(s.Tasks))
+	} else {
+		_, _ = fmt.Fprintf(c.w, "[campaign] Complete: %d tasks\n", len(s.Tasks))
+	}
 }
 
 func severityToPriorityCLI(severity string) int {
@@ -910,6 +1078,13 @@ func dashboardStatusToProvider(s dashboard.PhaseStatus) provider.Status {
 	}
 }
 
+// campaignLevel tracks state for a single campaign level in the stack.
+type campaignLevel struct {
+	parentID  string
+	taskIndex int
+	taskTotal int
+}
+
 // dashboardCampaignCallback implements campaign.Callback by converting
 // campaign lifecycle events to dashboard tea.Msg types.
 //
@@ -919,11 +1094,11 @@ type dashboardCampaignCallback struct {
 	statusFn  func(tea.Msg)
 	taskIndex int
 	taskTotal int
+	depth     int
+	stack     []campaignLevel
 }
 
 func (c *dashboardCampaignCallback) OnCampaignStart(parentID string, tasks []campaign.BeadInfo) {
-	c.taskTotal = len(tasks)
-	c.taskIndex = 0
 	infos := make([]dashboard.CampaignTaskInfo, len(tasks))
 	for i, t := range tasks {
 		infos[i] = dashboard.CampaignTaskInfo{
@@ -932,13 +1107,30 @@ func (c *dashboardCampaignCallback) OnCampaignStart(parentID string, tasks []cam
 			Priority: t.Priority,
 		}
 	}
-	// ParentTitle is intentionally omitted: the campaign.Callback interface
-	// does not carry it, so the dashboard model falls back to the title
-	// set during dispatch (see CampaignStartMsg handler in model.go).
-	c.statusFn(dashboard.CampaignStartMsg{
-		ParentID: parentID,
-		Tasks:    infos,
-	})
+
+	if c.depth == 0 {
+		// Top-level campaign
+		c.taskTotal = len(tasks)
+		c.taskIndex = 0
+		c.statusFn(dashboard.CampaignStartMsg{
+			ParentID: parentID,
+			Tasks:    infos,
+		})
+	} else {
+		// Nested campaign: push current state to stack
+		c.stack = append(c.stack, campaignLevel{
+			parentID:  parentID,
+			taskIndex: c.taskIndex,
+			taskTotal: c.taskTotal,
+		})
+		c.taskTotal = len(tasks)
+		c.taskIndex = 0
+		c.statusFn(dashboard.SubCampaignStartMsg{
+			ParentID: parentID,
+			Tasks:    infos,
+		})
+	}
+	c.depth++
 }
 
 func (c *dashboardCampaignCallback) OnTaskStart(beadID string) {
@@ -980,13 +1172,22 @@ func (c *dashboardCampaignCallback) OnTaskComplete(result campaign.TaskResult) {
 	c.taskIndex++
 }
 
-func (c *dashboardCampaignCallback) OnTaskFail(beadID string, _ error) {
+func (c *dashboardCampaignCallback) OnTaskFail(beadID string, err error) {
 	c.statusFn(dashboard.CampaignTaskDoneMsg{
 		BeadID:  beadID,
 		Index:   c.taskIndex,
 		Success: false,
+		Error:   err.Error(),
 	})
 	c.taskIndex++
+}
+
+func (c *dashboardCampaignCallback) OnCampaignPaused(beadID, reason, details string) {
+	c.statusFn(dashboard.CampaignPausedMsg{
+		BeadID:  beadID,
+		Reason:  reason,
+		Details: details,
+	})
 }
 
 func (c *dashboardCampaignCallback) OnDiscoveryFiled(_ provider.Finding, _ string) {
@@ -1022,6 +1223,8 @@ func (c *dashboardCampaignCallback) OnValidationComplete(result campaign.TaskRes
 }
 
 func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {
+	c.depth--
+
 	passed, failed, skipped := 0, 0, 0
 	for _, t := range s.Tasks {
 		switch t.Status {
@@ -1033,13 +1236,30 @@ func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {
 			skipped++
 		}
 	}
-	c.statusFn(dashboard.CampaignDoneMsg{
-		ParentID:   s.ParentBeadID,
-		TotalTasks: len(s.Tasks),
-		Passed:     passed,
-		Failed:     failed,
-		Skipped:    skipped,
-	})
+
+	if c.depth > 0 {
+		// Nested campaign: pop stack and send SubCampaignDoneMsg
+		c.statusFn(dashboard.SubCampaignDoneMsg{
+			ParentID:   s.ParentBeadID,
+			TotalTasks: len(s.Tasks),
+			Passed:     passed,
+			Failed:     failed,
+			Skipped:    skipped,
+		})
+		top := c.stack[len(c.stack)-1]
+		c.stack = c.stack[:len(c.stack)-1]
+		c.taskIndex = top.taskIndex
+		c.taskTotal = top.taskTotal
+	} else {
+		// Top-level campaign
+		c.statusFn(dashboard.CampaignDoneMsg{
+			ParentID:   s.ParentBeadID,
+			TotalTasks: len(s.Tasks),
+			Passed:     passed,
+			Failed:     failed,
+			Skipped:    skipped,
+		})
+	}
 }
 
 // Exit codes.

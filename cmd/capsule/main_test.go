@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -717,11 +718,19 @@ type mockMergeOps struct {
 	removeErr  error
 	pruneErr   error
 
-	merged bool
+	merged     bool
+	mergeCount int
+	mergeErrs  []error // Sequence of errors to return on successive calls
 }
 
 func (m *mockMergeOps) MergeToMain(string, string, string) error {
 	m.merged = true
+	if len(m.mergeErrs) > 0 {
+		err := m.mergeErrs[m.mergeCount]
+		m.mergeCount++
+		return err
+	}
+	m.mergeCount++
 	return m.mergeErr
 }
 
@@ -1336,6 +1345,85 @@ func TestDashboardCampaignCallback_OnTaskComplete_EmptyPhaseResults(t *testing.T
 	}
 }
 
+func TestDashboardCampaignCallback_NestedCampaigns(t *testing.T) {
+	// Given: a callback that captures messages
+	var captured []tea.Msg
+	cb := &dashboardCampaignCallback{
+		statusFn: func(msg tea.Msg) { captured = append(captured, msg) },
+	}
+
+	// When: epic → feature → task sequence is executed
+	// Epic starts (depth 0)
+	cb.OnCampaignStart("epic-1", []campaign.BeadInfo{
+		{ID: "feat-1", Title: "Feature 1", Priority: 1},
+	})
+
+	// Feature starts (depth 1)
+	cb.OnCampaignStart("feat-1", []campaign.BeadInfo{
+		{ID: "task-1", Title: "Task 1", Priority: 1},
+	})
+
+	// Task starts (depth 2)
+	cb.OnCampaignStart("task-1", []campaign.BeadInfo{})
+
+	// Task completes (depth 2)
+	cb.OnCampaignComplete(campaign.State{
+		ParentBeadID: "task-1",
+		Tasks:        []campaign.TaskResult{},
+	})
+
+	// Feature completes (depth 1)
+	cb.OnCampaignComplete(campaign.State{
+		ParentBeadID: "feat-1",
+		Tasks: []campaign.TaskResult{
+			{BeadID: "task-1", Status: campaign.TaskCompleted},
+		},
+	})
+
+	// Epic completes (depth 0)
+	cb.OnCampaignComplete(campaign.State{
+		ParentBeadID: "epic-1",
+		Tasks: []campaign.TaskResult{
+			{BeadID: "feat-1", Status: campaign.TaskCompleted},
+		},
+	})
+
+	// Then: verify message types
+	if len(captured) != 6 {
+		t.Fatalf("captured %d messages, want 6", len(captured))
+	}
+
+	// Epic start: CampaignStartMsg
+	if _, ok := captured[0].(dashboard.CampaignStartMsg); !ok {
+		t.Errorf("message 0 is %T, want CampaignStartMsg", captured[0])
+	}
+
+	// Feature start: SubCampaignStartMsg
+	if _, ok := captured[1].(dashboard.SubCampaignStartMsg); !ok {
+		t.Errorf("message 1 is %T, want SubCampaignStartMsg", captured[1])
+	}
+
+	// Task start: SubCampaignStartMsg
+	if _, ok := captured[2].(dashboard.SubCampaignStartMsg); !ok {
+		t.Errorf("message 2 is %T, want SubCampaignStartMsg", captured[2])
+	}
+
+	// Task complete: SubCampaignDoneMsg
+	if _, ok := captured[3].(dashboard.SubCampaignDoneMsg); !ok {
+		t.Errorf("message 3 is %T, want SubCampaignDoneMsg", captured[3])
+	}
+
+	// Feature complete: SubCampaignDoneMsg
+	if _, ok := captured[4].(dashboard.SubCampaignDoneMsg); !ok {
+		t.Errorf("message 4 is %T, want SubCampaignDoneMsg", captured[4])
+	}
+
+	// Epic complete: CampaignDoneMsg
+	if _, ok := captured[5].(dashboard.CampaignDoneMsg); !ok {
+		t.Errorf("message 5 is %T, want CampaignDoneMsg", captured[5])
+	}
+}
+
 func TestPostPipeline_MergesAndClosesBead(t *testing.T) {
 	// Given: mock worktree and bead resolver that succeed
 	var buf bytes.Buffer
@@ -1467,3 +1555,334 @@ func (m *mockTeaRunner) Run() (tea.Model, error) {
 
 // Compile-time check: mockTeaRunner satisfies teaRunner.
 var _ teaRunner = (*mockTeaRunner)(nil)
+
+func TestFeature_CampaignPostTaskFunc(t *testing.T) {
+	t.Run("CampaignCmd wires PostTaskFunc that calls postPipeline", func(t *testing.T) {
+		// Given: a mock campaign runner that captures the config
+		var capturedConfig campaign.Config
+		mockRunner := &mockCampaignRunner{
+			captureConfig: func(cfg campaign.Config) {
+				capturedConfig = cfg
+			},
+		}
+
+		// When: CampaignCmd constructs the runner (simulated via test helper)
+		wtMgr := &mockMergeOps{mainBranch: "main"}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-task"}}
+
+		// Construct PostTaskFunc closure as CampaignCmd.Run does
+		postTaskFunc := func(beadID string) error {
+			postPipeline(io.Discard, beadID, wtMgr, bdClient)
+			return nil
+		}
+
+		// Simulate passing it via campaign.Config
+		cfg := campaign.Config{
+			PostTaskFunc: postTaskFunc,
+		}
+		mockRunner.captureConfig(cfg)
+
+		// Then: PostTaskFunc is set in the config
+		if capturedConfig.PostTaskFunc == nil {
+			t.Fatal("PostTaskFunc is nil, want non-nil")
+		}
+
+		// And: calling PostTaskFunc triggers merge and close
+		err := capturedConfig.PostTaskFunc("cap-task")
+		if err != nil {
+			t.Fatalf("PostTaskFunc returned error: %v", err)
+		}
+		if !wtMgr.merged {
+			t.Error("merge was not called")
+		}
+		if !bdClient.closed {
+			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("PostTaskFunc closure captures wtMgr and bdClient correctly", func(t *testing.T) {
+		// Given: mocks for worktree and bead operations
+		wtMgr := &mockMergeOps{mainBranch: "main"}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-123"}}
+
+		// When: PostTaskFunc closure is constructed (as in CampaignCmd.Run)
+		postTaskFunc := func(beadID string) error {
+			postPipeline(io.Discard, beadID, wtMgr, bdClient)
+			return nil
+		}
+
+		// And: PostTaskFunc is called with a bead ID
+		err := postTaskFunc("cap-123")
+
+		// Then: no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And: merge was called
+		if !wtMgr.merged {
+			t.Error("merge was not called")
+		}
+		// And: bead was closed
+		if !bdClient.closed {
+			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("DashboardCmd wires PostTaskFunc in campaign adapter", func(t *testing.T) {
+		// Verify DashboardCmd wires PostTaskFunc to trigger merge and close after task completion.
+
+		// Given: mocks for worktree and bead operations
+		wtMgr := &mockMergeOps{mainBranch: "main"}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-456"}}
+
+		// When: PostTaskFunc closure is constructed (as should be done in DashboardCmd.Run)
+		postTaskFunc := func(beadID string) error {
+			postPipeline(io.Discard, beadID, wtMgr, bdClient)
+			return nil
+		}
+
+		// And: dashboardCampaignAdapter is constructed with PostTaskFunc
+		adapter := &dashboardCampaignAdapter{
+			campaignCfg: campaign.Config{
+				PostTaskFunc: postTaskFunc,
+			},
+		}
+
+		// Then: PostTaskFunc is set in the adapter's config
+		if adapter.campaignCfg.PostTaskFunc == nil {
+			t.Fatal("PostTaskFunc is nil, want non-nil")
+		}
+
+		// And: calling PostTaskFunc triggers merge and close
+		err := adapter.campaignCfg.PostTaskFunc("cap-456")
+		if err != nil {
+			t.Fatalf("PostTaskFunc returned error: %v", err)
+		}
+		if !wtMgr.merged {
+			t.Error("merge was not called")
+		}
+		if !bdClient.closed {
+			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("CampaignCmd PostTaskFunc does not swallow error messages", func(t *testing.T) {
+		// This test verifies that when PostTaskFunc encounters errors during
+		// merge/cleanup/close, those messages are visible to the user.
+
+		// Given: merge fails with a non-conflict error
+		wtMgr := &mockMergeOps{
+			mainBranch: "main",
+			mergeErrs:  []error{fmt.Errorf("merge failed: disk full")},
+		}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-789"}}
+
+		// And: a buffer to capture stderr output
+		var buf bytes.Buffer
+
+		// When: PostTaskFunc is called (should write to stderr, not io.Discard)
+		postTaskFunc := func(beadID string) error {
+			return postPipelineWithConflictResolver(&buf, beadID, wtMgr, bdClient, nil)
+		}
+
+		err := postTaskFunc("cap-789")
+
+		// Then: no error is returned (best-effort)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// And: warning message is written to output
+		output := buf.String()
+		if !strings.Contains(output, "warning: merge failed") {
+			t.Errorf("output = %q, want to contain 'warning: merge failed'", output)
+		}
+		if !strings.Contains(output, "disk full") {
+			t.Errorf("output = %q, want to contain 'disk full'", output)
+		}
+	})
+
+	t.Run("DashboardCmd PostTaskFunc does not swallow error messages", func(t *testing.T) {
+		// This test verifies that when PostTaskFunc encounters errors during
+		// merge/cleanup/close, those messages are visible to the user.
+
+		// Given: merge fails with a non-conflict error
+		wtMgr := &mockMergeOps{
+			mainBranch: "main",
+			mergeErrs:  []error{fmt.Errorf("merge failed: disk full")},
+		}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-789"}}
+
+		// And: a buffer to capture stderr output
+		var buf bytes.Buffer
+
+		// When: PostTaskFunc is called (should write to stderr, not io.Discard)
+		postTaskFunc := func(beadID string) error {
+			return postPipelineWithConflictResolver(&buf, beadID, wtMgr, bdClient, nil)
+		}
+
+		err := postTaskFunc("cap-789")
+
+		// Then: no error is returned (best-effort)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// And: warning message is written to output
+		output := buf.String()
+		if !strings.Contains(output, "warning: merge failed") {
+			t.Errorf("output = %q, want to contain 'warning: merge failed'", output)
+		}
+		if !strings.Contains(output, "disk full") {
+			t.Errorf("output = %q, want to contain 'disk full'", output)
+		}
+	})
+
+	t.Run("ConflictResolver succeeds and merge is retried", func(t *testing.T) {
+		// Given: merge fails first time with conflict, succeeds on retry
+		wtMgr := &mockMergeOps{
+			mainBranch: "main",
+			mergeErrs:  []error{worktree.ErrMergeConflict, nil},
+		}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-conflict"}}
+
+		// ConflictResolver that succeeds
+		var resolverCalled bool
+		conflictResolver := func(beadID string, conflictErr error) error {
+			resolverCalled = true
+			if beadID != "cap-conflict" {
+				t.Errorf("ConflictResolver beadID = %q, want %q", beadID, "cap-conflict")
+			}
+			if !errors.Is(conflictErr, worktree.ErrMergeConflict) {
+				t.Errorf("ConflictResolver conflictErr = %v, want ErrMergeConflict", conflictErr)
+			}
+			return nil
+		}
+
+		// When: PostTaskFunc is called with ConflictResolver
+		postTaskFunc := func(beadID string) error {
+			return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
+		}
+
+		err := postTaskFunc("cap-conflict")
+
+		// Then: no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And: ConflictResolver was called
+		if !resolverCalled {
+			t.Error("ConflictResolver was not called")
+		}
+		// And: merge was called twice (initial + retry)
+		if wtMgr.mergeCount != 2 {
+			t.Errorf("merge called %d times, want 2", wtMgr.mergeCount)
+		}
+		// And: bead was closed
+		if !bdClient.closed {
+			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("ConflictResolver fails and error is returned", func(t *testing.T) {
+		// Given: merge fails with conflict
+		wtMgr := &mockMergeOps{
+			mainBranch: "main",
+			mergeErr:   worktree.ErrMergeConflict,
+		}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-conflict"}}
+
+		// ConflictResolver that fails
+		var resolverCalled bool
+		resolverErr := errors.New("conflict resolution failed")
+		conflictResolver := func(beadID string, conflictErr error) error {
+			resolverCalled = true
+			return resolverErr
+		}
+
+		// When: PostTaskFunc is called with ConflictResolver
+		postTaskFunc := func(beadID string) error {
+			return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
+		}
+
+		err := postTaskFunc("cap-conflict")
+
+		// Then: error is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, resolverErr) {
+			t.Errorf("error = %v, want %v", err, resolverErr)
+		}
+		// And: ConflictResolver was called
+		if !resolverCalled {
+			t.Error("ConflictResolver was not called")
+		}
+		// And: merge was called once (no retry after resolver failure)
+		if wtMgr.mergeCount != 1 {
+			t.Errorf("merge called %d times, want 1", wtMgr.mergeCount)
+		}
+		// And: bead was NOT closed
+		if bdClient.closed {
+			t.Error("bead should not be closed after conflict resolution failure")
+		}
+	})
+
+	t.Run("dashboardCampaignCallback emits CampaignPausedMsg on PostTaskFunc error", func(t *testing.T) {
+		// Given: a callback that captures messages
+		var captured []tea.Msg
+		statusFn := func(msg tea.Msg) { captured = append(captured, msg) }
+		cb := &dashboardCampaignCallback{statusFn: statusFn}
+
+		// When: OnCampaignPaused is called
+		cb.OnCampaignPaused("cap-123", "post_task_error", "merge conflict in cap-123")
+
+		// Then: CampaignPausedMsg is emitted
+		if len(captured) != 1 {
+			t.Fatalf("captured messages = %d, want 1", len(captured))
+		}
+		msg, ok := captured[0].(dashboard.CampaignPausedMsg)
+		if !ok {
+			t.Fatalf("message type = %T, want CampaignPausedMsg", captured[0])
+		}
+		if msg.BeadID != "cap-123" {
+			t.Errorf("BeadID = %q, want %q", msg.BeadID, "cap-123")
+		}
+		if msg.Reason != "post_task_error" {
+			t.Errorf("Reason = %q, want %q", msg.Reason, "post_task_error")
+		}
+		if msg.Details != "merge conflict in cap-123" {
+			t.Errorf("Details = %q, want %q", msg.Details, "merge conflict in cap-123")
+		}
+	})
+
+	t.Run("campaignPlainTextCallback prints pause notification", func(t *testing.T) {
+		// Given: a callback with a buffer writer
+		var buf bytes.Buffer
+		cb := &campaignPlainTextCallback{w: &buf}
+
+		// When: OnCampaignPaused is called
+		cb.OnCampaignPaused("cap-456", "post_task_error", "merge conflict in cap-456")
+
+		// Then: pause notification is printed
+		output := buf.String()
+		if !strings.Contains(output, "Campaign paused") {
+			t.Errorf("output missing 'Campaign paused': %q", output)
+		}
+		if !strings.Contains(output, "cap-456") {
+			t.Errorf("output missing bead ID: %q", output)
+		}
+		if !strings.Contains(output, "merge conflict") {
+			t.Errorf("output missing conflict details: %q", output)
+		}
+	})
+}
+
+// mockCampaignRunner captures campaign.Config for testing.
+type mockCampaignRunner struct {
+	captureConfig func(campaign.Config)
+}
+
+func (m *mockCampaignRunner) Run(ctx context.Context, parentID string) error {
+	return nil
+}

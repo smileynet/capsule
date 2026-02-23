@@ -396,7 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.campaign = newCampaignState(msg.ParentID, title, msg.Tasks)
 		return m, listenForEvents(m.eventCh)
 
-	case CampaignTaskStartMsg, CampaignTaskDoneMsg:
+	case CampaignTaskStartMsg, CampaignTaskDoneMsg, SubCampaignStartMsg, SubCampaignDoneMsg:
 		var cmd tea.Cmd
 		m.campaign, cmd = m.campaign.Update(msg)
 		return m, tea.Batch(cmd, listenForEvents(m.eventCh))
@@ -404,6 +404,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CampaignDoneMsg:
 		m.campaignDone = &msg
 		return m, listenForEvents(m.eventCh)
+
+	case CampaignPausedMsg:
+		m.statusMsg = fmt.Sprintf("⚠️  Paused: %s in %s", msg.Reason, msg.BeadID)
+		var cmd tea.Cmd
+		m.campaign, cmd = m.campaign.Update(msg)
+		cmds := []tea.Cmd{cmd, listenForEvents(m.eventCh)}
+		cmds = append(cmds, tea.Tick(statusLineDuration, func(time.Time) tea.Msg {
+			return statusClearMsg{}
+		}))
+		return m, tea.Batch(cmds...)
 
 	case CampaignErrorMsg:
 		m.campaignErr = msg.Err
