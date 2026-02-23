@@ -921,6 +921,13 @@ func dashboardStatusToProvider(s dashboard.PhaseStatus) provider.Status {
 	}
 }
 
+// campaignLevel tracks state for a single campaign level in the stack.
+type campaignLevel struct {
+	parentID  string
+	taskIndex int
+	taskTotal int
+}
+
 // dashboardCampaignCallback implements campaign.Callback by converting
 // campaign lifecycle events to dashboard tea.Msg types.
 //
@@ -930,11 +937,11 @@ type dashboardCampaignCallback struct {
 	statusFn  func(tea.Msg)
 	taskIndex int
 	taskTotal int
+	depth     int
+	stack     []campaignLevel
 }
 
 func (c *dashboardCampaignCallback) OnCampaignStart(parentID string, tasks []campaign.BeadInfo) {
-	c.taskTotal = len(tasks)
-	c.taskIndex = 0
 	infos := make([]dashboard.CampaignTaskInfo, len(tasks))
 	for i, t := range tasks {
 		infos[i] = dashboard.CampaignTaskInfo{
@@ -943,13 +950,30 @@ func (c *dashboardCampaignCallback) OnCampaignStart(parentID string, tasks []cam
 			Priority: t.Priority,
 		}
 	}
-	// ParentTitle is intentionally omitted: the campaign.Callback interface
-	// does not carry it, so the dashboard model falls back to the title
-	// set during dispatch (see CampaignStartMsg handler in model.go).
-	c.statusFn(dashboard.CampaignStartMsg{
-		ParentID: parentID,
-		Tasks:    infos,
-	})
+
+	if c.depth == 0 {
+		// Top-level campaign
+		c.taskTotal = len(tasks)
+		c.taskIndex = 0
+		c.statusFn(dashboard.CampaignStartMsg{
+			ParentID: parentID,
+			Tasks:    infos,
+		})
+	} else {
+		// Nested campaign: push current state to stack
+		c.stack = append(c.stack, campaignLevel{
+			parentID:  parentID,
+			taskIndex: c.taskIndex,
+			taskTotal: c.taskTotal,
+		})
+		c.taskTotal = len(tasks)
+		c.taskIndex = 0
+		c.statusFn(dashboard.SubCampaignStartMsg{
+			ParentID: parentID,
+			Tasks:    infos,
+		})
+	}
+	c.depth++
 }
 
 func (c *dashboardCampaignCallback) OnTaskStart(beadID string) {
@@ -1034,6 +1058,8 @@ func (c *dashboardCampaignCallback) OnValidationComplete(result campaign.TaskRes
 }
 
 func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {
+	c.depth--
+
 	passed, failed, skipped := 0, 0, 0
 	for _, t := range s.Tasks {
 		switch t.Status {
@@ -1045,13 +1071,30 @@ func (c *dashboardCampaignCallback) OnCampaignComplete(s campaign.State) {
 			skipped++
 		}
 	}
-	c.statusFn(dashboard.CampaignDoneMsg{
-		ParentID:   s.ParentBeadID,
-		TotalTasks: len(s.Tasks),
-		Passed:     passed,
-		Failed:     failed,
-		Skipped:    skipped,
-	})
+
+	if c.depth > 0 {
+		// Nested campaign: pop stack and send SubCampaignDoneMsg
+		c.statusFn(dashboard.SubCampaignDoneMsg{
+			ParentID:   s.ParentBeadID,
+			TotalTasks: len(s.Tasks),
+			Passed:     passed,
+			Failed:     failed,
+			Skipped:    skipped,
+		})
+		top := c.stack[len(c.stack)-1]
+		c.stack = c.stack[:len(c.stack)-1]
+		c.taskIndex = top.taskIndex
+		c.taskTotal = top.taskTotal
+	} else {
+		// Top-level campaign
+		c.statusFn(dashboard.CampaignDoneMsg{
+			ParentID:   s.ParentBeadID,
+			TotalTasks: len(s.Tasks),
+			Passed:     passed,
+			Failed:     failed,
+			Skipped:    skipped,
+		})
+	}
 }
 
 // Exit codes.

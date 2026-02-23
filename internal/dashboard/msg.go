@@ -254,6 +254,22 @@ type CampaignDoneMsg struct {
 	Skipped    int
 }
 
+// SubCampaignStartMsg signals that a nested campaign has started.
+type SubCampaignStartMsg struct {
+	ParentID    string
+	ParentTitle string
+	Tasks       []CampaignTaskInfo
+}
+
+// SubCampaignDoneMsg signals that a nested campaign has completed.
+type SubCampaignDoneMsg struct {
+	ParentID   string
+	TotalTasks int
+	Passed     int
+	Failed     int
+	Skipped    int
+}
+
 // CampaignErrorMsg signals that the campaign runner returned an error.
 type CampaignErrorMsg struct {
 	Err error

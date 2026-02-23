@@ -1337,6 +1337,85 @@ func TestDashboardCampaignCallback_OnTaskComplete_EmptyPhaseResults(t *testing.T
 	}
 }
 
+func TestDashboardCampaignCallback_NestedCampaigns(t *testing.T) {
+	// Given: a callback that captures messages
+	var captured []tea.Msg
+	cb := &dashboardCampaignCallback{
+		statusFn: func(msg tea.Msg) { captured = append(captured, msg) },
+	}
+
+	// When: epic → feature → task sequence is executed
+	// Epic starts (depth 0)
+	cb.OnCampaignStart("epic-1", []campaign.BeadInfo{
+		{ID: "feat-1", Title: "Feature 1", Priority: 1},
+	})
+
+	// Feature starts (depth 1)
+	cb.OnCampaignStart("feat-1", []campaign.BeadInfo{
+		{ID: "task-1", Title: "Task 1", Priority: 1},
+	})
+
+	// Task starts (depth 2)
+	cb.OnCampaignStart("task-1", []campaign.BeadInfo{})
+
+	// Task completes (depth 2)
+	cb.OnCampaignComplete(campaign.State{
+		ParentBeadID: "task-1",
+		Tasks:        []campaign.TaskResult{},
+	})
+
+	// Feature completes (depth 1)
+	cb.OnCampaignComplete(campaign.State{
+		ParentBeadID: "feat-1",
+		Tasks: []campaign.TaskResult{
+			{BeadID: "task-1", Status: campaign.TaskCompleted},
+		},
+	})
+
+	// Epic completes (depth 0)
+	cb.OnCampaignComplete(campaign.State{
+		ParentBeadID: "epic-1",
+		Tasks: []campaign.TaskResult{
+			{BeadID: "feat-1", Status: campaign.TaskCompleted},
+		},
+	})
+
+	// Then: verify message types
+	if len(captured) != 6 {
+		t.Fatalf("captured %d messages, want 6", len(captured))
+	}
+
+	// Epic start: CampaignStartMsg
+	if _, ok := captured[0].(dashboard.CampaignStartMsg); !ok {
+		t.Errorf("message 0 is %T, want CampaignStartMsg", captured[0])
+	}
+
+	// Feature start: SubCampaignStartMsg
+	if _, ok := captured[1].(dashboard.SubCampaignStartMsg); !ok {
+		t.Errorf("message 1 is %T, want SubCampaignStartMsg", captured[1])
+	}
+
+	// Task start: SubCampaignStartMsg
+	if _, ok := captured[2].(dashboard.SubCampaignStartMsg); !ok {
+		t.Errorf("message 2 is %T, want SubCampaignStartMsg", captured[2])
+	}
+
+	// Task complete: SubCampaignDoneMsg
+	if _, ok := captured[3].(dashboard.SubCampaignDoneMsg); !ok {
+		t.Errorf("message 3 is %T, want SubCampaignDoneMsg", captured[3])
+	}
+
+	// Feature complete: SubCampaignDoneMsg
+	if _, ok := captured[4].(dashboard.SubCampaignDoneMsg); !ok {
+		t.Errorf("message 4 is %T, want SubCampaignDoneMsg", captured[4])
+	}
+
+	// Epic complete: CampaignDoneMsg
+	if _, ok := captured[5].(dashboard.CampaignDoneMsg); !ok {
+		t.Errorf("message 5 is %T, want CampaignDoneMsg", captured[5])
+	}
+}
+
 func TestPostPipeline_MergesAndClosesBead(t *testing.T) {
 	// Given: mock worktree and bead resolver that succeed
 	var buf bytes.Buffer
