@@ -115,10 +115,38 @@ func (c *CampaignCmd) Run() error {
 	stateStore := state.NewFileStore(".capsule/campaigns")
 	cb := &campaignPlainTextCallback{w: os.Stdout}
 
-	// Construct ConflictResolver (placeholder - will be implemented in cap-9f0.2.2)
+	// Construct ConflictResolver to invoke agent pair for conflict resolution
 	conflictResolver := func(beadID string, conflictErr error) error {
-		// TODO: Invoke orchestrator.RunPhasePair(execute, sign-off) with conflict context
-		return fmt.Errorf("conflict resolution not yet implemented")
+		// Extract conflict information
+		conflictFiles, err := wtMgr.GetConflictFiles()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict files: %w", err)
+		}
+		conflictDiff, err := wtMgr.GetConflictDiff()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict diff: %w", err)
+		}
+
+		// Get bead context
+		beadInfo, err := bdClient.Show(beadID)
+		if err != nil {
+			return fmt.Errorf("failed to get bead info: %w", err)
+		}
+		beadContext := fmt.Sprintf("%s: %s\n\n%s", beadID, beadInfo.Title, beadInfo.Description)
+
+		// Run conflict resolution via orchestrator
+		wtPath := wtMgr.Path(beadID)
+		resolveInput := orchestrator.ConflictResolutionInput{
+			BeadID:        beadID,
+			WorktreePath:  wtPath,
+			ConflictFiles: conflictFiles,
+			ConflictDiff:  conflictDiff,
+			BeadContext:   beadContext,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Runtime.Timeout)
+		defer cancel()
+		return orch.RunConflictResolution(ctx, resolveInput)
 	}
 
 	// Construct PostTaskFunc closure that calls postPipelineWithConflictResolver.
@@ -538,10 +566,47 @@ func (d *DashboardCmd) Run() error {
 	resolver := &beadResolverAdapter{client: bdClient}
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
 
-	// Construct ConflictResolver (placeholder - will be implemented in cap-9f0.2.2)
+	// Construct ConflictResolver to invoke agent pair for conflict resolution
 	conflictResolver := func(beadID string, conflictErr error) error {
-		// TODO: Invoke orchestrator.RunPhasePair(execute, sign-off) with conflict context
-		return fmt.Errorf("conflict resolution not yet implemented")
+		// Extract conflict information
+		conflictFiles, err := wtMgr.GetConflictFiles()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict files: %w", err)
+		}
+		conflictDiff, err := wtMgr.GetConflictDiff()
+		if err != nil {
+			return fmt.Errorf("failed to get conflict diff: %w", err)
+		}
+
+		// Get bead context
+		beadCtx, err := bdClient.Resolve(beadID)
+		if err != nil {
+			return fmt.Errorf("failed to get bead info: %w", err)
+		}
+		beadContext := fmt.Sprintf("%s: %s\n\n%s", beadID, beadCtx.TaskTitle, beadCtx.TaskDescription)
+
+		// Build orchestrator for conflict resolution
+		orch := orchestrator.New(p,
+			orchestrator.WithPromptLoader(prompt.NewLoader(capsule.OverlayFS("prompts", capsule.Prompts))),
+			orchestrator.WithWorktreeManager(wtMgr),
+			orchestrator.WithWorklogManager(worklog.NewManager(capsule.OverlayFS("templates", capsule.Templates), "worklog.md.template", ".capsule/logs")),
+			orchestrator.WithGateRunner(gate.NewRunner()),
+			orchestrator.WithPhases(phases),
+		)
+
+		// Run conflict resolution
+		wtPath := wtMgr.Path(beadID)
+		resolveInput := orchestrator.ConflictResolutionInput{
+			BeadID:        beadID,
+			WorktreePath:  wtPath,
+			ConflictFiles: conflictFiles,
+			ConflictDiff:  conflictDiff,
+			BeadContext:   beadContext,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Runtime.Timeout)
+		defer cancel()
+		return orch.RunConflictResolution(ctx, resolveInput)
 	}
 
 	ppFunc := func(beadID string) error {

@@ -28,6 +28,10 @@ type Context struct {
 	Description    string
 	Feedback       string
 	SiblingContext []SiblingContext
+	// Conflict resolution fields
+	ConflictFiles string // Newline-separated list of conflicting files
+	ConflictDiff  string // Full git diff output for conflicts
+	BeadContext   string // Task description and context for conflict resolution
 }
 
 // Loader reads prompt templates from a filesystem.

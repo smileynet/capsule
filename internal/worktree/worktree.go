@@ -273,3 +273,31 @@ func (m *Manager) DetectMainBranch() (string, error) {
 
 	return "", errors.New("worktree: cannot detect main branch")
 }
+
+// GetConflictFiles returns a list of files with merge conflicts.
+// Should be called after a merge that returned ErrMergeConflict.
+func (m *Manager) GetConflictFiles() ([]string, error) {
+	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+	cmd.Dir = m.repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("worktree: git diff --name-only: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return []string{}, nil
+	}
+	return lines, nil
+}
+
+// GetConflictDiff returns the full diff output for conflicted files.
+// Should be called after a merge that returned ErrMergeConflict.
+func (m *Manager) GetConflictDiff() (string, error) {
+	cmd := exec.Command("git", "diff", "--diff-filter=U")
+	cmd.Dir = m.repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("worktree: git diff: %w", err)
+	}
+	return string(out), nil
+}

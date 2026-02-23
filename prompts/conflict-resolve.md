@@ -15,12 +15,12 @@ Read these files in the current directory:
 
 The merge conflict occurred when attempting to merge the completed task branch back to main. Review:
 
-- **Task context:** {{BEAD_CONTEXT}}
-- **Files in conflict:** {{CONFLICT_FILES}}
+- **Task context:** {{.BeadContext}}
+- **Files in conflict:** {{.ConflictFiles}}
 - **Conflict details:**
 
 ```
-{{CONFLICT_DIFF}}
+{{.ConflictDiff}}
 ```
 
 ### 3. Analyze Both Sides
