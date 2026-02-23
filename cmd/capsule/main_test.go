@@ -718,11 +718,19 @@ type mockMergeOps struct {
 	removeErr  error
 	pruneErr   error
 
-	merged bool
+	merged     bool
+	mergeCount int
+	mergeErrs  []error // Sequence of errors to return on successive calls
 }
 
 func (m *mockMergeOps) MergeToMain(string, string, string) error {
 	m.merged = true
+	if len(m.mergeErrs) > 0 {
+		err := m.mergeErrs[m.mergeCount]
+		m.mergeCount++
+		return err
+	}
+	m.mergeCount++
 	return m.mergeErr
 }
 
@@ -1655,6 +1663,96 @@ func TestFeature_CampaignPostTaskFunc(t *testing.T) {
 		}
 		if !bdClient.closed {
 			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("ConflictResolver succeeds and merge is retried", func(t *testing.T) {
+		// Given: merge fails first time with conflict, succeeds on retry
+		wtMgr := &mockMergeOps{
+			mainBranch: "main",
+			mergeErrs:  []error{worktree.ErrMergeConflict, nil},
+		}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-conflict"}}
+
+		// ConflictResolver that succeeds
+		var resolverCalled bool
+		conflictResolver := func(beadID string, conflictErr error) error {
+			resolverCalled = true
+			if beadID != "cap-conflict" {
+				t.Errorf("ConflictResolver beadID = %q, want %q", beadID, "cap-conflict")
+			}
+			if !errors.Is(conflictErr, worktree.ErrMergeConflict) {
+				t.Errorf("ConflictResolver conflictErr = %v, want ErrMergeConflict", conflictErr)
+			}
+			return nil
+		}
+
+		// When: PostTaskFunc is called with ConflictResolver
+		postTaskFunc := func(beadID string) error {
+			return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
+		}
+
+		err := postTaskFunc("cap-conflict")
+
+		// Then: no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And: ConflictResolver was called
+		if !resolverCalled {
+			t.Error("ConflictResolver was not called")
+		}
+		// And: merge was called twice (initial + retry)
+		if wtMgr.mergeCount != 2 {
+			t.Errorf("merge called %d times, want 2", wtMgr.mergeCount)
+		}
+		// And: bead was closed
+		if !bdClient.closed {
+			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("ConflictResolver fails and error is returned", func(t *testing.T) {
+		// Given: merge fails with conflict
+		wtMgr := &mockMergeOps{
+			mainBranch: "main",
+			mergeErr:   worktree.ErrMergeConflict,
+		}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-conflict"}}
+
+		// ConflictResolver that fails
+		var resolverCalled bool
+		resolverErr := errors.New("conflict resolution failed")
+		conflictResolver := func(beadID string, conflictErr error) error {
+			resolverCalled = true
+			return resolverErr
+		}
+
+		// When: PostTaskFunc is called with ConflictResolver
+		postTaskFunc := func(beadID string) error {
+			return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
+		}
+
+		err := postTaskFunc("cap-conflict")
+
+		// Then: error is returned
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, resolverErr) {
+			t.Errorf("error = %v, want %v", err, resolverErr)
+		}
+		// And: ConflictResolver was called
+		if !resolverCalled {
+			t.Error("ConflictResolver was not called")
+		}
+		// And: merge was called once (no retry after resolver failure)
+		if wtMgr.mergeCount != 1 {
+			t.Errorf("merge called %d times, want 1", wtMgr.mergeCount)
+		}
+		// And: bead was NOT closed
+		if bdClient.closed {
+			t.Error("bead should not be closed after conflict resolution failure")
 		}
 	})
 }

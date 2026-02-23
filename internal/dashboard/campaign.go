@@ -28,6 +28,19 @@ type campaignState struct {
 
 	validating       bool                       // true while validation pipeline is running
 	validationResult *CampaignValidationDoneMsg // set on validation completion
+
+	subcampaign *subcampaignState // nil when no subcampaign active
+}
+
+// subcampaignState manages a nested campaign overlay.
+type subcampaignState struct {
+	parentBeadID string
+	tasks        []CampaignTaskInfo
+	statuses     []CampaignTaskStatus
+	durations    []time.Duration
+	reports      map[string][]PhaseReport
+	currentIdx   int
+	pipeline     pipelineState
 }
 
 // newCampaignState creates a campaignState for the given parent and tasks.
@@ -56,6 +69,11 @@ func (cs campaignState) Update(msg tea.Msg) (campaignState, tea.Cmd) {
 		return cs.handleTaskStart(msg), nil
 	case CampaignTaskDoneMsg:
 		return cs.handleTaskDone(msg), nil
+	case SubCampaignStartMsg:
+		return cs.handleSubCampaignStart(msg), nil
+	case SubCampaignDoneMsg:
+		cs.subcampaign = nil
+		return cs, nil
 	case PhaseUpdateMsg, elapsedTickMsg, spinner.TickMsg:
 		var cmd tea.Cmd
 		cs.pipeline, cmd = cs.pipeline.Update(msg)
@@ -86,6 +104,14 @@ func (cs campaignState) handleKey(msg tea.KeyMsg) campaignState {
 }
 
 func (cs campaignState) handleTaskStart(msg CampaignTaskStartMsg) campaignState {
+	if cs.subcampaign != nil {
+		cs.subcampaign.currentIdx = msg.Index
+		if msg.Index >= 0 && msg.Index < len(cs.subcampaign.statuses) {
+			cs.subcampaign.statuses[msg.Index] = CampaignTaskRunning
+		}
+		cs.subcampaign.pipeline = newPipelineState(nil)
+		return cs
+	}
 	cs.currentIdx = msg.Index
 	if msg.Index >= 0 && msg.Index < len(cs.taskStatuses) {
 		cs.taskStatuses[msg.Index] = CampaignTaskRunning
@@ -95,6 +121,20 @@ func (cs campaignState) handleTaskStart(msg CampaignTaskStartMsg) campaignState 
 }
 
 func (cs campaignState) handleTaskDone(msg CampaignTaskDoneMsg) campaignState {
+	if cs.subcampaign != nil {
+		if msg.Index >= 0 && msg.Index < len(cs.subcampaign.statuses) {
+			if msg.Success {
+				cs.subcampaign.statuses[msg.Index] = CampaignTaskPassed
+			} else {
+				cs.subcampaign.statuses[msg.Index] = CampaignTaskFailed
+			}
+			cs.subcampaign.durations[msg.Index] = msg.Duration
+		}
+		if len(msg.PhaseReports) > 0 {
+			cs.subcampaign.reports[msg.BeadID] = msg.PhaseReports
+		}
+		return cs
+	}
 	if msg.Index >= 0 && msg.Index < len(cs.taskStatuses) {
 		if msg.Success {
 			cs.taskStatuses[msg.Index] = CampaignTaskPassed
@@ -110,6 +150,23 @@ func (cs campaignState) handleTaskDone(msg CampaignTaskDoneMsg) campaignState {
 	}
 	if msg.Error != "" {
 		cs.taskErrors[msg.BeadID] = msg.Error
+	}
+	return cs
+}
+
+func (cs campaignState) handleSubCampaignStart(msg SubCampaignStartMsg) campaignState {
+	statuses := make([]CampaignTaskStatus, len(msg.Tasks))
+	for i := range statuses {
+		statuses[i] = CampaignTaskPending
+	}
+	cs.subcampaign = &subcampaignState{
+		parentBeadID: msg.ParentID,
+		tasks:        msg.Tasks,
+		statuses:     statuses,
+		durations:    make([]time.Duration, len(msg.Tasks)),
+		reports:      make(map[string][]PhaseReport),
+		currentIdx:   -1,
+		pipeline:     newPipelineState(nil),
 	}
 	return cs
 }

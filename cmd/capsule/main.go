@@ -115,10 +115,15 @@ func (c *CampaignCmd) Run() error {
 	stateStore := state.NewFileStore(".capsule/campaigns")
 	cb := &campaignPlainTextCallback{w: os.Stdout}
 
-	// Construct PostTaskFunc closure that calls postPipeline.
+	// Construct ConflictResolver (placeholder - will be implemented in cap-9f0.2.2)
+	conflictResolver := func(beadID string, conflictErr error) error {
+		// TODO: Invoke orchestrator.RunPhasePair(execute, sign-off) with conflict context
+		return fmt.Errorf("conflict resolution not yet implemented")
+	}
+
+	// Construct PostTaskFunc closure that calls postPipelineWithConflictResolver.
 	postTaskFunc := func(beadID string) error {
-		postPipeline(io.Discard, beadID, wtMgr, bdClient.client)
-		return nil
+		return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient.client, conflictResolver)
 	}
 
 	campaignCfg := campaign.Config{
@@ -128,6 +133,7 @@ func (c *CampaignCmd) Run() error {
 		CrossRunContext:  cfg.Campaign.CrossRunContext,
 		ValidationPhases: cfg.Campaign.ValidationPhases,
 		PostTaskFunc:     postTaskFunc,
+		ConflictResolver: conflictResolver,
 	}
 
 	runner := campaign.NewRunner(orch, bdClient, stateStore, campaignCfg, cb)
@@ -362,6 +368,59 @@ func postPipeline(w io.Writer, beadID string, wt mergeOps, bd beadResolver) {
 	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", beadID)
 }
 
+// postPipelineWithConflictResolver performs merge with conflict resolution support.
+// When merge conflict occurs and resolver is provided, calls resolver and retries merge.
+// Returns error if resolver fails, allowing campaign to pause.
+func postPipelineWithConflictResolver(w io.Writer, beadID string, wt mergeOps, bd beadResolver, resolver func(string, error) error) error {
+	mainBranch, err := wt.DetectMainBranch()
+	if err != nil {
+		_, _ = fmt.Fprintf(w, "warning: cannot detect main branch: %v\n", err)
+		return nil
+	}
+
+	commitMsg := fmt.Sprintf("%s: pipeline complete", beadID)
+	err = wt.MergeToMain(beadID, mainBranch, commitMsg)
+	if err != nil {
+		if errors.Is(err, worktree.ErrMergeConflict) && resolver != nil {
+			if resolveErr := resolver(beadID, err); resolveErr != nil {
+				return resolveErr
+			}
+			// Retry merge after successful resolution
+			err = wt.MergeToMain(beadID, mainBranch, commitMsg)
+		}
+		if err != nil {
+			if errors.Is(err, worktree.ErrMergeConflict) {
+				_, _ = fmt.Fprintf(w, "warning: merge conflict merging capsule-%s into %s\n", beadID, mainBranch)
+				_, _ = fmt.Fprintf(w, "  To fix:\n")
+				_, _ = fmt.Fprintf(w, "    git checkout %s\n", mainBranch)
+				_, _ = fmt.Fprintf(w, "    git merge --no-ff capsule-%s\n", beadID)
+				_, _ = fmt.Fprintf(w, "    # resolve conflicts, then:\n")
+				_, _ = fmt.Fprintf(w, "    capsule clean %s\n", beadID)
+				return nil
+			}
+			_, _ = fmt.Fprintf(w, "warning: merge failed: %v\n", err)
+			return nil
+		}
+	}
+	_, _ = fmt.Fprintf(w, "Merged capsule-%s → %s\n", beadID, mainBranch)
+
+	if err := wt.Remove(beadID, true); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: cleanup failed: %v\n", err)
+	}
+	if err := wt.Prune(); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: prune failed: %v\n", err)
+	}
+
+	if err := bd.Close(beadID); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: bead close failed: %v\n", err)
+	} else {
+		_, _ = fmt.Fprintf(w, "Closed %s\n", beadID)
+	}
+
+	_, _ = fmt.Fprintf(w, "Worklog: .capsule/logs/%s/worklog.md\n", beadID)
+	return nil
+}
+
 // AbortCmd aborts a running capsule by removing the worktree.
 // The branch is preserved so work can be inspected. Use clean to remove everything.
 type AbortCmd struct {
@@ -479,9 +538,14 @@ func (d *DashboardCmd) Run() error {
 	resolver := &beadResolverAdapter{client: bdClient}
 	wtMgr := worktree.NewManager(".", cfg.Worktree.BaseDir)
 
+	// Construct ConflictResolver (placeholder - will be implemented in cap-9f0.2.2)
+	conflictResolver := func(beadID string, conflictErr error) error {
+		// TODO: Invoke orchestrator.RunPhasePair(execute, sign-off) with conflict context
+		return fmt.Errorf("conflict resolution not yet implemented")
+	}
+
 	ppFunc := func(beadID string) error {
-		postPipeline(io.Discard, beadID, wtMgr, bdClient)
-		return nil
+		return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
 	}
 
 	pauseCheck, stopPause := setupPauseTrigger()
@@ -509,9 +573,9 @@ func (d *DashboardCmd) Run() error {
 			CrossRunContext:  cfg.Campaign.CrossRunContext,
 			ValidationPhases: cfg.Campaign.ValidationPhases,
 			PostTaskFunc: func(beadID string) error {
-				postPipeline(io.Discard, beadID, wtMgr, bdClient)
-				return nil
+				return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
 			},
+			ConflictResolver: conflictResolver,
 		},
 	}
 

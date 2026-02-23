@@ -99,13 +99,14 @@ const (
 
 // Config holds campaign-specific settings.
 type Config struct {
-	Logger           io.Writer                 // Optional logger for warnings (nil-safe).
-	FailureMode      string                    // "abort" | "continue"
-	CircuitBreaker   int                       // Max consecutive failures before stopping.
-	DiscoveryFiling  bool                      // File findings as new beads.
-	CrossRunContext  bool                      // Include sibling context in prompts.
-	ValidationPhases string                    // Phase set name for feature validation.
-	PostTaskFunc     func(beadID string) error // Called after successful task completion.
+	Logger           io.Writer                                    // Optional logger for warnings (nil-safe).
+	FailureMode      string                                       // "abort" | "continue"
+	CircuitBreaker   int                                          // Max consecutive failures before stopping.
+	DiscoveryFiling  bool                                         // File findings as new beads.
+	CrossRunContext  bool                                         // Include sibling context in prompts.
+	ValidationPhases string                                       // Phase set name for feature validation.
+	PostTaskFunc     func(beadID string) error                    // Called after successful task completion.
+	ConflictResolver func(beadID string, conflictErr error) error // Called when merge conflict occurs.
 }
 
 // State holds the complete campaign state for persistence.
