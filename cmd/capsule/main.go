@@ -610,7 +610,7 @@ func (d *DashboardCmd) Run() error {
 	}
 
 	ppFunc := func(beadID string) error {
-		return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
+		return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient, conflictResolver)
 	}
 
 	pauseCheck, stopPause := setupPauseTrigger()
@@ -638,7 +638,7 @@ func (d *DashboardCmd) Run() error {
 			CrossRunContext:  cfg.Campaign.CrossRunContext,
 			ValidationPhases: cfg.Campaign.ValidationPhases,
 			PostTaskFunc: func(beadID string) error {
-				return postPipelineWithConflictResolver(io.Discard, beadID, wtMgr, bdClient, conflictResolver)
+				return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient, conflictResolver)
 			},
 			ConflictResolver: conflictResolver,
 		},

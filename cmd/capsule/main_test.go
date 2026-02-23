@@ -1666,6 +1666,42 @@ func TestFeature_CampaignPostTaskFunc(t *testing.T) {
 		}
 	})
 
+	t.Run("DashboardCmd PostTaskFunc does not swallow error messages", func(t *testing.T) {
+		// This test verifies that when PostTaskFunc encounters errors during
+		// merge/cleanup/close, those messages are visible to the user.
+
+		// Given: merge fails with a non-conflict error
+		wtMgr := &mockMergeOps{
+			mainBranch: "main",
+			mergeErrs:  []error{fmt.Errorf("merge failed: disk full")},
+		}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-789"}}
+
+		// And: a buffer to capture stderr output
+		var buf bytes.Buffer
+
+		// When: PostTaskFunc is called (should write to stderr, not io.Discard)
+		postTaskFunc := func(beadID string) error {
+			return postPipelineWithConflictResolver(&buf, beadID, wtMgr, bdClient, nil)
+		}
+
+		err := postTaskFunc("cap-789")
+
+		// Then: no error is returned (best-effort)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// And: warning message is written to output
+		output := buf.String()
+		if !strings.Contains(output, "warning: merge failed") {
+			t.Errorf("output = %q, want to contain 'warning: merge failed'", output)
+		}
+		if !strings.Contains(output, "disk full") {
+			t.Errorf("output = %q, want to contain 'disk full'", output)
+		}
+	})
+
 	t.Run("ConflictResolver succeeds and merge is retried", func(t *testing.T) {
 		// Given: merge fails first time with conflict, succeeds on retry
 		wtMgr := &mockMergeOps{
