@@ -811,26 +811,42 @@ func (c *campaignBeadClient) Create(input campaign.BeadInput) (string, error) {
 
 // campaignPlainTextCallback implements campaign.Callback with plain text output.
 type campaignPlainTextCallback struct {
-	w io.Writer
+	w     io.Writer
+	depth int
+	stack []campaignLevel
 }
 
 func (c *campaignPlainTextCallback) OnCampaignStart(parentID string, tasks []campaign.BeadInfo) {
-	_, _ = fmt.Fprintf(c.w, "[campaign] %s (%d tasks)\n", parentID, len(tasks))
+	if c.depth == 0 {
+		_, _ = fmt.Fprintf(c.w, "[campaign] %s (%d tasks)\n", parentID, len(tasks))
+	} else {
+		indent := strings.Repeat("  ", c.depth)
+		c.stack = append(c.stack, campaignLevel{
+			parentID:  parentID,
+			taskIndex: 0,
+			taskTotal: 0,
+		})
+		_, _ = fmt.Fprintf(c.w, "%s[subcampaign] %s (%d tasks)\n", indent, parentID, len(tasks))
+	}
+	c.depth++
 }
 
 func (c *campaignPlainTextCallback) OnTaskStart(beadID string) {
 	ts := time.Now().Format("15:04:05")
-	_, _ = fmt.Fprintf(c.w, "[%s] [%s] starting...\n", ts, beadID)
+	indent := strings.Repeat("  ", c.depth)
+	_, _ = fmt.Fprintf(c.w, "%s[%s] [%s] starting...\n", indent, ts, beadID)
 }
 
 func (c *campaignPlainTextCallback) OnTaskComplete(result campaign.TaskResult) {
 	ts := time.Now().Format("15:04:05")
-	_, _ = fmt.Fprintf(c.w, "[%s] [%s] complete\n", ts, result.BeadID)
+	indent := strings.Repeat("  ", c.depth)
+	_, _ = fmt.Fprintf(c.w, "%s[%s] [%s] complete\n", indent, ts, result.BeadID)
 }
 
 func (c *campaignPlainTextCallback) OnTaskFail(beadID string, err error) {
 	ts := time.Now().Format("15:04:05")
-	_, _ = fmt.Fprintf(c.w, "[%s] [%s] failed: %v\n", ts, beadID, err)
+	indent := strings.Repeat("  ", c.depth)
+	_, _ = fmt.Fprintf(c.w, "%s[%s] [%s] failed: %v\n", indent, ts, beadID, err)
 }
 
 func (c *campaignPlainTextCallback) OnCampaignPaused(beadID, reason, details string) {
@@ -851,7 +867,14 @@ func (c *campaignPlainTextCallback) OnValidationComplete(result campaign.TaskRes
 }
 
 func (c *campaignPlainTextCallback) OnCampaignComplete(s campaign.State) {
-	_, _ = fmt.Fprintf(c.w, "[campaign] Complete: %d tasks\n", len(s.Tasks))
+	c.depth--
+	if c.depth > 0 {
+		indent := strings.Repeat("  ", c.depth)
+		c.stack = c.stack[:len(c.stack)-1]
+		_, _ = fmt.Fprintf(c.w, "%s[subcampaign] %s done: %d tasks\n", indent, s.ParentBeadID, len(s.Tasks))
+	} else {
+		_, _ = fmt.Fprintf(c.w, "[campaign] Complete: %d tasks\n", len(s.Tasks))
+	}
 }
 
 func severityToPriorityCLI(severity string) int {

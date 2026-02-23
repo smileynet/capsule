@@ -949,9 +949,9 @@ func TestRun_PostTaskFuncCalledAfterSuccess(t *testing.T) {
 		},
 	}
 	config := Config{
-		FailureMode:  "abort",
+		FailureMode:    "abort",
 		CircuitBreaker: 3,
-		PostTaskFunc: postTaskFunc,
+		PostTaskFunc:   postTaskFunc,
 	}
 
 	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
@@ -991,9 +991,9 @@ func TestRun_PostTaskFuncNotCalledOnFailure(t *testing.T) {
 		children: []BeadInfo{{ID: "cap-1", Title: "Task 1"}},
 	}
 	config := Config{
-		FailureMode:  "abort",
+		FailureMode:    "abort",
 		CircuitBreaker: 3,
-		PostTaskFunc: postTaskFunc,
+		PostTaskFunc:   postTaskFunc,
 	}
 
 	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
@@ -1026,9 +1026,9 @@ func TestRun_PostTaskFuncNotCalledForRecursiveEntries(t *testing.T) {
 		},
 	}
 	config := Config{
-		FailureMode:  "abort",
+		FailureMode:    "abort",
 		CircuitBreaker: 5,
-		PostTaskFunc: postTaskFunc,
+		PostTaskFunc:   postTaskFunc,
 	}
 
 	r := NewRunner(pipeline, beads, &mockStateStore{}, config, &mockCallback{})
@@ -1067,9 +1067,9 @@ func TestRun_PostTaskFuncErrorTreatedAsFailure(t *testing.T) {
 	store := &mockStateStore{}
 	cb := &mockCallback{}
 	config := Config{
-		FailureMode:  "abort",
+		FailureMode:    "abort",
 		CircuitBreaker: 3,
-		PostTaskFunc: postTaskFunc,
+		PostTaskFunc:   postTaskFunc,
 	}
 
 	r := NewRunner(pipeline, beads, store, config, cb)
