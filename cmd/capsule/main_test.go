@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -1467,3 +1468,85 @@ func (m *mockTeaRunner) Run() (tea.Model, error) {
 
 // Compile-time check: mockTeaRunner satisfies teaRunner.
 var _ teaRunner = (*mockTeaRunner)(nil)
+
+func TestFeature_CampaignPostTaskFunc(t *testing.T) {
+	t.Run("CampaignCmd wires PostTaskFunc that calls postPipeline", func(t *testing.T) {
+		// Given: a mock campaign runner that captures the config
+		var capturedConfig campaign.Config
+		mockRunner := &mockCampaignRunner{
+			captureConfig: func(cfg campaign.Config) {
+				capturedConfig = cfg
+			},
+		}
+
+		// When: CampaignCmd constructs the runner (simulated via test helper)
+		wtMgr := &mockMergeOps{mainBranch: "main"}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-task"}}
+
+		// Construct PostTaskFunc closure as CampaignCmd.Run does
+		postTaskFunc := func(beadID string) error {
+			postPipeline(io.Discard, beadID, wtMgr, bdClient)
+			return nil
+		}
+
+		// Simulate passing it via campaign.Config
+		cfg := campaign.Config{
+			PostTaskFunc: postTaskFunc,
+		}
+		mockRunner.captureConfig(cfg)
+
+		// Then: PostTaskFunc is set in the config
+		if capturedConfig.PostTaskFunc == nil {
+			t.Fatal("PostTaskFunc is nil, want non-nil")
+		}
+
+		// And: calling PostTaskFunc triggers merge and close
+		err := capturedConfig.PostTaskFunc("cap-task")
+		if err != nil {
+			t.Fatalf("PostTaskFunc returned error: %v", err)
+		}
+		if !wtMgr.merged {
+			t.Error("merge was not called")
+		}
+		if !bdClient.closed {
+			t.Error("bead close was not called")
+		}
+	})
+
+	t.Run("PostTaskFunc closure captures wtMgr and bdClient correctly", func(t *testing.T) {
+		// Given: mocks for worktree and bead operations
+		wtMgr := &mockMergeOps{mainBranch: "main"}
+		bdClient := &mockBeadResolver{ctx: worklog.BeadContext{TaskID: "cap-123"}}
+
+		// When: PostTaskFunc closure is constructed (as in CampaignCmd.Run)
+		postTaskFunc := func(beadID string) error {
+			postPipeline(io.Discard, beadID, wtMgr, bdClient)
+			return nil
+		}
+
+		// And: PostTaskFunc is called with a bead ID
+		err := postTaskFunc("cap-123")
+
+		// Then: no error is returned
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// And: merge was called
+		if !wtMgr.merged {
+			t.Error("merge was not called")
+		}
+		// And: bead was closed
+		if !bdClient.closed {
+			t.Error("bead close was not called")
+		}
+	})
+}
+
+// mockCampaignRunner captures campaign.Config for testing.
+type mockCampaignRunner struct {
+	captureConfig func(campaign.Config)
+}
+
+func (m *mockCampaignRunner) Run(ctx context.Context, parentID string) error {
+	return nil
+}

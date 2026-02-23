@@ -115,12 +115,19 @@ func (c *CampaignCmd) Run() error {
 	stateStore := state.NewFileStore(".capsule/campaigns")
 	cb := &campaignPlainTextCallback{w: os.Stdout}
 
+	// Construct PostTaskFunc closure that calls postPipeline.
+	postTaskFunc := func(beadID string) error {
+		postPipeline(io.Discard, beadID, wtMgr, bdClient.client)
+		return nil
+	}
+
 	campaignCfg := campaign.Config{
 		FailureMode:      cfg.Campaign.FailureMode,
 		CircuitBreaker:   cfg.Campaign.CircuitBreaker,
 		DiscoveryFiling:  cfg.Campaign.DiscoveryFiling,
 		CrossRunContext:  cfg.Campaign.CrossRunContext,
 		ValidationPhases: cfg.Campaign.ValidationPhases,
+		PostTaskFunc:     postTaskFunc,
 	}
 
 	runner := campaign.NewRunner(orch, bdClient, stateStore, campaignCfg, cb)
