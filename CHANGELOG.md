@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Campaign error observability (cap-9f0.3)
+  - State save and bead close failures logged to stderr
+  - Failed tasks display error detail in dashboard right pane
+  - Error messages flow through CampaignTaskDoneMsg pipeline
 - Go CLI skeleton with Kong: `capsule version`, `capsule run`, `capsule abort`, `capsule clean` (`cmd/capsule`)
 - Provider interface with ClaudeProvider subprocess execution, signal parsing, and timeout handling (`internal/provider`)
 - Provider registry with factory pattern for name-based provider instantiation
