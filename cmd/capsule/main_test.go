@@ -1542,11 +1542,7 @@ func TestFeature_CampaignPostTaskFunc(t *testing.T) {
 	})
 
 	t.Run("DashboardCmd wires PostTaskFunc in campaign adapter", func(t *testing.T) {
-		// This test verifies that DashboardCmd.Run actually wires PostTaskFunc
-		// into the dashboardCampaignAdapter's campaignCfg.
-		// Since we can't easily mock the full DashboardCmd.Run flow, we verify
-		// the pattern by checking that the adapter's config has PostTaskFunc set
-		// when constructed with the same pattern as CampaignCmd.
+		// Verify DashboardCmd wires PostTaskFunc to trigger merge and close after task completion.
 
 		// Given: mocks for worktree and bead operations
 		wtMgr := &mockMergeOps{mainBranch: "main"}
