@@ -1090,3 +1090,33 @@ func TestCampaign_View_NoSubcampaignWhenNil(t *testing.T) {
 		t.Errorf("should show pipeline phases when no subcampaign, got:\n%s", plain)
 	}
 }
+
+func TestCampaign_PhaseUpdateMsg_RoutesToSubcampaignPipeline(t *testing.T) {
+	// Given: a campaign with an active subcampaign and a running subtask
+	cs := newCampaignState("cap-feat", "Feature Title", sampleCampaignTasks())
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001", Index: 0, Total: 3})
+	subTasks := []CampaignTaskInfo{
+		{BeadID: "cap-001.1", Title: "Subtask 1", Priority: 1},
+	}
+	cs, _ = cs.Update(SubCampaignStartMsg{
+		ParentID:    "cap-001",
+		ParentTitle: "First task",
+		Tasks:       subTasks,
+	})
+	cs, _ = cs.Update(CampaignTaskStartMsg{BeadID: "cap-001.1", Index: 0, Total: 1})
+	cs.subcampaign.pipeline = newPipelineState([]string{"plan", "code"})
+
+	// When: a phase update arrives while subcampaign is active
+	cs, _ = cs.Update(PhaseUpdateMsg{Phase: "plan", Status: PhaseRunning})
+
+	// Then: the subcampaign pipeline receives the update, not the main pipeline
+	if !cs.subcampaign.pipeline.running {
+		t.Error("subcampaign pipeline should be running")
+	}
+	if cs.subcampaign.pipeline.phases[0].Status != PhaseRunning {
+		t.Errorf("subcampaign pipeline phase 0 = %q, want %q", cs.subcampaign.pipeline.phases[0].Status, PhaseRunning)
+	}
+	if len(cs.pipeline.phases) != 0 {
+		t.Errorf("main pipeline should not have received the update, has %d phases", len(cs.pipeline.phases))
+	}
+}

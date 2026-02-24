@@ -82,7 +82,11 @@ func (cs campaignState) Update(msg tea.Msg) (campaignState, tea.Cmd) {
 		return cs, nil
 	case PhaseUpdateMsg, elapsedTickMsg, spinner.TickMsg:
 		var cmd tea.Cmd
-		cs.pipeline, cmd = cs.pipeline.Update(msg)
+		if cs.subcampaign != nil {
+			cs.subcampaign.pipeline, cmd = cs.subcampaign.pipeline.Update(msg)
+		} else {
+			cs.pipeline, cmd = cs.pipeline.Update(msg)
+		}
 		return cs, cmd
 	case tea.KeyMsg:
 		return cs.handleKey(msg), nil
