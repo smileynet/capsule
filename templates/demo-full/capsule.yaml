@@ -1,0 +1,10 @@
+campaign:
+  failure_mode: continue
+  circuit_breaker: 3
+  cross_run_context: true
+
+pipeline:
+  checkpoint: true
+  retry:
+    max_attempts: 3
+    backoff_factor: 1.5
