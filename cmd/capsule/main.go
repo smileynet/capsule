@@ -601,7 +601,7 @@ func (d *DashboardCmd) Run() error {
 		return orch.RunConflictResolution(ctx, resolveInput)
 	}
 
-	ppFunc := func(beadID string) error {
+	postTaskFunc := func(beadID string) error {
 		return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient, conflictResolver)
 	}
 
@@ -629,9 +629,7 @@ func (d *DashboardCmd) Run() error {
 			DiscoveryFiling:  cfg.Campaign.DiscoveryFiling,
 			CrossRunContext:  cfg.Campaign.CrossRunContext,
 			ValidationPhases: cfg.Campaign.ValidationPhases,
-			PostTaskFunc: func(beadID string) error {
-				return postPipelineWithConflictResolver(os.Stderr, beadID, wtMgr, bdClient, conflictResolver)
-			},
+			PostTaskFunc:     postTaskFunc,
 			ConflictResolver: conflictResolver,
 		},
 	}
@@ -641,7 +639,7 @@ func (d *DashboardCmd) Run() error {
 	m := dashboard.NewModel(
 		dashboard.WithBeadLister(lister),
 		dashboard.WithBeadResolver(resolver),
-		dashboard.WithPostPipelineFunc(ppFunc),
+		dashboard.WithPostPipelineFunc(postTaskFunc),
 		dashboard.WithPipelineRunner(pipelineAdapter),
 		dashboard.WithPhaseNames(phaseNames(phases)),
 		dashboard.WithCampaignRunner(campaignAdapter),

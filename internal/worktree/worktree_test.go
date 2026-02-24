@@ -498,13 +498,7 @@ func TestMergeToMain_Conflict(t *testing.T) {
 	if len(mce.ConflictFiles) == 0 {
 		t.Error("MergeConflictError.ConflictFiles should not be empty")
 	}
-	foundConflictFile := false
-	for _, f := range mce.ConflictFiles {
-		if f == "conflict.txt" {
-			foundConflictFile = true
-		}
-	}
-	if !foundConflictFile {
+	if !slices.Contains(mce.ConflictFiles, "conflict.txt") {
 		t.Errorf("ConflictFiles should contain 'conflict.txt', got %v", mce.ConflictFiles)
 	}
 	if mce.ConflictDiff == "" {
