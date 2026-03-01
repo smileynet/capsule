@@ -8,7 +8,7 @@ Given a task (bead), capsule creates an isolated git worktree, runs AI agents th
 
 - **Go 1.25+** (building from source)
 - **git**
-- **[bd](https://github.com/smileynet/beads)** (beads CLI) for task management
+- **[bd](https://github.com/steveyegge/beads)** (beads CLI) for task management
 - **[claude](https://docs.anthropic.com/en/docs/claude-code)** CLI for pipeline execution
 
 ## Installation
@@ -126,3 +126,7 @@ make smoke      # End-to-end smoke tests
 make lint       # Run golangci-lint
 make hooks      # Install pre-commit hook
 ```
+
+## License
+
+MIT
